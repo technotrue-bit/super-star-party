@@ -35,6 +35,7 @@ import { resolveGreen, resolveGrumpus, consumeFreeStar, consumeDoubleBlue } from
 import { ITEM_DEFS, canUseItem, useItem } from "./items";
 import { openShop } from "../screens/shopScreen";
 import { tryPickMinigame } from "../minigames/registry";
+import { setPendingMinigame } from "../minigames/framework";
 import { screens } from "../screens/screenManager";
 
 /* ------------------------------------------------------------------ */
@@ -112,6 +113,15 @@ export interface TurnLoop {
 /* ------------------------------------------------------------------ */
 
 let liveLoop: TurnLoop | null = null;
+
+/**
+ * Set right before handing off to the minigame screen (a minigame round is
+ * in flight and the loop is about to be disposed). The NEXT loop instance —
+ * created when the board screen re-enters after the minigame — checks this
+ * in start() to continue the round's bookkeeping (results vs next turn)
+ * instead of beginning a fresh turn.
+ */
+let resumeFromMinigame = false;
 
 setAutoplayHook(() => {
   const l = liveLoop;
@@ -637,18 +647,25 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     refreshHud();
     const mg = tryPickMinigame();
     if (!mg) {
+      // No minigames registered yet — toast and carry on.
       ui.toast("Minigames arrive in Wave 3!", { durationMs: 2200 });
-    } else {
-      ui.toast(`Minigame: ${mg.name} — Wave 3 incoming`, { durationMs: 2600 });
-      bus.emit("minigame:start", { id: mg.id, name: mg.name });
-      stinger("minigame_intro", 2400);
+      match.turn += 1;
+      if (match.turn > match.totalTurns) {
+        results();
+      } else {
+        pause(0.9, beginTurn);
+      }
+      return;
     }
+    // A minigame is available: hand off to the minigame screen. The round
+    // bookkeeping (turn++) happens HERE so it survives the screen switch —
+    // exiting this screen disposes this loop, and the minigame runs on its
+    // own screen. On return, the freshly created loop's start() sees
+    // resumeFromMinigame and continues the round (results or next turn).
     match.turn += 1;
-    if (match.turn > match.totalTurns) {
-      results();
-    } else {
-      pause(0.9, beginTurn);
-    }
+    resumeFromMinigame = true;
+    setPendingMinigame(mg);
+    screens.goto("minigame");
   };
 
   /* ---------------- results ---------------- */
@@ -808,8 +825,20 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     dice.hide();
     syncCharPositions();
     refreshHud();
-    if (match.players.length > 0) beginTurn();
-    else S.phase = "ended";
+    if (match.players.length === 0) {
+      S.phase = "ended";
+      return;
+    }
+    if (resumeFromMinigame) {
+      // Back from a minigame round: finish the round's bookkeeping. The
+      // turn++ already happened before the screen switch, so it's just the
+      // results-vs-next-turn decision here.
+      resumeFromMinigame = false;
+      if (match.turn > match.totalTurns) results();
+      else beginTurn();
+      return;
+    }
+    beginTurn();
   };
 
   const dispose = (): void => {
