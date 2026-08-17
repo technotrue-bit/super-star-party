@@ -709,6 +709,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         ],
       });
       S.phase = "ended";
+      match.phase = "ended";
     });
     S.resultSteps = steps;
     S.resultTimer = 0.55;

@@ -32,7 +32,9 @@ export const settings = {
   board: {
     diskHeight: 0.12, // space disk thickness / raise above ground
     pathWidth: 1.5, // sandy path strip width
-    groundSize: 40, // grass checkerboard size (world units)
+    groundSize: 64, // grass checkerboard size (world units) — wide enough that
+    // the far grass corners project OUTSIDE the frame sides from the party
+    // camera, so no sky wedge leaks into the top strip
     groundTile: 2, // grass checker tile size (world units)
     starBobSpeed: 1.5, // rad/s golden star bob
     starBobAmp: 0.16, // star bob amplitude (world units)
@@ -44,6 +46,29 @@ export const settings = {
     highlightRise: 0.5, // highlight ring max rise (world units)
     highlightPulse: 2.2, // highlight ring pulse rate (cycles/s)
     boundsPad: 0.8, // camera-fit padding beyond the space radius
+  },
+
+  // ---- match-screen party camera ----
+  // Distance = fit * distMul where fit = max(board bounds + 2*sceneryPad).
+  // Elevation = camera's view angle above the ground plane. The camera
+  // shoots from the NORTH in landscape so the ferris wheel (bottom-right
+  // corner, tall + wheel faces +/-z) lands in the near foreground, big and
+  // face-on, while the grass fills the frame (whole-frame ink <12%, top
+  // strip <10%, no bottom band). Portrait keeps the classic south party
+  // angle (its narrow horizontal FOV can't fit the corner landmarks anyway;
+  // the loop + grass fill the frame instead).
+  matchCamera: {
+    sceneryPad: 5.2, // tents ~2.9u, ferris ~4.2u beyond the space loop
+    distMulPortrait: 1.19, // ~46u out
+    elevPortrait: 1.3963, // ~80deg — far ground line sits near the frame top
+    lookXPortrait: 2.5, // slight bias toward the ferris side
+    lookZPortrait: 2.5, // look a touch closer: far edge stays high
+    distMulLandscape: 0.88, // ~34u out
+    elevLandscape: 0.995, // ~57deg
+    camXLandscape: 0.0, // east-of-axis offset (0 now: the wide ground already
+    //   keeps the far grass edge out of the frame sides)
+    lookXLandscape: 2.5, // bias toward the ferris corner (+x) — wheel in frame
+    lookZLandscape: -3.0, // north camera: look closer = far ground line high
   },
 
   // ---- minigames ----

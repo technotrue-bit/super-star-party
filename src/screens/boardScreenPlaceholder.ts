@@ -12,6 +12,7 @@
 import * as THREE from "three";
 import { world } from "../main";
 import { palette } from "../config/palette";
+import { settings } from "../config/settings";
 import { match, startMatch } from "../core/game";
 import { rng } from "../core/rng";
 import { bus } from "../core/events";
@@ -73,39 +74,43 @@ interface CamFit {
 }
 
 /**
- * Fit the WHOLE board + scenery into the frame for the current aspect:
+ * Fit the WHOLE board + scenery for the current aspect:
  * - scenery pad ~5.2u beyond the space-loop bounds (tents ~2.9u, ferris
  *   wheel ~4.2u) so corner landmarks never clip;
- * - vertical fit solved so the far edge of the board lands at ~+20deg
- *   (no dead ink band at the top of the frame), pitch ~55deg;
- * - portrait tightens the pad and raises the pitch (~62deg).
+ * - distance = fit * distMul (fit = max bounds + pad), elevation per aspect;
+ * - the camera shoots from the NORTH in landscape (ferris wheel in the near
+ *   foreground, big + face-on; its wheel faces +/-z so only a north/south
+ *   camera reads it), and from the classic SOUTH in portrait;
+ * - lookAt biased toward the ferris corner so the signature landmark stays
+ *   readable, with the board center projecting near the screen center.
  */
 function computeCameraFit(): CamFit {
   const b = boardBounds();
   const aspect = window.innerWidth / window.innerHeight;
   const portrait = aspect < 1;
-  const SCENERY_PAD = portrait ? 3.6 : 5.2;
-  const fitX = b.maxX - b.minX + SCENERY_PAD * 2;
-  const fitZ = b.maxY - b.minY + SCENERY_PAD * 2;
-  const pitch = portrait ? 1.0821 : 0.9599; // 62deg / 55deg
-  const vfov = (45 * Math.PI) / 180;
-  const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
+  const cam = settings.matchCamera;
+
+  const fitX = b.maxX - b.minX + cam.sceneryPad * 2;
+  const fitZ = b.maxY - b.minY + cam.sceneryPad * 2;
+  const fit = Math.max(fitX, fitZ);
 
   const cx = (b.minX + b.maxX) / 2;
   const cz = (b.minY + b.maxY) / 2;
 
-  // Horizontal: keep the full width on screen.
-  const dW = (fitX / 2 / Math.tan(hfov / 2)) * 1.06;
-  // Vertical: far edge at ~+20deg (near frame top, scenery fills the rest).
-  const halfZ = fitZ / 2;
-  const dH = (halfZ * Math.sin(pitch)) / Math.tan((20 * Math.PI) / 180) + halfZ * Math.cos(pitch);
-  const d = Math.max(dW, dH);
+  const elev = portrait ? cam.elevPortrait : cam.elevLandscape;
+  const m = fit * (portrait ? cam.distMulPortrait : cam.distMulLandscape);
+  const H = m * Math.sin(elev);
+  const D = m * Math.cos(elev);
 
-  const base = new THREE.Vector3(cx, d * Math.sin(pitch), cz + d * Math.cos(pitch));
-  // Look slightly past center (ferris-wheel side) in landscape; in portrait
-  // look a touch closer so the board sits high and the band stays at the
-  // bottom (under the UI), never at the top.
-  const look = new THREE.Vector3(cx, 0, cz + (portrait ? 2.0 : -0.5));
+  // North in landscape (ferris near + face-on), south in portrait; the
+  // landscape camera sits slightly east of the board axis so the grass's far
+  // edge exits the frame side (no sky wedge in the top strip).
+  const base = new THREE.Vector3(cx + (portrait ? 0 : cam.camXLandscape), H, cz + (portrait ? D : -D));
+  const look = new THREE.Vector3(
+    cx + (portrait ? cam.lookXPortrait : cam.lookXLandscape),
+    0,
+    cz + (portrait ? cam.lookZPortrait : cam.lookZLandscape)
+  );
   return { base, look };
 }
 
@@ -174,6 +179,18 @@ const boardScreenImpl: BoardScreenState & Screen = {
     // ---- board ----
     const board = buildBoardScene(fizzyFairground);
     this._board = board;
+
+    // North-side party camera in landscape: the disk icons (designed to read
+    // upright from the south) get a 180deg in-plane flip so they stay upright.
+    if (window.innerWidth / window.innerHeight >= 1) {
+      for (let i = 0; i < fizzyFairground.spaces.length; i++) {
+        for (const c of board.spaceMesh(i).children) {
+          if (c instanceof THREE.Mesh && Math.abs(c.rotation.y - Math.PI / 2) < 1e-4) {
+            c.rotation.y = -Math.PI / 2;
+          }
+        }
+      }
+    }
 
     // ---- characters at space 0 (2x2 stand-off grid) ----
     const start = board.spaceWorldPos(0);

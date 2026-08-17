@@ -17,6 +17,12 @@ export function injectStyles(): void {
   style.id = "ssp-ui-styles";
   style.textContent = `
 /* ================= SSP UI KIT — shared chrome ================= */
+/* Board-screen DOM UI (ROLL button, dice, item bar — appended straight to
+   document.body, outside .ssp-ui) inherits the kit's Fredoka face too. */
+body {
+  font-family: 'Fredoka', 'Comic Sans MS', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
 .ssp-ui {
   position: fixed; inset: 0; z-index: 50;
   pointer-events: none;

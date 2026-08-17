@@ -6,13 +6,18 @@
  */
 import * as THREE from "three";
 import { palette } from "../config/palette";
-import { rng } from "../core/rng";
+import { mulberry32 } from "../core/rng";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
 import { buildBoardScene, boardBounds, type BoardScene } from "../board/boardScene";
 import { fizzyFairground } from "../board/boardData";
 import { createCharacter, type Character } from "../characters/characterFactory";
 import type { Screen } from "./screenManager";
+
+// Presentation-only RNG: showcase walker wander/cheer timers use their own
+// fixed-seed stream so the shared gameplay rng is never consumed by demo
+// presentation code (deterministic replay contract).
+const showcaseRng = mulberry32(0x5eedface);
 
 interface Walker {
   char: Character;
@@ -73,7 +78,7 @@ const showcaseScreenImpl: ShowcaseState & Screen = {
     const cy = (b.minY + b.maxY) / 2;
     const fit = Math.max(b.maxX - b.minX, b.maxY - b.minY) + SCENERY_PAD * 2;
     this._cam = { cx, cy, fit };
-    this._t = rng.next() * 100;
+    this._t = showcaseRng() * 100;
     positionCamera(this, this._t);
 
     // ---- UI: HUD with demo players + banner ----
@@ -154,12 +159,12 @@ const showcaseScreenImpl: ShowcaseState & Screen = {
         w.restT -= dt;
         if (w.restT <= 0) {
           // Pick a target 1-4 tiles ahead; sometimes cheer instead.
-          if (w.cheerT <= 0 && rng.next() < 0.12) {
+          if (w.cheerT <= 0 && showcaseRng() < 0.12) {
             w.char.anim.cheer();
             w.cheerT = 1.3;
             w.restT = 0.4;
           } else {
-            w.target = (w.current + rng.int(1, 4)) % n;
+            w.target = (w.current + (1 + Math.floor(showcaseRng() * 4))) % n;
             w.progress = 0;
             w.moving = true;
             w.char.anim.walk();
@@ -178,7 +183,7 @@ const showcaseScreenImpl: ShowcaseState & Screen = {
         if (p >= 1) {
           w.current = w.target;
           w.moving = false;
-          w.restT = 0.9 + rng.next() * 2.0;
+          w.restT = 0.9 + showcaseRng() * 2.0;
           w.char.anim.idle();
         }
       }

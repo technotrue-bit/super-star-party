@@ -1,7 +1,12 @@
 import type * as THREE from 'three';
 import { settings } from '../config/settings';
-import { rng } from '../core/rng';
+import { mulberry32 } from '../core/rng';
 import type { CharacterKind } from './roster';
+
+// Presentation-only RNG: character idle animations (blink/fidget timing) draw
+// from their OWN fixed-seed stream so they never consume the shared gameplay
+// rng. Animation draws must not affect gameplay determinism.
+const animRng = mulberry32(0xa11ce5eed);
 
 export type AnimName = 'idle' | 'walk' | 'jump' | 'cheer' | 'sad' | 'squash';
 
@@ -72,8 +77,8 @@ export function createAnimController(
   let fidgetT = 0;
   let blinking = false;
   let fidgeting = false;
-  let nextBlink = 3 + rng.next() * 2;
-  let nextFidget = 5 + rng.int(0, 4);
+  let nextBlink = 3 + animRng() * 2;
+  let nextFidget = 5 + Math.floor(animRng() * 5);
 
   // Restores the base pose. Position x/z are left untouched so external
   // placement survives; only the y bob is animation-owned.
@@ -123,8 +128,8 @@ export function createAnimController(
     fidgetT = 0;
     blinking = false;
     fidgeting = false;
-    nextBlink = 3 + rng.next() * 2;
-    nextFidget = 5 + rng.int(0, 4);
+    nextBlink = 3 + animRng() * 2;
+    nextFidget = 5 + Math.floor(animRng() * 5);
     resetGroup();
     resetParts();
   };
@@ -182,7 +187,7 @@ export function createAnimController(
       if (blinkT >= BLINK_TIME) {
         blinking = false;
         if (face) face.scale.y = 1;
-        nextBlink = 3 + rng.next() * 2;
+        nextBlink = 3 + animRng() * 2;
       }
     }
 

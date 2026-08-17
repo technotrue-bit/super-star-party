@@ -116,11 +116,6 @@ function boot(): void {
   }
   requestAnimationFrame(frame);
 
-  // Initial screen (title registers async — wait for it, then goto).
-  setTimeout(() => {
-    screens.goto(screen);
-  }, 50);
-
   console.log(`[SSP] SUPER STAR PARTY booted — seed ${seed}, screen ${screen}`);
 }
 
