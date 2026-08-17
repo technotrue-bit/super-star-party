@@ -205,38 +205,38 @@ export function injectStyles(): void {
   display: flex; align-items: center; gap: 6px;
   background: ${palette.cream};
   border: 3px solid ${palette.ink}; border-radius: 999px;
-  padding: 3px 9px 3px 4px;
+  padding: 4px 10px 4px 5px;
   box-shadow: 0 4px 0 ${palette.ink};
-  min-height: 42px; max-width: 150px;
+  min-height: 48px; max-width: 150px;
   transition: transform 120ms ease-out, box-shadow 120ms ease-out;
 }
 .ssp-hud-chip:hover { transform: scale(1.05); }
 .ssp-hud-chip__avatar {
-  width: 28px; height: 28px; font-size: 14px; flex: none;
+  width: 30px; height: 30px; font-size: 15px; flex: none;
   border-width: 2px;
   box-shadow: 0 2px 0 rgba(43,29,78,.5), inset 0 -2px 0 rgba(43,29,78,.18), inset 0 2px 0 rgba(255,255,255,.35);
 }
 .ssp-hud-chip__avatar::after { display: none; }
 .ssp-hud-chip__info { display: flex; flex-direction: column; min-width: 0; }
 .ssp-hud-chip__name {
-  font-size: 11px; font-weight: 700; color: ${palette.ink};
+  font-size: 13px; font-weight: 700; color: ${palette.ink};
   line-height: 1.15; max-width: 64px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ssp-hud-chip__stats {
-  display: flex; align-items: center; gap: 4px;
-  font-size: 10px; font-weight: 700; color: ${palette.ink}; line-height: 1.3;
+  display: flex; align-items: center; gap: 3px;
+  font-size: 14px; font-weight: 700; color: ${palette.ink}; line-height: 1.2;
 }
 .ssp-hud-chip__stats > span { display: inline-block; min-width: 9px; }
 .ssp-hud-coin {
-  width: 11px; height: 11px; border-radius: 50%; flex: none;
+  width: 10px; height: 10px; border-radius: 50%; flex: none;
   background:
     radial-gradient(circle at 35% 30%, rgba(255,255,255,.8) 0%, rgba(255,255,255,0) 42%),
     linear-gradient(180deg, ${palette.sun} 0%, ${palette.sunDeep} 100%);
   border: 1.5px solid ${palette.ink};
 }
-.ssp-hud-star { color: ${palette.sun}; font-size: 12px; text-shadow: 0 1px 0 ${palette.ink}; line-height: 1; }
-.ssp-hud-mini { color: ${palette.mint}; font-size: 10px; text-shadow: 0 1px 0 ${palette.ink}; line-height: 1; }
+.ssp-hud-star { color: ${palette.sun}; font-size: 11px; text-shadow: 0 1px 0 ${palette.ink}; line-height: 1; }
+.ssp-hud-mini { color: ${palette.mint}; font-size: 9px; text-shadow: 0 1px 0 ${palette.ink}; line-height: 1; }
 .ssp-hud-chip--active {
   box-shadow: 0 0 0 3px ${palette.sun}, 0 6px 0 ${palette.ink}, 0 0 18px rgba(255,210,63,.85);
   transform: scale(1.06);
