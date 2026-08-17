@@ -239,11 +239,15 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
     return [x + ((x - cx) / len) * amt, z + ((z - cy) / len) * amt];
   };
 
-  // tents at the three corners; the fourth corner hosts the ferris wheel
+  // Tents on the grass strips visible in BOTH aspects: the portrait camera's
+  // narrow horizontal fov clips the loop corners (the old 2.9u-out corner
+  // spots were off-screen in portrait) and the HUD chip row covers the top
+  // of the frame, so all three tents sit on the south grass in a shallow
+  // A-row. Positions are tuning data in settings.board.tentSpots.
   const tentSpots: [number, number, string, string, number][] = [
-    [cx - halfW - 2.9, cy + halfH + 2.9, palette.tentRed, palette.tentCream, 0],
-    [cx - halfW - 2.9, cy - halfH - 2.9, palette.sun, palette.tentCream, 2.1],
-    [cx + halfW + 2.9, cy + halfH + 2.9, palette.mint, palette.tentCream, 4.2],
+    [settings.board.tentSpots[0].x, settings.board.tentSpots[0].z, palette.tentRed, palette.tentCream, 0],
+    [settings.board.tentSpots[1].x, settings.board.tentSpots[1].z, palette.sun, palette.tentCream, 2.1],
+    [settings.board.tentSpots[2].x, settings.board.tentSpots[2].z, palette.mint, palette.tentCream, 4.2],
   ];
   for (const [tx, tz, ca, cb, ph] of tentSpots) {
     props.push(buildTent(kit, tx, tz, ca, cb, ph));
@@ -265,10 +269,17 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
     const [lx, lz] = outward(sp.x, sp.y, 2.1);
     props.push(buildLampPost(kit, lx, lz));
   }
-  // balloon clusters near each tent
+  // balloon clusters near each tent (inset from settings so they clear the
+  // loop edge and stay beside the tent on the grass)
   for (const [tx, tz] of tentSpots) {
-    const [bx, bz] = outward(tx, tz, -2.6);
+    const [bx, bz] = outward(tx, tz, -settings.board.tentBalloonInset);
     props.push(buildBalloons(kit, bx, bz, (tx + tz) * 0.31));
+  }
+
+  // Attach every free-standing prop to the board. (Space-local props like the
+  // star props are already parented to their space group and are skipped.)
+  for (const p of props) {
+    if (!p.root.parent) group.add(p.root);
   }
 
   if (world.scene) world.scene.add(group);

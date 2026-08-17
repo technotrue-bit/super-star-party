@@ -41,6 +41,26 @@ export const settings = {
     starSpinSpeed: 1.1, // rad/s golden star spin
     ferrisSpin: 0.32, // rad/s ferris wheel rotation
     pennantSway: 1.2, // rad/s tent pennant sway
+    // Tent tuning. Tents live on the grass strips that stay inside the
+    // PORTRAIT frame: the portrait camera's narrow horizontal fov clips the
+    // loop corners (the old 2.9u-out corner spots were off-screen entirely),
+    // and the HUD chip row covers the top ~115px, so all three tents sit on
+    // the south grass in a shallow A-row — visible and unobstructed in both
+    // aspects.
+    tentScale: 1.1, // tent body/cone/pennant scale multiplier
+    tentStripeCount: 4, // candy stripes around the tent (fewer = wider = reads at phone size)
+    tentOutlineBody: 1.1, // ink outline shell scale on the tent body
+    tentOutlineCone: 1.13, // ink outline shell scale on the tent cone
+    tentSpots: [
+      // world x/z positions; colors pair red/cream, sun/cream, mint/cream.
+      // Red (the landmark the critic counts) sits front-center: it stays
+      // on-screen even during the SW dice-camera punch; sun takes the west
+      // slot, mint the east.
+      { x: -1.5, z: 14.6 }, // tentRed — south grass, front-center
+      { x: -8.0, z: 13.5 }, // sun — south grass, left
+      { x: 4.0, z: 13.0 }, // mint — south grass, right
+    ],
+    tentBalloonInset: 1.8, // balloon cluster offset from each tent back toward the loop
     fountainPulse: 2.0, // rad/s fountain sparkle pulse
     balloonSway: 0.7, // rad/s balloon cluster sway
     highlightRise: 0.5, // highlight ring max rise (world units)

@@ -87,11 +87,35 @@ function sparkleMesh(kit: BoardTextures, color: string, r: number): THREE.Mesh {
 }
 
 // ---- tents ------------------------------------------------------------------------
+/**
+ * Wider candy stripes for tents, drawn locally (boardTextures' 8-stripe kit
+ * texture stays untouched). Fewer, thicker stripes read as tent stripes at
+ * phone size instead of dissolving into specks.
+ */
+function tentStripeTexture(a: string, b: string, count: number): THREE.CanvasTexture {
+  const c = document.createElement("canvas");
+  c.width = 64;
+  c.height = 64;
+  const ctx = c.getContext("2d")!;
+  const w = 64 / count;
+  for (let i = 0; i < count; i++) {
+    ctx.fillStyle = i % 2 === 0 ? a : b;
+    ctx.fillRect(i * w, 0, w, 64);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
 /** Striped carnival tent: cone top + cylinder body + swaying pennant flags. */
 export function buildTent(kit: BoardTextures, x: number, z: number, stripeA: string, stripeB: string, phase: number): Prop {
   const root = new THREE.Group();
   root.position.set(x, 0, z);
-  const stripes = kit.stripe(stripeA, stripeB);
+  const stripes = tentStripeTexture(stripeA, stripeB, B.tentStripeCount);
 
   const body = new THREE.Mesh(
     new THREE.CylinderGeometry(2.1, 2.4, 1.3, 12),
@@ -104,7 +128,7 @@ export function buildTent(kit: BoardTextures, x: number, z: number, stripeA: str
   body.position.y = 0.65;
   body.castShadow = true;
   body.receiveShadow = true;
-  root.add(body, outline(body, 1.045));
+  root.add(body, outline(body, B.tentOutlineBody));
 
   const cone = new THREE.Mesh(
     new THREE.ConeGeometry(2.5, 1.9, 12),
@@ -113,7 +137,7 @@ export function buildTent(kit: BoardTextures, x: number, z: number, stripeA: str
   cone.position.y = 1.3 + 0.95;
   cone.castShadow = true;
   cone.receiveShadow = true;
-  root.add(cone, outline(cone, 1.05));
+  root.add(cone, outline(cone, B.tentOutlineCone));
 
   // tip pole + ball
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 1.2, 8), toonMat(kit, palette.woodDark));
@@ -152,6 +176,10 @@ export function buildTent(kit: BoardTextures, x: number, z: number, stripeA: str
     root.add(g);
     flags.push(g);
   }
+
+  // Scale the whole tent (body, cone, pole, ball, pennant string + flags) so
+  // it reads as a coherent cluster at phone size.
+  root.scale.setScalar(B.tentScale);
 
   return {
     root,
