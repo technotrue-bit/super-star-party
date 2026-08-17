@@ -11,7 +11,18 @@ import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
 import { buildBoardScene, boardBounds, type BoardScene } from "../board/boardScene";
 import { fizzyFairground } from "../board/boardData";
+import { createCharacter, type Character } from "../characters/characterFactory";
 import type { Screen } from "./screenManager";
+
+interface Walker {
+  char: Character;
+  current: number;
+  target: number;
+  progress: number;
+  moving: boolean;
+  restT: number;
+  cheerT: number;
+}
 
 interface ShowcaseState {
   _board?: BoardScene;
@@ -20,6 +31,7 @@ interface ShowcaseState {
   _t?: number;
   _hlTimer?: number;
   _hlIndex?: number;
+  _walkers?: Walker[];
 }
 
 function positionCamera(self: ShowcaseState, t: number): void {
@@ -69,9 +81,33 @@ const showcaseScreenImpl: ShowcaseState & Screen = {
     this._hlTimer = 0;
     this._hlIndex = 0;
     board.highlight(0);
+
+    // ---- character walkers (the 4 heroes wandering the fairground) ----
+    const kinds = ["pip", "bounce", "glimmer", "tusk"];
+    const offsets = [
+      [0.0, 0.0],
+      [0.6, 0.0],
+      [0.0, 0.6],
+      [0.6, 0.6],
+    ];
+    const start = board.spaceWorldPos(0);
+    this._walkers = kinds.map((kind, i) => {
+      const char = createCharacter(kind);
+      char.group.position.set(start.x + offsets[i][0], 0, start.z + offsets[i][1]);
+      char.group.scale.setScalar(0.92);
+      char.setFacing(Math.PI / 4 + i);
+      char.anim.idle();
+      world.scene!.add(char.group);
+      return { char, current: 0, target: 0, progress: 1, moving: false, restT: i * 0.8, cheerT: 0 };
+    });
   },
 
   exit() {
+    for (const w of this._walkers ?? []) {
+      world.scene?.remove(w.char.group);
+      w.char.dispose();
+    }
+    this._walkers = undefined;
     this._board?.dispose();
     this._board = undefined;
     this._hud?.destroy();
@@ -94,6 +130,47 @@ const showcaseScreenImpl: ShowcaseState & Screen = {
       this._board?.clearHighlights();
       this._hlIndex = ((this._hlIndex ?? 0) + 1) % fizzyFairground.spaces.length;
       this._board?.highlight(this._hlIndex);
+    }
+
+    // ---- walkers: wander the loop, hop-walking tile to tile ----
+    const board = this._board;
+    const n = fizzyFairground.spaces.length;
+    for (const w of this._walkers ?? []) {
+      w.char.update(dt);
+      if (!board) continue;
+      if (!w.moving) {
+        w.cheerT -= dt;
+        w.restT -= dt;
+        if (w.restT <= 0) {
+          // Pick a target 1-4 tiles ahead; sometimes cheer instead.
+          if (w.cheerT <= 0 && rng.next() < 0.12) {
+            w.char.anim.cheer();
+            w.cheerT = 1.3;
+            w.restT = 0.4;
+          } else {
+            w.target = (w.current + rng.int(1, 4)) % n;
+            w.progress = 0;
+            w.moving = true;
+            w.char.anim.walk();
+            const to = board.spaceWorldPos(w.target);
+            w.char.setFacing(Math.atan2(to.x - w.char.group.position.x, to.z - w.char.group.position.z));
+          }
+        }
+      } else {
+        const from = board.spaceWorldPos(w.current);
+        const to = board.spaceWorldPos(w.target);
+        w.progress += dt * 3.4; // tiles per second (leisurely showcase pace)
+        const p = Math.min(1, w.progress);
+        const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2; // ease in-out
+        w.char.group.position.x = from.x + (to.x - from.x) * e;
+        w.char.group.position.z = from.z + (to.z - from.z) * e;
+        if (p >= 1) {
+          w.current = w.target;
+          w.moving = false;
+          w.restT = 0.9 + rng.next() * 2.0;
+          w.char.anim.idle();
+        }
+      }
     }
   },
 

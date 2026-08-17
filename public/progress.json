@@ -1,7 +1,7 @@
 {
-  "updated": "2026-08-16T00:20:00-04:00",
+  "updated": "2026-08-16T21:25:00-04:00",
   "game": "SUPER STAR PARTY",
-  "status": "Wave 1 building (4 parallel agents) — board, characters, audio, UI kit. Critic harness ready.",
+  "status": "Wave 1: board/audio/UI built + wired into live showcase (music playing, probes green). Critic round 1 running. Characters rebuilding.",
   "waves": [
     {
       "id": "W0",
@@ -14,12 +14,12 @@
     {
       "id": "W1",
       "name": "Board · Characters · Audio · UI kit",
-      "status": "building",
+      "status": "critic",
       "pieces": [
-        { "id": 1, "name": "Board: Fizzy Fairground", "status": "building", "detail": "28-space carnival loop + scenery" },
-        { "id": 2, "name": "Characters (4 + anims + dice)", "status": "building", "detail": "Pip, Bounce, Glimmer, Tusk" },
-        { "id": 3, "name": "Audio: music + SFX engine", "status": "building", "detail": "12 tracks + 27 SFX, procedural" },
-        { "id": 4, "name": "UI kit", "status": "building", "detail": "buttons, popups, HUD, confetti" }
+        { "id": 1, "name": "Board: Fizzy Fairground", "status": "critic", "detail": "28 spaces verified · live in showcase · round 1" },
+        { "id": 2, "name": "Characters (4 + anims + dice)", "status": "building", "detail": "rebuild in flight (first agent stalled on approval gate)" },
+        { "id": 3, "name": "Audio: music + SFX engine", "status": "critic", "detail": "12 tracks / 26 SFX, no-clip mix, WAVs baking · round 1" },
+        { "id": 4, "name": "UI kit", "status": "critic", "detail": "13 modules, HUD+banner live in showcase · round 1" }
       ]
     },
     {
@@ -67,6 +67,10 @@
       ]
     }
   ],
-  "criticRounds": [],
+  "criticRounds": [
+    { "piece": "Board", "round": 1, "pass": false, "gap": "running…" },
+    { "piece": "Audio", "round": 1, "pass": false, "gap": "running…" },
+    { "piece": "UI kit", "round": 1, "pass": false, "gap": "running…" }
+  ],
   "urls": { "game": "http://localhost:5177/", "showcase": "http://localhost:5177/?screen=showcase", "progress": "/progress.html" }
 }
