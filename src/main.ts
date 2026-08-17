@@ -62,6 +62,12 @@ function boot(): void {
     // No AudioContext at all — silence, but the engine object must still work.
   }
 
+  // Debug harness: ?audio=1 forces an unlock so headless critics can verify
+  // the music system in a real browser without a user gesture.
+  if (params.get("audio") === "1") {
+    setTimeout(() => unlock(), 400);
+  }
+
   // First gesture unlocks audio (autoplay policy).
   const unlockOnce = () => {
     unlock();

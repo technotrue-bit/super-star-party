@@ -16,6 +16,7 @@ export interface Screen {
 class ScreenManager {
   private registry = new Map<string, Screen>();
   private _current: Screen | null = null;
+  private _entered = false;
 
   register(screen: Screen): void {
     this.registry.set(screen.id, screen);
@@ -28,12 +29,12 @@ class ScreenManager {
       console.warn(`[screens] unknown screen "${id}"`);
       return;
     }
-    if (this._current === next) return;
-    const from = this._current?.id ?? "none";
-    this._current?.exit();
+    if (this._current === next && this._entered) return;
+    if (this._current && this._entered) this._current.exit();
     this._current = next;
     next.enter();
-    bus.emit("screen:change", { from, to: id });
+    this._entered = true;
+    bus.emit("screen:change", { from: this._current?.id ?? "none", to: id });
   }
 
   get current(): string {

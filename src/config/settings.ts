@@ -28,6 +28,23 @@ export const settings = {
   tileSpacing: 2.6, // world units between space centers
   tileRadius: 1.05,
   cameraFitPadding: 1.25,
+  // Board presentation tuning (owned by the board builder).
+  board: {
+    diskHeight: 0.12, // space disk thickness / raise above ground
+    pathWidth: 1.5, // sandy path strip width
+    groundSize: 40, // grass checkerboard size (world units)
+    groundTile: 2, // grass checker tile size (world units)
+    starBobSpeed: 1.5, // rad/s golden star bob
+    starBobAmp: 0.16, // star bob amplitude (world units)
+    starSpinSpeed: 1.1, // rad/s golden star spin
+    ferrisSpin: 0.32, // rad/s ferris wheel rotation
+    pennantSway: 1.2, // rad/s tent pennant sway
+    fountainPulse: 2.0, // rad/s fountain sparkle pulse
+    balloonSway: 0.7, // rad/s balloon cluster sway
+    highlightRise: 0.5, // highlight ring max rise (world units)
+    highlightPulse: 2.2, // highlight ring pulse rate (cycles/s)
+    boundsPad: 0.8, // camera-fit padding beyond the space radius
+  },
 
   // ---- minigames ----
   minigameCountdown: 2.8, // "3-2-1-GO" length (s)
@@ -39,6 +56,10 @@ export const settings = {
   sfxVolume: 0.9,
   masterVolume: 1.0,
   crowdVolume: 0.35,
+  audioLookaheadMs: 120, // scheduler looks this far ahead (s)
+  audioTickMs: 25, // scheduler timer period (ms)
+  sfxMinGapMs: 30, // per-name one-shot throttle (ms)
+  crowdMurmurLevel: 0.5, // murmur pad level before crowdVolume
 
   // ---- ui ----
   bannerTime: 1.8, // big banner text hold (s)

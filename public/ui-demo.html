@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SSP UI Kit Demo</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { background: #2B1D4E; font-family: 'Fredoka', 'Comic Sans MS', sans-serif; }
+  #demo { position: absolute; inset: 0; overflow: auto; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 92px 16px 48px; }
+  h1 { color: #FFD23F; font-size: clamp(26px, 6vw, 44px); margin: 0; text-align: center; }
+  p.sub { color: rgba(255,246,229,.75); margin: 0; font-size: 15px; text-align: center; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; align-items: center; }
+  .card { background: #FFF6E5; border: 4px solid #2B1D4E; border-radius: 20px; padding: 12px 20px; box-shadow: 0 6px 0 #2B1D4E; color: #2B1D4E; font-weight: 700; display: flex; gap: 10px; align-items: center; }
+  .counter { font-size: 26px; min-width: 40px; text-align: right; display: inline-block; }
+</style>
+</head>
+<body>
+<div id="demo">
+  <h1>SSP UI KIT</h1>
+  <p class="sub">buttons / banners / popups / toasts / counters / confetti / HUD / avatars / settings</p>
+  <div class="row" id="row-btns"></div>
+  <div class="card"><span class="counter" id="counter">0</span><span>coins</span><div class="row" id="row-counter"></div></div>
+  <div class="row" id="row-actions"></div>
+  <div class="row" id="row-avatars"></div>
+  <div class="row" id="row-hud"></div>
+</div>
+<script type="module">
+  import { ui } from "/src/ui/kit.ts";
+
+  const row = (id) => document.getElementById(id);
+  // ---- buttons: every kind x size + disabled ----
+  const kinds = ["primary", "gold", "ghost", "danger"];
+  const sizes = ["sm", "md", "lg"];
+  for (const kind of kinds) {
+    for (const size of sizes) {
+      const b = ui.button({
+        label: `${kind} ${size}`,
+        kind,
+        size,
+        onClick: () => ui.toast(`${kind} ${size} clicked`, { sound: null }),
+      });
+      row("row-btns").appendChild(b.el);
+    }
+  }
+  const dis = ui.button({ label: "disabled", disabled: true });
+  row("row-btns").appendChild(dis.el);
+
+  // ---- coin counter ----
+  const coins = ui.coinCounter(document.getElementById("counter"), 12);
+  const plus = ui.button({ label: "+5", size: "sm", kind: "gold", onClick: () => coins.tweenTo(coins.value() + 5) });
+  const minus = ui.button({ label: "-3", size: "sm", onClick: () => coins.add(-3) });
+  row("row-counter").append(plus.el, minus.el);
+
+  // ---- actions ----
+  const act = (label, fn) => { const b = ui.button({ label, onClick: fn }); row("row-actions").appendChild(b.el); };
+  act("BANNER", () => ui.banner("STAR!"));
+  act("BANNER 3s", () => ui.banner("FANTASTIC!", { durationMs: 3000, sound: "fanfare.win" }));
+  act("TOAST", () => ui.toast("Cha-ching! +10 coins", { sound: "coin.gain" }));
+  act("POPUP", () => {
+    const pop = ui.popup({
+      title: "TURN 3",
+      body: "Pip landed on a BLUE space!\n+3 coins.",
+      buttons: [
+        { label: "OK", kind: "primary", onClick: () => { pop.destroy(); ui.toast("popup closed", { sound: null }); } },
+        { label: "Cancel", kind: "ghost", onClick: () => pop.destroy() },
+      ],
+    });
+  });
+  act("CONFETTI", () => ui.confettiBurst(undefined, undefined, { count: 110 }));
+  act("SETTINGS", () => ui.settingsPanel());
+  act("CLEAR", () => ui.clearScreen());
+
+  // ---- avatars ----
+  for (const k of ["Pip", "Bounce", "Glimmer", "Tusk", "Mystery"]) {
+    row("row-avatars").appendChild(ui.playerAvatar(k));
+  }
+
+  // ---- HUD ----
+  const hud = ui.hud();
+  const players = [
+    { id: 1, kind: "pip", name: "Pip", coins: 24, stars: 2, minigameWins: 1, active: true },
+    { id: 2, kind: "bounce", name: "Bounce", coins: 9, stars: 0, minigameWins: 0 },
+    { id: 3, kind: "glimmer", name: "Glimmer", coins: 40, stars: 3, minigameWins: 2 },
+    { id: 4, kind: "tusk", name: "Tusk", coins: 15, stars: 1, minigameWins: 1 },
+  ];
+  hud.update(players);
+  hud.showBanner("TURN 3 — Pip rolls!");
+  const rot = ui.button({
+    label: "next player",
+    size: "sm",
+    onClick: () => {
+      const i = players.findIndex((p) => p.active);
+      players.forEach((p) => (p.active = false));
+      players[(i + 1) % 4].active = true;
+      players[(i + 1) % 4].coins += 3;
+      hud.update(players);
+    },
+  });
+  row("row-hud").appendChild(rot.el);
+
+  // ---- tap anywhere on the backdrop: confetti ----
+  document.body.addEventListener("click", (e) => {
+    if (!e.target.closest(".ssp-ui") && !e.target.closest("button")) {
+      ui.confettiBurst(e.clientX, e.clientY, { count: 60 });
+    }
+  });
+</script>
+</body>
+</html>
