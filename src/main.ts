@@ -78,9 +78,15 @@ function boot(): void {
   window.addEventListener("keydown", unlockOnce);
 
   // Register screens (lazy imports so every screen can be added independently).
-  void import("./screens/titleScreen").then((m) => screens.register(m.titleScreen));
-  void import("./screens/showcaseScreen").then((m) => screens.register(m.showcaseScreen));
-  void import("./screens/boardScreenPlaceholder").then((m) => screens.register(m.boardScreenPlaceholder));
+  // Wait for ALL registrations before the initial goto (avoids boot races).
+  const screenImports = [
+    import("./screens/titleScreen").then((m) => screens.register(m.titleScreen)),
+    import("./screens/showcaseScreen").then((m) => screens.register(m.showcaseScreen)),
+    import("./screens/boardScreenPlaceholder").then((m) => screens.register(m.boardScreenPlaceholder)),
+  ];
+  void Promise.all(screenImports).then(() => {
+    screens.goto(screen);
+  });
 
   // Resize handling.
   window.addEventListener("resize", () => {

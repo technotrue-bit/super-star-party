@@ -1,10 +1,33 @@
 import * as THREE from 'three';
-import { palette } from '../config/palette';
+import { palette, hex } from '../config/palette';
 import { celGradient } from './cel';
 import { makeFaceTexture, faceSpecs } from './faces';
 import type { CharacterKind } from './roster';
 
 const OUTLINE_SCALE = 1.06;
+
+// Glove hands per character: warm cream / white reads like Nintendo gloves
+// against the saturated body colors.
+const HAND_COLORS: Record<string, string> = {
+  pip: palette.cream,
+  bounce: palette.cream,
+  glimmer: palette.white,
+  tusk: palette.cream,
+};
+
+// Darken a palette color toward the ink outline color. Legs read as a deeper
+// shade of the body while staying fully palette-derived (no off-palette hex).
+const darken = (color: string, t: number): string => {
+  const c = hex(color);
+  const ink = hex(palette.ink);
+  const ch = (v: number): string => Math.round(v).toString(16).padStart(2, '0');
+  return (
+    '#' +
+    ch(((c >> 16) & 255) + (((ink >> 16) & 255) - ((c >> 16) & 255)) * t) +
+    ch(((c >> 8) & 255) + (((ink >> 8) & 255) - ((c >> 8) & 255)) * t) +
+    ch((c & 255) + ((ink & 255) - (c & 255)) * t)
+  );
+};
 
 export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Record<string, THREE.Object3D>; } {
   const group = new THREE.Group();
@@ -13,6 +36,8 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
   const bodyMat = new THREE.MeshToonMaterial({ map: celGradient, color: kind.color });
   const inkMat = new THREE.MeshBasicMaterial({ color: palette.ink, side: THREE.BackSide });
   const faceMat = new THREE.MeshToonMaterial({ map: makeFaceTexture(faceSpecs[kind.key]), color: palette.white });
+  const handMat = new THREE.MeshToonMaterial({ map: celGradient, color: HAND_COLORS[kind.key] ?? palette.cream });
+  const legMat = new THREE.MeshToonMaterial({ map: celGradient, color: darken(kind.color, 0.38) });
 
   // Ink outline group: dark BackSide shells pushed out along the normals.
   const outline = new THREE.Group();
@@ -79,6 +104,32 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
     return g;
   };
 
+  // Stubby arm: pivot at the shoulder; a capsule upper arm hangs down into a
+  // glove hand. Ink shells live inside the pivot so the outline follows swings.
+  const buildArm = (side: 'L' | 'R', shoulder: [number, number, number]): THREE.Group => {
+    const pivot = new THREE.Group();
+    pivot.name = 'arm' + side;
+    pivot.position.set(shoulder[0], shoulder[1], shoulder[2]);
+    const upper = addMesh(pivot, new THREE.CapsuleGeometry(0.085, 0.26, 4, 10), bodyMat, [0, -0.115, 0]);
+    const hand = addMesh(pivot, new THREE.SphereGeometry(0.11, 12, 10), handMat, [0, -0.4, 0]);
+    inkClone(upper, pivot);
+    inkClone(hand, pivot);
+    group.add(pivot);
+    return pivot;
+  };
+
+  // Short leg nub: pivot at the hip; a capsule pokes down past the body's
+  // bottom so the step cycle reads at a glance.
+  const buildLeg = (side: 'L' | 'R', hip: [number, number, number]): THREE.Group => {
+    const pivot = new THREE.Group();
+    pivot.name = 'leg' + side;
+    pivot.position.set(hip[0], hip[1], hip[2]);
+    const m = addMesh(pivot, new THREE.CapsuleGeometry(0.07, 0.1, 4, 8), legMat, [0, -0.06, 0]);
+    inkClone(m, pivot);
+    group.add(pivot);
+    return pivot;
+  };
+
   switch (kind.key) {
     case 'pip': {
       // Orange star kid: squashed body + 4-point star head.
@@ -96,6 +147,10 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
       parts.head = star;
       parts.star = star;
       parts.face = buildFace(0.24, 0.1, 0.3, star);
+      parts.armL = buildArm('L', [-0.38, 0.7, 0]);
+      parts.armR = buildArm('R', [0.38, 0.7, 0]);
+      parts.legL = buildLeg('L', [-0.16, 0.1, 0.05]);
+      parts.legR = buildLeg('R', [0.16, 0.1, 0.05]);
       break;
     }
     case 'bounce': {
@@ -120,6 +175,10 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
       inkClone(er, ears);
       group.add(ears);
       parts.ears = ears;
+      parts.armL = buildArm('L', [-0.4, 0.78, 0]);
+      parts.armR = buildArm('R', [0.4, 0.78, 0]);
+      parts.legL = buildLeg('L', [-0.15, 0.15, 0.06]);
+      parts.legR = buildLeg('R', [0.15, 0.15, 0.06]);
       break;
     }
     case 'glimmer': {
@@ -149,6 +208,10 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
       antenna.add(stalk);
       group.add(antenna);
       parts.antenna = antenna;
+      parts.armL = buildArm('L', [-0.32, 0.64, 0]);
+      parts.armR = buildArm('R', [0.32, 0.64, 0]);
+      parts.legL = buildLeg('L', [-0.13, 0.1, 0.04]);
+      parts.legR = buildLeg('R', [0.13, 0.1, 0.04]);
       break;
     }
     case 'tusk': {
@@ -180,6 +243,10 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
       inkClone(tt, trunk);
       group.add(trunk);
       parts.trunk = trunk;
+      parts.armL = buildArm('L', [-0.44, 0.84, 0]);
+      parts.armR = buildArm('R', [0.44, 0.84, 0]);
+      parts.legL = buildLeg('L', [-0.2, 0.12, 0.05]);
+      parts.legR = buildLeg('R', [0.2, 0.12, 0.05]);
       break;
     }
     default:

@@ -1,36 +1,36 @@
 {
-  "updated": "2026-08-16T21:25:00-04:00",
+  "updated": "2026-08-16T22:25:00-04:00",
   "game": "SUPER STAR PARTY",
-  "status": "Wave 1: board/audio/UI built + wired into live showcase (music playing, probes green). Critic round 1 running. Characters rebuilding.",
+  "status": "All 4 W1 gaps have fixers in flight. W2 building (turn loop / economy / happenings / items) + characters limbs fixer + UI/audio fixers — 7 agents parallel.",
   "waves": [
     {
       "id": "W0",
       "name": "Core engine + harness (orchestrator)",
       "status": "done",
       "pieces": [
-        { "id": 0, "name": "Core engine", "status": "done", "detail": "rng, events, match state, debug API, boot, screens · boot probe green" }
+        { "id": 0, "name": "Core engine", "status": "done", "detail": "boot probe green" }
       ]
     },
     {
       "id": "W1",
       "name": "Board · Characters · Audio · UI kit",
-      "status": "critic",
+      "status": "critic-fix",
       "pieces": [
-        { "id": 1, "name": "Board: Fizzy Fairground", "status": "critic", "detail": "28 spaces verified · live in showcase · round 1" },
-        { "id": 2, "name": "Characters (4 + anims + dice)", "status": "building", "detail": "rebuild in flight (first agent stalled on approval gate)" },
-        { "id": 3, "name": "Audio: music + SFX engine", "status": "critic", "detail": "12 tracks / 26 SFX, no-clip mix, WAVs baking · round 1" },
-        { "id": 4, "name": "UI kit", "status": "critic", "detail": "13 modules, HUD+banner live in showcase · round 1" }
+        { "id": 1, "name": "Board: Fizzy Fairground", "status": "done", "detail": "R1 gap fixed by orchestrator (camera reframe, ink 4-7%); R2 pending post-W2" },
+        { "id": 2, "name": "Characters (4 + anims + dice)", "status": "building", "detail": "R1 FAIL: no limbs → limbs+poses fixer in flight" },
+        { "id": 3, "name": "Audio: music + SFX engine", "status": "building", "detail": "R1 FAIL: wiring (W2 closes) + composition fixer in flight" },
+        { "id": 4, "name": "UI kit", "status": "building", "detail": "R1 FAIL: HUD micro-type → fixer in flight" }
       ]
     },
     {
       "id": "W2",
       "name": "Turn loop · Economy · Happenings · Items",
-      "status": "planned",
+      "status": "building",
       "pieces": [
-        { "id": 5, "name": "Turn loop + board screen", "status": "planned", "detail": "" },
-        { "id": 6, "name": "Economy (coins/stars/bonus)", "status": "planned", "detail": "" },
-        { "id": 7, "name": "Happenings (green + grumpus)", "status": "planned", "detail": "" },
-        { "id": 8, "name": "Items + shop", "status": "planned", "detail": "" }
+        { "id": 5, "name": "Turn loop + board screen", "status": "building", "detail": "phase machine: dice→move→space→minigame→results" },
+        { "id": 6, "name": "Economy (coins/stars/bonus)", "status": "done", "detail": "landed, build green" },
+        { "id": 7, "name": "Happenings (green + grumpus)", "status": "building", "detail": "9 green + 5 grumpus events" },
+        { "id": 8, "name": "Items + shop", "status": "building", "detail": "mushroom / warp whistle / zappy + gumball shop" }
       ]
     },
     {
@@ -68,9 +68,10 @@
     }
   ],
   "criticRounds": [
-    { "piece": "Board", "round": 1, "pass": false, "gap": "running…" },
-    { "piece": "Audio", "round": 1, "pass": false, "gap": "running…" },
-    { "piece": "UI kit", "round": 1, "pass": false, "gap": "running…" }
+    { "piece": "Board", "round": 1, "pass": false, "gap": "camera hid landmarks + ink band → reframed (ink 4-7%) · R2 pending" },
+    { "piece": "Audio", "round": 1, "pass": false, "gap": "not wired into game flow; board/happening composition weak → fixers in flight, wiring closes with W2" },
+    { "piece": "UI kit", "round": 1, "pass": false, "gap": "HUD chip micro-type (10-11px) → fixer in flight" },
+    { "piece": "Characters", "round": 1, "pass": false, "gap": "no limbs → cheer/sad are scale effects, not poses → limbs+poses fixer in flight" }
   ],
   "urls": { "game": "http://localhost:5177/", "showcase": "http://localhost:5177/?screen=showcase", "progress": "/progress.html" }
 }

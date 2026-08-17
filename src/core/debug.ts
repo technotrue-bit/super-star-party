@@ -24,6 +24,12 @@ export interface SSPDebug {
 let autoplayOn = false;
 let fps = 0;
 let frameMs = 0;
+let autoplayHook: (() => void) | null = null;
+
+/** Turn loop registers its driver here (Wave 2). */
+export function setAutoplayHook(fn: (() => void) | null): void {
+  autoplayHook = fn;
+}
 
 /** Called by the main loop each frame. */
 export function tickFrame(deltaMs: number): void {
@@ -33,7 +39,7 @@ export function tickFrame(deltaMs: number): void {
 
 /** Called by the main loop while autoplay is on. */
 export function autoplayTick(): void {
-  // Wave 2 (turn-loop) plugs the CPU driver in here.
+  autoplayHook?.();
 }
 
 export function setAutoplay(on: boolean): void {

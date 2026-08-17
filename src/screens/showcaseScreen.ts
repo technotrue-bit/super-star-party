@@ -37,11 +37,19 @@ interface ShowcaseState {
 function positionCamera(self: ShowcaseState, t: number): void {
   const cam = world.camera!;
   const { cx, cy, fit } = self._cam!;
-  const dist = fit * 0.85;
+  // Party camera that keeps the WHOLE board INCLUDING corner landmarks
+  // (tents ~2.9u, ferris wheel ~4.2u beyond the space loop) in frame at
+  // every orbit angle. Low pitch (~55deg), tight radius, gentle breathing,
+  // lookAt biased toward the ferris-wheel corner so it stays in view.
+  const dist = fit * 0.6;
   const yaw = t * 0.14;
-  const pitch = 1.05 + Math.sin(t * 0.31) * 0.08;
-  cam.position.set(cx + Math.sin(yaw) * dist, Math.cos(pitch) * dist + fit * 0.35, cy + Math.cos(yaw) * dist);
-  cam.lookAt(cx, 0, cy);
+  const pitch = 0.94 + Math.sin(t * 0.31) * 0.05;
+  cam.position.set(
+    cx + Math.sin(yaw) * dist,
+    Math.cos(pitch) * dist * 0.74 + fit * 0.1,
+    cy + Math.cos(yaw) * dist
+  );
+  cam.lookAt(cx + fit * 0.08, 0, cy - fit * 0.1);
 }
 
 const showcaseScreenImpl: ShowcaseState & Screen = {
@@ -56,11 +64,14 @@ const showcaseScreenImpl: ShowcaseState & Screen = {
     audio.music.play("board", { intensity: 0.7 });
     audio.music.intensity(0.7);
 
-    // ---- camera: fit board bounds, party angle ----
+    // ---- camera: fit board bounds + scenery pad (tents/ferris live up to
+    // ~4.5u beyond the space loop), party angle, lookAt biased to the
+    // ferris-wheel corner so landmarks stay in frame at every orbit angle ----
     const b = boardBounds();
+    const SCENERY_PAD = 5.2;
     const cx = (b.minX + b.maxX) / 2;
     const cy = (b.minY + b.maxY) / 2;
-    const fit = Math.max(b.maxX - b.minX, b.maxY - b.minY);
+    const fit = Math.max(b.maxX - b.minX, b.maxY - b.minY) + SCENERY_PAD * 2;
     this._cam = { cx, cy, fit };
     this._t = rng.next() * 100;
     positionCamera(this, this._t);
