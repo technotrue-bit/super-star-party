@@ -8,6 +8,7 @@ import "@fontsource/fredoka/600.css";
 import "@fontsource/fredoka/700.css";
 import { settings } from "./config/settings";
 import { palette } from "./config/palette";
+import { rng } from "./core/rng";
 import { screens } from "./screens/screenManager";
 import { installDebugAPI, tickFrame, autoplayTick, isAutoplay } from "./core/debug";
 import { bus } from "./core/events";
@@ -54,6 +55,7 @@ function boot(): void {
   // URL params for critics: ?seed=N&screen=NAME&autoplay=1&audio=0&speed=2
   const params = new URLSearchParams(window.location.search);
   const seed = Number(params.get("seed") ?? "1");
+  rng.reset(seed); // URL seed wins at boot (critic replays)
   const screen = params.get("screen") ?? "title";
   const audioOff = params.get("audio") === "0";
   const speed = Number(params.get("speed") ?? "1");

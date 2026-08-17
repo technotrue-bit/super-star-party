@@ -74,9 +74,11 @@ export const match: MatchState = {
 };
 
 /** Start a fresh match. Kinds = character keys, e.g. ["pip","bounce",...]. */
-export function startMatch(kinds: string[], names: string[], totalTurns = 10): void {
-  const seed = rng.reset(Math.floor(Math.random() * 2 ** 31)); // NOTE: replaced by seeded flow in wave 2
-  match.seed = seed;
+export function startMatch(kinds: string[], names: string[], totalTurns = 10, seed?: number): void {
+  // A provided seed is preserved (critic replays, debug API); otherwise a
+  // fresh random seed starts a new match.
+  const used = seed === undefined ? rng.reset(Math.floor(Math.random() * 2 ** 31)) : rng.reset(seed);
+  match.seed = used;
   match.turn = 1;
   match.totalTurns = totalTurns;
   match.phase = "idle";

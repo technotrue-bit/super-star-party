@@ -1,14 +1,14 @@
 {
-  "updated": "2026-08-16T23:15:00-04:00",
+  "updated": "2026-08-16T23:55:00-04:00",
   "game": "SUPER STAR PARTY",
-  "status": "R2: AUDIO ✅ PASS · CHARACTERS ✅ PASS · BOARD/UI/TURNLOOP gaps → 3 fixers running (camera composition, Fredoka on board UI, determinism, phase=ended). W3 (minigames) next.",
+  "status": "R3: ferris wheel PASS, camera numbers PASS — tents still specks (fixer running). Determinism root cause found & fixed (startMatch seed clobber) — slow-run byte-diff verifying now.",
   "waves": [
     {
       "id": "W0",
       "name": "Core engine + harness (orchestrator)",
       "status": "done",
       "pieces": [
-        { "id": 0, "name": "Core engine", "status": "done", "detail": "boot probe green" }
+        { "id": 0, "name": "Core engine", "status": "done", "detail": "seed plumbing fixed (startMatch preserves seed)" }
       ]
     },
     {
@@ -16,10 +16,10 @@
       "name": "Board · Characters · Audio · UI kit",
       "status": "critic",
       "pieces": [
-        { "id": 1, "name": "Board: Fizzy Fairground", "status": "critic", "detail": "R2 FAIL: match camera void + illegible landmarks → fixer running" },
-        { "id": 2, "name": "Characters (4 + anims + dice)", "status": "done", "detail": "R2 PASS — limbs + poses verified live (arm pump caught at −2.38 rad)" },
-        { "id": 3, "name": "Audio: music + SFX engine", "status": "done", "detail": "R2 PASS — wiring live: stingers ×12, intensity 0.5→0.85, 0 dead samples" },
-        { "id": 4, "name": "UI kit", "status": "critic", "detail": "R2: HUD chips ✅ but ROLL button Times New Roman → font fixer running" }
+        { "id": 1, "name": "Board: Fizzy Fairground", "status": "critic", "detail": "R3: camera numbers all pass + ferris reads as wheel; tents still 3-12px specks → tents fixer running" },
+        { "id": 2, "name": "Characters (4 + anims + dice)", "status": "done", "detail": "R2 PASS — limbs + poses verified live" },
+        { "id": 3, "name": "Audio: music + SFX engine", "status": "done", "detail": "R2 PASS — wiring live, stingers ×12, 0 dead samples" },
+        { "id": 4, "name": "UI kit", "status": "done", "detail": "R3 PASS — Fredoka on ROLL + dice face (computed-style verified)" }
       ]
     },
     {
@@ -27,10 +27,10 @@
       "name": "Turn loop · Economy · Happenings · Items",
       "status": "critic",
       "pieces": [
-        { "id": 5, "name": "Turn loop + board screen", "status": "critic", "detail": "R1: ALL mechanics verified (40/40 moves, star buys, 8 happenings, Funhouse Cut ×6, 27s/turn, 60fps) but determinism FAIL (anims consume gameplay rng) → fixer running; phase=ended fixer running" },
-        { "id": 6, "name": "Economy (coins/stars/bonus)", "status": "done", "detail": "verified live incl. bonus stars + podium" },
-        { "id": 7, "name": "Happenings (green + grumpus)", "status": "done", "detail": "8 distinct green + grumpus wheel/shave/gift observed live" },
-        { "id": 8, "name": "Items + shop", "status": "done", "detail": "mushroom bought + double-roll verified live" }
+        { "id": 5, "name": "Turn loop + board screen", "status": "critic", "detail": "R3: gameplay determinism PROVEN (byte-identical when seed sticks); remaining bug was startMatch() clobbering the seed — fixed at source; slow-run verification in flight; phase=ended live" },
+        { "id": 6, "name": "Economy (coins/stars/bonus)", "status": "done", "detail": "verified live" },
+        { "id": 7, "name": "Happenings (green + grumpus)", "status": "done", "detail": "verified live" },
+        { "id": 8, "name": "Items + shop", "status": "done", "detail": "verified live" }
       ]
     },
     {
@@ -38,7 +38,7 @@
       "name": "Minigame framework + 8 minigames",
       "status": "planned",
       "pieces": [
-        { "id": 9, "name": "Minigame framework", "status": "planned", "detail": "registry stub live; turn loop calls tryPickMinigame()" },
+        { "id": 9, "name": "Minigame framework", "status": "planned", "detail": "contract ready; dispatches after determinism verification lands" },
         { "id": 10, "name": "Bumper Balls", "status": "planned", "detail": "" },
         { "id": 11, "name": "Cake Dash", "status": "planned", "detail": "" },
         { "id": 12, "name": "Coin Cannon", "status": "planned", "detail": "" },
@@ -72,11 +72,13 @@
     { "piece": "Audio", "round": 1, "pass": false, "gap": "not wired into game flow" },
     { "piece": "UI kit", "round": 1, "pass": false, "gap": "HUD chip micro-type" },
     { "piece": "Characters", "round": 1, "pass": false, "gap": "no limbs" },
-    { "piece": "Board", "round": 2, "pass": false, "gap": "match camera: void 44-56% ink + landmarks illegible → fixer running" },
+    { "piece": "Board", "round": 2, "pass": false, "gap": "match camera: ink void 44-56% + landmarks illegible" },
     { "piece": "Audio", "round": 2, "pass": true, "gap": "" },
-    { "piece": "UI kit", "round": 2, "pass": false, "gap": "ROLL button Times New Roman (Fredoka scoping) → fixer running" },
+    { "piece": "UI kit", "round": 2, "pass": false, "gap": "ROLL button Times New Roman" },
     { "piece": "Characters", "round": 2, "pass": true, "gap": "" },
-    { "piece": "Turn loop", "round": 1, "pass": false, "gap": "seeded runs diverge (anims consume gameplay rng); phase never 'ended' → fixers running" }
+    { "piece": "Turn loop", "round": 1, "pass": false, "gap": "seeded runs diverge (anims rng); phase never 'ended'" },
+    { "piece": "Board", "round": 3, "pass": false, "gap": "camera numbers all pass; tents still 3-12px specks on portrait → fixer running" },
+    { "piece": "Turn loop", "round": 2, "pass": false, "gap": "gameplay deterministic once seed sticks; root cause = startMatch() reseeds with Math.random, clobbering __SSP__.seed() → fixed at source, re-verifying" }
   ],
   "urls": { "game": "http://localhost:5177/", "showcase": "http://localhost:5177/?screen=showcase", "progress": "/progress.html" }
 }

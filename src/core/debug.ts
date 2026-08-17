@@ -7,6 +7,7 @@ import { match, snapshot, startMatch } from "./game";
 import { rng } from "./rng";
 import { audio } from "../audio/audioEngine";
 import { screens } from "../screens/screenManager";
+import { world } from "../main";
 
 export interface SSPDebug {
   state(): Record<string, unknown>;
@@ -53,9 +54,16 @@ export function isAutoplay(): boolean {
 export function installDebugAPI(): void {
   const api: SSPDebug = {
     state() {
+      const cam = world.camera;
       return {
         version: "0.1.0",
         screen: screens.current,
+        camera: cam
+          ? {
+              pos: [cam.position.x, cam.position.y, cam.position.z].map((v) => +v.toFixed(2)),
+              fov: cam.fov,
+            }
+          : null,
         match: snapshot(),
         audio: {
           track: audio.music.track(),
@@ -95,7 +103,9 @@ export function installDebugAPI(): void {
       return { fps: Math.round(fps), ms: Math.round(frameMs) };
     },
     startMatch(kinds: string[], names?: string[]) {
-      startMatch(kinds, names ?? []);
+      // Preserve the current seed (set via __SSP__.seed(n)) so critic
+      // replays are byte-identical; plain startMatch still reseeds randomly.
+      startMatch(kinds, names ?? [], 10, match.seed);
       screens.goto("board");
     },
   };
