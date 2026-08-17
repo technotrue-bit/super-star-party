@@ -1,0 +1,72 @@
+{
+  "updated": "2026-08-16T00:00:00-04:00",
+  "game": "SUPER STAR PARTY",
+  "status": "Wave 0 — scaffold complete; Wave 1 dispatched",
+  "waves": [
+    {
+      "id": "W0",
+      "name": "Core engine + harness (orchestrator)",
+      "status": "done",
+      "pieces": [
+        { "id": 0, "name": "Core engine", "status": "done", "detail": "rng, events, match state, debug API, boot, screens" }
+      ]
+    },
+    {
+      "id": "W1",
+      "name": "Board · Characters · Audio · UI kit",
+      "status": "building",
+      "pieces": [
+        { "id": 1, "name": "Board: Fizzy Fairground", "status": "building", "detail": "" },
+        { "id": 2, "name": "Characters (4 + anims + dice)", "status": "building", "detail": "" },
+        { "id": 3, "name": "Audio: music + SFX engine", "status": "building", "detail": "" },
+        { "id": 4, "name": "UI kit", "status": "building", "detail": "" }
+      ]
+    },
+    {
+      "id": "W2",
+      "name": "Turn loop · Economy · Happenings · Items",
+      "status": "planned",
+      "pieces": [
+        { "id": 5, "name": "Turn loop + board screen", "status": "planned", "detail": "" },
+        { "id": 6, "name": "Economy (coins/stars/bonus)", "status": "planned", "detail": "" },
+        { "id": 7, "name": "Happenings (green + grumpus)", "status": "planned", "detail": "" },
+        { "id": 8, "name": "Items + shop", "status": "planned", "detail": "" }
+      ]
+    },
+    {
+      "id": "W3",
+      "name": "Minigame framework + 8 minigames",
+      "status": "planned",
+      "pieces": [
+        { "id": 9, "name": "Minigame framework", "status": "planned", "detail": "" },
+        { "id": 10, "name": "Bumper Balls", "status": "planned", "detail": "" },
+        { "id": 11, "name": "Cake Dash", "status": "planned", "detail": "" },
+        { "id": 12, "name": "Coin Cannon", "status": "planned", "detail": "" },
+        { "id": 13, "name": "Memory Match", "status": "planned", "detail": "" },
+        { "id": 14, "name": "Drum Solo", "status": "planned", "detail": "" },
+        { "id": 15, "name": "Balloon Pop", "status": "planned", "detail": "" },
+        { "id": 16, "name": "Coin Grab", "status": "planned", "detail": "" },
+        { "id": 17, "name": "Pipe Puzzle", "status": "planned", "detail": "" }
+      ]
+    },
+    {
+      "id": "W4",
+      "name": "Screens (title/select/results/pause) + juice pass",
+      "status": "planned",
+      "pieces": [
+        { "id": 18, "name": "Screens: title, select, results, pause", "status": "planned", "detail": "" },
+        { "id": 19, "name": "Juice: particles, shake, hit-stop, transitions", "status": "planned", "detail": "" }
+      ]
+    },
+    {
+      "id": "W5",
+      "name": "Whole-game coherence + final MP7 gauntlet",
+      "status": "planned",
+      "pieces": [
+        { "id": 20, "name": "Coherence pass + final critics", "status": "planned", "detail": "" }
+      ]
+    }
+  ],
+  "criticRounds": [],
+  "urls": { "game": "http://localhost:5177/", "showcase": "http://localhost:5177/?screen=showcase", "progress": "/progress.html" }
+}
