@@ -19,5 +19,9 @@ export const MINIGAME_MODULES: Array<() => Promise<Minigame>> = [
   () => import("./cake_dash/index").then((m) => m.loadCakeDash()),
   () => import("./coin_cannon/index").then((m) => m.loadCoinCannon()),
   () => import("./memory_match/index").then((m) => m.loadMemoryMatch()),
-  // ---- Wave 3 batch 2 (lands next) ----
+  // ---- Wave 3 batch 2 ----
+  () => import("./drum_solo/index").then((m) => m.loadDrumSolo()),
+  () => import("./balloon_pop/index").then((m) => m.loadBalloonPop()),
+  () => import("./coin_grab/index").then((m) => m.loadCoinGrab()),
+  () => import("./pipe_puzzle/index").then((m) => m.loadPipePuzzle()),
 ];

@@ -1,0 +1,979 @@
+/**
+ * COIN GRAB — collect arena minigame (MP7 Coin Block Blitz spirit).
+ *
+ * One shared circular park: gold coin piles rain down and four characters
+ * dash around hoovering them up. Bumping into a rival at speed has a 25%
+ * chance to KNOCK one coin out of their pocket — it flies out with a boing
+ * and lands as a fresh pile anyone can grab (mischievous, comeback-friendly
+ * theft). 30 seconds, most coins wins, ties go to the lower player id.
+ *
+ * Determinism: coin spawns, CPU brains, and knock rolls all use ctx.rng()
+ * only. Per-frame steering is pure math over live positions, so seeded
+ * runs replay identically.
+ *
+ * Time budget: the framework force-finishes at settings.minigameTimeLimit
+ * (30s); this game calls finish() at TIME_CAP = 30 in the same frame the
+ * limit is reached, so it always ranks itself before the safety net.
+ */
+import * as THREE from "three";
+import type { Minigame, MinigameContext } from "../framework";
+import { ease } from "../../core/rng";
+import { ui } from "../../ui/kit";
+import { characterColor } from "../../characters/roster";
+import { celGradient } from "../../characters/cel";
+import { palette, hex } from "../../config/palette";
+import { buildCoinField, ARENA_R, type FieldHandle } from "./field";
+
+/* ------------------------- tuning constants ------------------------- */
+
+const CHAR_R = 0.55; // character collision radius
+const HUMAN_SPEED = 5.0; // u/s top speed (CPU runs at 75-95% of this)
+const ACCEL = 12; // u/s^2 — snappy but controllable
+const FRICTION = 8; // u/s^2 drift decay with no input
+const WALL_CLAMP = ARENA_R - CHAR_R - 0.08;
+const SPAWN_RADIUS = 4.0; // quarter-point spawn ring (on the path ring)
+const SPAWN_ANGLES = [Math.PI / 4, (3 * Math.PI) / 4, (5 * Math.PI) / 4, (7 * Math.PI) / 4];
+
+const PILE_LIFE = 9.0; // seconds a pile sits before sparkle-fading away
+const PILE_FADE = 0.5; // fade-out length at the end of a pile's life
+const MAX_PILES = 10; // concurrent rain piles cap
+const SPAWN_MIN = 0.8; // seconds between rain drops (min)
+const SPAWN_MAX = 1.4; // seconds between rain drops (max)
+const PILE_MIN = 2; // coins per fresh pile (min)
+const PILE_MAX = 4; // coins per fresh pile (max)
+const CHAR_CLEAR = 1.8; // rain piles never land too close to a character
+const CENTER_CLEAR = 1.0; // ...or inside the fountain
+const PICKUP_R = 0.75; // pickup reach
+const KNOCK_P = 0.25; // theft chance per real bump
+const KNOCK_MIN_IMPULSE = 1.2; // a bump must hit this hard to roll theft
+const KNOCK_SPEED = 4.2; // knocked coin launch speed
+const KNOCK_VY = 4.0; // knocked coin upward launch
+const COIN_GRAV = 9; // knocked coin flight gravity
+const COIN_R = 0.17; // single coin sphere radius
+const CPU_PILE_P = 0.7; // CPU chases the nearest pile 70% of the time
+const TIME_CAP = 30; // round length (framework limit is exactly 30)
+const BOING_GAP = 0.09; // sfx throttle between boings
+const POP_GAP = 0.12; // sfx throttle between land pops
+const POINTER_AUTO_RELEASE = 0.5; // held pointer with no events => release
+const KEY_STALE = 0.35; // keyboard steer drops after this long without keys
+
+/* ------------------------------ types ------------------------------- */
+
+interface Body {
+  id: number;
+  holder: THREE.Group;
+  x: number;
+  z: number;
+  vx: number;
+  vz: number;
+  coins: number;
+  moving: boolean;
+  animHoldT: number; // squash/jump hold — don't re-apply move anim during it
+  brain: CpuBrain;
+}
+
+interface CpuBrain {
+  pickT: number; // seconds until the next re-pick
+  mode: "pile" | "wander";
+  speedMul: number; // fraction of the human top speed
+  wanderX: number; // wander target point
+  wanderZ: number;
+}
+
+interface HumanInput {
+  held: boolean;
+  tx: number;
+  ty: number;
+  idleT: number;
+  keyDir: { x: number; z: number } | null;
+  keyIdleT: number;
+  lastHopT: number;
+}
+
+interface Pile {
+  group: THREE.Group;
+  x: number;
+  z: number;
+  coins: number;
+  life: number; // counts down from PILE_LIFE
+  phase: number; // visual pulse phase
+  ring: THREE.Mesh;
+  ringMat: THREE.MeshBasicMaterial;
+  glints: { mesh: THREE.Mesh; speed: number; phase: number; radius: number; y: number }[];
+}
+
+interface Flyer {
+  group: THREE.Group;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+}
+
+interface Particle {
+  mesh: THREE.Mesh;
+  vx: number;
+  vy: number;
+  vz: number;
+  life: number;
+  maxLife: number;
+  grav: number;
+  base: number;
+}
+
+interface RingPop {
+  mesh: THREE.Mesh;
+  mat: THREE.MeshBasicMaterial;
+  life: number;
+  maxLife: number;
+}
+
+interface Chip {
+  el: HTMLDivElement;
+  num: HTMLSpanElement;
+  last: number;
+}
+
+interface RoundState {
+  ctx: MinigameContext;
+  field: FieldHandle | null;
+  dyn: THREE.Group; // everything dynamic (piles, flyers, bursts) lives here
+  geos: THREE.BufferGeometry[];
+  mats: THREE.Material[];
+  bodies: Body[];
+  piles: Pile[];
+  flyers: Flyer[];
+  particles: Particle[];
+  rings: RingPop[];
+  spawnT: number;
+  t: number; // own clock (ctx.time is fine too; this starts at GO like it)
+  ended: boolean;
+  hurryAnnounced: boolean;
+  boingT: number;
+  popT: number;
+  shakeT: number;
+  human: HumanInput;
+  camBase: THREE.Vector3;
+  raycaster: THREE.Raycaster;
+  plane: THREE.Plane;
+  scratch: THREE.Vector3;
+  onPointerUp: () => void;
+  hudRoot: HTMLDivElement | null;
+  timerEl: HTMLDivElement | null;
+  timerLast: number;
+  chips: Chip[];
+}
+
+/* --------------------------- tiny helpers --------------------------- */
+
+function toon(state: RoundState, color: string): THREE.MeshToonMaterial {
+  const m = new THREE.MeshToonMaterial({ color: hex(color), gradientMap: celGradient });
+  state.mats.push(m);
+  return m;
+}
+
+function basic(state: RoundState, color: string, opacity = 1): THREE.MeshBasicMaterial {
+  const m = new THREE.MeshBasicMaterial({
+    color: hex(color),
+    transparent: opacity < 1,
+    opacity,
+    depthWrite: opacity >= 1,
+  });
+  state.mats.push(m);
+  return m;
+}
+
+function norm(x: number, z: number): { x: number; z: number } {
+  const l = Math.hypot(x, z);
+  if (l < 1e-6) return { x: 0, z: 0 };
+  return { x: x / l, z: z / l };
+}
+
+/* --------------------------- HUD (DOM chips) ------------------------ */
+
+let hudStylesInjected = false;
+
+function injectHudStyles(): void {
+  if (hudStylesInjected) return;
+  hudStylesInjected = true;
+  if (document.getElementById("ssp-coin-grab-styles")) return;
+  const style = document.createElement("style");
+  style.id = "ssp-coin-grab-styles";
+  style.textContent = `
+.cg-chip-pop { animation: cgChipPop .32s cubic-bezier(.34,1.56,.64,1); }
+@keyframes cgChipPop { 0% { transform: scale(1); } 45% { transform: scale(1.28); } 100% { transform: scale(1); } }
+.cg-timer--hot { color: ${palette.lava} !important; }
+.cg-timer--hot .cg-clock { background: ${palette.lava} !important; }
+.cg-clock { display:inline-block; width:10px; height:10px; border-radius:50%; background:${palette.sun}; margin-right:7px; vertical-align:1px; }
+`;
+  document.head.appendChild(style);
+}
+
+const CORNERS = [
+  "top:10px;left:10px",
+  "top:10px;right:10px",
+  "bottom:10px;left:10px",
+  "bottom:10px;right:10px",
+];
+
+function buildHud(state: RoundState): void {
+  injectHudStyles();
+  const root = document.createElement("div");
+  root.id = "ssp-coin-grab-hud";
+  root.style.cssText =
+    "position:fixed;inset:0;pointer-events:none;z-index:60;font-family:Fredoka,sans-serif;";
+  state.chips = state.ctx.players.map((p, i) => {
+    const el = document.createElement("div");
+    el.style.cssText =
+      `position:absolute;${CORNERS[i] ?? CORNERS[0]};display:flex;align-items:center;gap:7px;` +
+      `background:${palette.cream};border:3px solid ${palette.ink};border-radius:999px;` +
+      `padding:5px 14px;box-shadow:0 3px 0 ${palette.ink};font-weight:700;font-size:19px;color:${palette.ink};`;
+    const dot = document.createElement("span");
+    dot.style.cssText =
+      `width:14px;height:14px;border-radius:50%;background:${characterColor(p.kind)};` +
+      `border:2px solid ${palette.ink};display:inline-block;`;
+    const num = document.createElement("span");
+    num.textContent = "0";
+    num.style.cssText = "min-width:20px;text-align:center;display:inline-block;";
+    el.append(dot, num);
+    root.appendChild(el);
+    return { el, num, last: 0 };
+  });
+  const timer = document.createElement("div");
+  timer.style.cssText =
+    `position:absolute;top:12px;left:50%;transform:translateX(-50%);` +
+    `background:${palette.ink};color:${palette.cream};border-radius:999px;padding:6px 18px;` +
+    `font-weight:700;font-size:18px;letter-spacing:1px;display:flex;align-items:center;`;
+  const clock = document.createElement("span");
+  clock.className = "cg-clock";
+  timer.appendChild(clock);
+  timer.appendChild(document.createTextNode("30"));
+  root.appendChild(timer);
+  document.body.appendChild(root);
+  state.hudRoot = root;
+  state.timerEl = timer;
+  state.timerLast = -1;
+}
+
+function popChip(chip: Chip): void {
+  chip.el.classList.remove("cg-chip-pop");
+  void chip.el.offsetWidth;
+  chip.el.classList.add("cg-chip-pop");
+}
+
+function updateHud(state: RoundState): void {
+  for (let i = 0; i < state.bodies.length; i++) {
+    const chip = state.chips[i];
+    if (!chip) continue;
+    const v = state.bodies[i].coins;
+    if (v !== chip.last) {
+      chip.last = v;
+      chip.num.textContent = String(v);
+      popChip(chip);
+    }
+  }
+  const left = Math.max(0, Math.ceil(TIME_CAP - state.t));
+  if (left !== state.timerLast && state.timerEl) {
+    state.timerLast = left;
+    state.timerEl.lastChild!.textContent = String(left);
+    state.timerEl.classList.toggle("cg-timer--hot", left <= 5);
+  }
+}
+
+/* ----------------------------- particles ---------------------------- */
+
+function spawnBurst(
+  state: RoundState,
+  x: number,
+  y: number,
+  z: number,
+  colors: string[],
+  count: number,
+  speed: number,
+  life: number,
+  grav: number,
+  base = 0.07
+): void {
+  const ctx = state.ctx;
+  const geo = new THREE.SphereGeometry(1, 8, 6);
+  state.geos.push(geo);
+  for (let i = 0; i < count; i++) {
+    const mat = basic(state, colors[Math.floor(ctx.rng() * colors.length)]);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    mesh.scale.setScalar(base);
+    mesh.castShadow = false;
+    state.dyn.add(mesh);
+    const th = ctx.rng() * Math.PI * 2;
+    const ph = ctx.rng() * Math.PI - Math.PI / 2;
+    const sp = speed * (0.5 + ctx.rng() * 0.8);
+    state.particles.push({
+      mesh,
+      vx: Math.cos(th) * Math.cos(ph) * sp,
+      vy: Math.sin(ph) * sp + 1.6,
+      vz: Math.sin(th) * Math.cos(ph) * sp,
+      life,
+      maxLife: life,
+      grav,
+      base: base * (0.7 + ctx.rng() * 0.6),
+    });
+  }
+}
+
+function spawnRingPop(state: RoundState, x: number, z: number): void {
+  const mat = basic(state, palette.sun, 0.9);
+  const mesh = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.07, 8, 24), mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(x, 0.06, z);
+  mesh.scale.setScalar(0.5);
+  mesh.castShadow = false;
+  state.dyn.add(mesh);
+  state.rings.push({ mesh, mat, life: 0.45, maxLife: 0.45 });
+}
+
+function updateParticles(state: RoundState, dt: number): void {
+  for (let i = state.particles.length - 1; i >= 0; i--) {
+    const p = state.particles[i];
+    p.life -= dt;
+    if (p.life <= 0) {
+      state.dyn.remove(p.mesh);
+      state.particles.splice(i, 1);
+      continue;
+    }
+    p.vy -= p.grav * dt;
+    p.mesh.position.x += p.vx * dt;
+    p.mesh.position.y += p.vy * dt;
+    p.mesh.position.z += p.vz * dt;
+    p.mesh.scale.setScalar(p.base * Math.max(0, p.life / p.maxLife));
+  }
+  for (let i = state.rings.length - 1; i >= 0; i--) {
+    const r = state.rings[i];
+    r.life -= dt;
+    if (r.life <= 0) {
+      state.dyn.remove(r.mesh);
+      state.rings.splice(i, 1);
+      continue;
+    }
+    const k = 1 - r.life / r.maxLife;
+    r.mesh.scale.setScalar(0.5 + ease.outCubic(k) * 2.6);
+    r.mat.opacity = 0.9 * (1 - k);
+  }
+}
+
+/* ------------------------------ coin piles -------------------------- */
+
+function buildPile(state: RoundState, x: number, z: number, coins: number, life: number): Pile {
+  const ctx = state.ctx;
+  const group = new THREE.Group();
+  group.position.set(x, 0, z);
+
+  const ringMat = basic(state, palette.sun, 0.45);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.62, 24), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.025;
+  ring.castShadow = false;
+  group.add(ring);
+
+  const coinGeo = new THREE.SphereGeometry(1, 12, 10);
+  state.geos.push(coinGeo);
+  const coinMat = toon(state, palette.sun);
+  for (let i = 0; i < coins; i++) {
+    const m = new THREE.Mesh(coinGeo, coinMat);
+    m.position.set((ctx.rng() - 0.5) * 0.16, 0.17 + i * 0.15, (ctx.rng() - 0.5) * 0.16);
+    m.scale.setScalar(COIN_R);
+    m.castShadow = false;
+    group.add(m);
+  }
+
+  const glintGeo = new THREE.SphereGeometry(1, 8, 6);
+  state.geos.push(glintGeo);
+  const glintMat = basic(state, palette.sun);
+  const glints: Pile["glints"] = [];
+  for (let i = 0; i < 2; i++) {
+    const g = new THREE.Mesh(glintGeo, glintMat);
+    g.scale.setScalar(0.05);
+    g.castShadow = false;
+    group.add(g);
+    glints.push({
+      mesh: g,
+      speed: (2.2 + ctx.rng() * 1.6) * (i % 2 === 0 ? 1 : -1),
+      phase: ctx.rng() * Math.PI * 2,
+      radius: 0.52 + ctx.rng() * 0.18,
+      y: 0.34 + ctx.rng() * 0.3,
+    });
+  }
+
+  state.dyn.add(group);
+  const pile: Pile = { group, x, z, coins, life, phase: ctx.rng() * Math.PI * 2, ring, ringMat, glints };
+  state.piles.push(pile);
+  return pile;
+}
+
+function removePileVisual(state: RoundState, pile: Pile): void {
+  state.dyn.remove(pile.group);
+}
+
+function updatePiles(state: RoundState, dt: number): void {
+  const t = state.t;
+  for (let i = state.piles.length - 1; i >= 0; i--) {
+    const p = state.piles[i];
+    p.life -= dt;
+    if (p.life <= 0) {
+      spawnBurst(state, p.x, 0.35, p.z, [palette.sun, palette.sunDeep, palette.cream], 7, 2.4, 0.45, 5, 0.06);
+      removePileVisual(state, p);
+      state.piles.splice(i, 1);
+      continue;
+    }
+    if (p.life < PILE_FADE) {
+      const s = Math.max(0.01, p.life / PILE_FADE);
+      p.group.scale.setScalar(s);
+      p.ringMat.opacity = 0.45 * s;
+    } else {
+      p.ringMat.opacity = 0.32 + 0.2 * (0.5 + 0.5 * Math.sin(t * 5 + p.phase));
+    }
+    for (const gl of p.glints) {
+      const a = t * gl.speed + gl.phase;
+      gl.mesh.position.set(Math.cos(a) * gl.radius, gl.y + 0.08 * Math.sin(t * 3.2 + gl.phase), Math.sin(a) * gl.radius);
+    }
+  }
+}
+
+function spawnPile(state: RoundState): void {
+  const ctx = state.ctx;
+  const coins = PILE_MIN + Math.floor(ctx.rng() * (PILE_MAX - PILE_MIN + 1));
+  let x = 0;
+  let z = 0;
+  let ok = false;
+  for (let i = 0; i < 10; i++) {
+    const a = ctx.rng() * Math.PI * 2;
+    const r = CENTER_CLEAR + 0.2 + ctx.rng() * (WALL_CLAMP - CENTER_CLEAR - 0.2);
+    x = Math.cos(a) * r;
+    z = Math.sin(a) * r;
+    if (Math.hypot(x, z) < CENTER_CLEAR) continue;
+    ok = true;
+    for (const b of state.bodies) {
+      if (Math.hypot(b.x - x, b.z - z) < CHAR_CLEAR) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) break;
+  }
+  if (!ok) {
+    // Fallback (no extra draws): clamp the last candidate into the play ring.
+    const d = Math.max(CENTER_CLEAR + 0.15, Math.min(WALL_CLAMP, Math.hypot(x, z)));
+    const a = Math.atan2(z, x);
+    x = Math.cos(a) * d;
+    z = Math.sin(a) * d;
+  }
+  buildPile(state, x, z, coins, PILE_LIFE);
+}
+
+/* ------------------------------ flyers ------------------------------ */
+
+function updateFlyers(state: RoundState, dt: number): void {
+  for (let i = state.flyers.length - 1; i >= 0; i--) {
+    const f = state.flyers[i];
+    f.vy -= COIN_GRAV * dt;
+    f.x += f.vx * dt;
+    f.y += f.vy * dt;
+    f.z += f.vz * dt;
+    f.group.position.set(f.x, f.y, f.z);
+    f.group.rotation.y += dt * 9;
+    if (f.y <= COIN_R + 0.02) {
+      // Land: clamp into the play ring, drop a fresh 1-coin pile.
+      const d = Math.max(CENTER_CLEAR + 0.15, Math.min(WALL_CLAMP, Math.hypot(f.x, f.z)));
+      const a = Math.atan2(f.z, f.x);
+      const lx = Math.cos(a) * d;
+      const lz = Math.sin(a) * d;
+      state.dyn.remove(f.group);
+      state.flyers.splice(i, 1);
+      buildPile(state, lx, lz, 1, PILE_LIFE);
+      spawnBurst(state, lx, 0.3, lz, [palette.sunDeep, palette.cream], 5, 2.0, 0.4, 5, 0.05);
+      if (state.popT <= 0) {
+        state.popT = POP_GAP;
+        state.ctx.playSfx("pop", { volume: 0.5, pitch: 1.1 });
+      }
+    }
+  }
+}
+
+/* ------------------------------ gameplay ---------------------------- */
+
+function collectPile(state: RoundState, b: Body, pile: Pile): void {
+  const ctx = state.ctx;
+  b.coins += pile.coins;
+  ctx.playSfx("coin.gain", { volume: 0.8, pitch: 0.85 + pile.coins * 0.17 });
+  spawnBurst(
+    state,
+    pile.x,
+    0.5,
+    pile.z,
+    [palette.sun, palette.sunDeep, palette.mint],
+    8 + pile.coins * 2,
+    3.4,
+    0.55,
+    6,
+    0.08
+  );
+  spawnRingPop(state, pile.x, pile.z);
+  const ch = ctx.characters[b.id];
+  ch?.anim.squash();
+  b.animHoldT = Math.max(b.animHoldT, 0.18);
+  removePileVisual(state, pile);
+}
+
+function knockCoin(state: RoundState, victim: Body, bumper: Body): void {
+  const ctx = state.ctx;
+  victim.coins -= 1;
+  const dx = victim.x - bumper.x;
+  const dz = victim.z - bumper.z;
+  const side = ctx.rng() < 0.5 ? -1 : 1;
+  // Launch away from the bumper with a lateral lean so thefts scatter.
+  const ang = Math.atan2(dz, dx) + side * (0.25 + ctx.rng() * 0.35);
+  const sp = KNOCK_SPEED * (0.85 + ctx.rng() * 0.35);
+  const group = new THREE.Group();
+  const geo = new THREE.SphereGeometry(1, 10, 8);
+  state.geos.push(geo);
+  const mesh = new THREE.Mesh(geo, toon(state, palette.sun));
+  mesh.scale.setScalar(COIN_R);
+  mesh.position.set(victim.x, 0.6, victim.z);
+  mesh.castShadow = false;
+  group.add(mesh);
+  state.dyn.add(group);
+  state.flyers.push({
+    group,
+    x: victim.x,
+    y: 0.6,
+    z: victim.z,
+    vx: Math.cos(ang) * sp,
+    vy: KNOCK_VY * (0.85 + ctx.rng() * 0.35),
+    vz: Math.sin(ang) * sp,
+  });
+  state.shakeT = Math.min(0.16, state.shakeT + 0.1);
+  ctx.playSfx("boing", { volume: 0.7, pitch: 0.8 });
+  ctx.playSfx("coin.lose", { volume: 0.35, pitch: 0.75 });
+  ctx.characters[victim.id]?.anim.squash();
+  victim.animHoldT = Math.max(victim.animHoldT, 0.2);
+}
+
+function bumpJuice(state: RoundState, b: Body): void {
+  b.animHoldT = Math.max(b.animHoldT, 0.14);
+  state.ctx.characters[b.id]?.anim.squash();
+  if (state.boingT <= 0) {
+    state.boingT = BOING_GAP;
+    state.ctx.playSfx("boing", { volume: 0.6, pitch: 0.9 + (b.id % 4) * 0.07 });
+  }
+}
+
+function applyMoveAnim(state: RoundState, b: Body): void {
+  if (b.animHoldT > 0) return;
+  const sp = Math.hypot(b.vx, b.vz);
+  const moving = sp > 0.35;
+  const ch = state.ctx.characters[b.id];
+  if (moving !== b.moving) {
+    b.moving = moving;
+    if (moving) {
+      ch?.anim.walk();
+      ch?.setFacing(Math.atan2(b.vx, b.vz));
+    } else {
+      ch?.anim.idle();
+    }
+  } else if (moving) {
+    ch?.setFacing(Math.atan2(b.vx, b.vz));
+  }
+}
+
+function pointerDir(state: RoundState, b: Body): { x: number; z: number } | null {
+  const cam = state.ctx.camera;
+  state.raycaster.setFromCamera(
+    new THREE.Vector2(state.human.tx * 2 - 1, -(state.human.ty * 2 - 1)),
+    cam
+  );
+  const hit = state.raycaster.ray.intersectPlane(state.plane, state.scratch);
+  if (!hit) return null;
+  const dx = hit.x - b.x;
+  const dz = hit.z - b.z;
+  const l = Math.hypot(dx, dz);
+  if (l < 0.35) return null; // arrived — drift
+  return { x: dx / l, z: dz / l };
+}
+
+/* ------------------------------ CPU brain --------------------------- */
+
+function freshBrain(): CpuBrain {
+  return { pickT: 0, mode: "pile", speedMul: 0.85, wanderX: 0, wanderZ: 0 };
+}
+
+/** Full re-pick: mode roll, speed roll, timer roll, wander point rolls. */
+function repick(brain: CpuBrain, state: RoundState): void {
+  const ctx = state.ctx;
+  brain.mode = ctx.rng() < CPU_PILE_P ? "pile" : "wander";
+  brain.speedMul = 0.75 + ctx.rng() * 0.2;
+  brain.pickT = 0.5 + ctx.rng() * 0.5;
+  const a = ctx.rng() * Math.PI * 2;
+  const r = 1.0 + ctx.rng() * (WALL_CLAMP - 1.0);
+  brain.wanderX = Math.cos(a) * r;
+  brain.wanderZ = Math.sin(a) * r;
+}
+
+/** Per-frame steering — pure math, no rng. */
+function cpuDir(state: RoundState, b: Body): { x: number; z: number } | null {
+  const brain = b.brain;
+  if (brain.mode === "pile") {
+    let best: Pile | null = null;
+    let bestD = Infinity;
+    for (const p of state.piles) {
+      const dd = (p.x - b.x) * (p.x - b.x) + (p.z - b.z) * (p.z - b.z);
+      if (dd < bestD) {
+        bestD = dd;
+        best = p;
+      }
+    }
+    if (best) return norm(best.x - b.x, best.z - b.z);
+  }
+  const dx = brain.wanderX - b.x;
+  const dz = brain.wanderZ - b.z;
+  const l = Math.hypot(dx, dz);
+  if (l < 0.4) return { x: 0, z: 0 }; // arrived — drift until re-pick
+  return { x: dx / l, z: dz / l };
+}
+
+/* ------------------------------- round ------------------------------ */
+
+function endGame(state: RoundState): void {
+  state.ended = true;
+  const ctx = state.ctx;
+  const ranking = [...state.bodies]
+    .sort((a, b) => b.coins - a.coins || a.id - b.id)
+    .map((b) => b.id);
+  ctx.finish(ranking);
+  const winner = state.bodies.find((b) => b.id === ranking[0]);
+  const p = ctx.players[winner?.id ?? ranking[0]];
+  ctx.characters[ranking[0]]?.anim.cheer();
+  ctx.playSfx("crowd.cheer", { volume: 0.85 });
+  ui.confettiBurst(undefined, undefined, { count: 90, sound: null });
+  ctx.announce(`${p?.name ?? "?"} GRABS THE MOST COINS!`, { durationMs: 2400, sound: null });
+}
+
+function updateCamera(state: RoundState, dt: number): void {
+  const cam = state.ctx.camera;
+  if (state.shakeT > 0) {
+    state.shakeT -= dt;
+    const s = Math.max(0, state.shakeT) * 1.8;
+    cam.position.x = state.camBase.x + Math.sin(state.t * 83.7) * s * 0.35;
+    cam.position.y = state.camBase.y + Math.cos(state.t * 61.3) * s * 0.35;
+    cam.position.z = state.camBase.z;
+  } else {
+    cam.position.copy(state.camBase);
+  }
+  cam.lookAt(0, 0, 0);
+}
+
+/* --------------------------- minigame object ------------------------ */
+
+export const coinGrabMinigame: Minigame = {
+  id: "coin_grab",
+  name: "Coin Grab",
+  genre: "collect",
+
+  setup(ctx: MinigameContext): void {
+    const cam = ctx.camera;
+    const portrait = window.innerWidth / window.innerHeight < 1;
+    cam.fov = portrait ? 72 : 62;
+    cam.updateProjectionMatrix();
+    const camBase = new THREE.Vector3(0, portrait ? 17.6 : 11, portrait ? 10.3 : 9);
+
+    const state: RoundState = {
+      ctx,
+      field: null,
+      dyn: new THREE.Group(),
+      geos: [],
+      mats: [],
+      bodies: [],
+      piles: [],
+      flyers: [],
+      particles: [],
+      rings: [],
+      spawnT: 0.6,
+      t: 0,
+      ended: false,
+      hurryAnnounced: false,
+      boingT: 0,
+      popT: 0,
+      shakeT: 0,
+      human: { held: false, tx: 0.5, ty: 0.5, idleT: 0, keyDir: null, keyIdleT: 0, lastHopT: -10 },
+      camBase,
+      raycaster: new THREE.Raycaster(),
+      plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
+      scratch: new THREE.Vector3(),
+      onPointerUp: () => {
+        state.human.held = false;
+      },
+      hudRoot: null,
+      timerEl: null,
+      timerLast: -1,
+      chips: [],
+    };
+    ctx.scene.add(state.dyn);
+
+    // ---- characters at the four quarter points (with a touch of jitter) ----
+    ctx.players.forEach((p, i) => {
+      const a = SPAWN_ANGLES[i] ?? 0;
+      const x = Math.cos(a) * SPAWN_RADIUS + (ctx.rng() - 0.5) * 0.5;
+      const z = Math.sin(a) * SPAWN_RADIUS + (ctx.rng() - 0.5) * 0.5;
+
+      const holder = new THREE.Group();
+      holder.position.set(x, 0, z);
+      ctx.scene.add(holder);
+
+      const ch = ctx.characters[i];
+      if (ch) {
+        ctx.scene.remove(ch.group); // reparent under the holder
+        holder.add(ch.group);
+        ch.setFacing(Math.atan2(-x, -z)); // face the fountain
+        ch.anim.idle();
+      }
+
+      state.bodies.push({
+        id: p.id,
+        holder,
+        x,
+        z,
+        vx: 0,
+        vz: 0,
+        coins: 0,
+        moving: false,
+        animHoldT: 0,
+        brain: freshBrain(),
+      });
+    });
+
+    state.field = buildCoinField(
+      ctx.scene,
+      ctx.players.map((p) => characterColor(p.kind))
+    );
+
+    buildHud(state);
+
+    /* ---- human input (screen routes pointer + keys while playing) ---- */
+    ctx.input.pointer = (x, y, down): void => {
+      state.human.tx = x;
+      state.human.ty = y;
+      state.human.idleT = 0;
+      if (down) state.human.held = true;
+    };
+    ctx.input.key = (action: string): void => {
+      if (action === "up") state.human.keyDir = { x: 0, z: -1 };
+      else if (action === "down") state.human.keyDir = { x: 0, z: 1 };
+      else if (action === "left") state.human.keyDir = { x: -1, z: 0 };
+      else if (action === "right") state.human.keyDir = { x: 1, z: 0 };
+      else if (action === "confirm") {
+        const b = state.bodies[0];
+        if (b && ctx.time - state.human.lastHopT > 0.6) {
+          state.human.lastHopT = ctx.time;
+          b.animHoldT = Math.max(b.animHoldT, 0.4);
+          ctx.characters[0]?.anim.jump();
+          ctx.playSfx("hop", { volume: 0.45, pitch: 1.1 });
+        }
+        return;
+      } else {
+        return;
+      }
+      state.human.keyIdleT = 0;
+    };
+    window.addEventListener("pointerup", state.onPointerUp);
+    round = state;
+  },
+
+  update(dt: number): void {
+    const state = round;
+    if (!state) return;
+    const ctx = state.ctx;
+    const t = state.t + dt;
+
+    state.t = t;
+    state.field?.update(t);
+    updateHud(state);
+    updateCamera(state, dt);
+    updateParticles(state, dt);
+    updatePiles(state, dt);
+    updateFlyers(state, dt);
+
+    if (state.ended) return;
+
+    state.boingT = Math.max(0, state.boingT - dt);
+    state.popT = Math.max(0, state.popT - dt);
+
+    /* ---- input freshness ---- */
+    state.human.idleT += dt;
+    if (state.human.held && state.human.idleT > POINTER_AUTO_RELEASE) state.human.held = false;
+    state.human.keyIdleT += dt;
+    if (state.human.keyDir && state.human.keyIdleT > KEY_STALE) state.human.keyDir = null;
+
+    /* ---- coin rain ---- */
+    state.spawnT -= dt;
+    if (state.spawnT <= 0) {
+      state.spawnT = SPAWN_MIN + ctx.rng() * (SPAWN_MAX - SPAWN_MIN);
+      if (state.piles.length < MAX_PILES) spawnPile(state);
+    }
+
+    /* ---- steer + integrate (id order: 0 human, 1-3 CPU) ---- */
+    for (const b of state.bodies) {
+      b.animHoldT = Math.max(0, b.animHoldT - dt);
+
+      let dir: { x: number; z: number } | null = null;
+      let maxSpeed = HUMAN_SPEED;
+      if (b.id === 0) {
+        if (state.human.held) dir = pointerDir(state, b);
+        else if (state.human.keyDir) dir = state.human.keyDir;
+      } else {
+        b.brain.pickT -= dt;
+        if (b.brain.pickT <= 0) repick(b.brain, state);
+        dir = cpuDir(state, b);
+        maxSpeed = HUMAN_SPEED * b.brain.speedMul;
+      }
+
+      if (dir && (dir.x !== 0 || dir.z !== 0)) {
+        b.vx += dir.x * ACCEL * dt;
+        b.vz += dir.z * ACCEL * dt;
+        const sp = Math.hypot(b.vx, b.vz);
+        if (sp > maxSpeed) {
+          b.vx *= maxSpeed / sp;
+          b.vz *= maxSpeed / sp;
+        }
+      } else {
+        const sp = Math.hypot(b.vx, b.vz);
+        if (sp > 0) {
+          const ns = Math.max(0, sp - FRICTION * dt);
+          b.vx *= ns / sp;
+          b.vz *= ns / sp;
+        }
+      }
+
+      b.x += b.vx * dt;
+      b.z += b.vz * dt;
+
+      /* ---- rim wall: clamp + reflect ---- */
+      const d = Math.hypot(b.x, b.z);
+      if (d > WALL_CLAMP && d > 1e-6) {
+        const nx = b.x / d;
+        const nz = b.z / d;
+        b.x = nx * WALL_CLAMP;
+        b.z = nz * WALL_CLAMP;
+        const rv = b.vx * nx + b.vz * nz;
+        if (rv > 0) {
+          b.vx -= 1.8 * rv * nx;
+          b.vz -= 1.8 * rv * nz;
+          b.vx *= 0.96;
+          b.vz *= 0.96;
+          bumpJuice(state, b);
+        }
+      }
+
+      b.holder.position.x = b.x;
+      b.holder.position.z = b.z;
+      applyMoveAnim(state, b);
+    }
+
+    /* ---- circle-circle collisions + bump-to-knock theft ---- */
+    for (let i = 0; i < state.bodies.length; i++) {
+      const a = state.bodies[i];
+      for (let j = i + 1; j < state.bodies.length; j++) {
+        const b = state.bodies[j];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const dist = Math.hypot(dx, dz);
+        const min = CHAR_R * 2;
+        if (dist >= min || dist < 1e-6) continue;
+        const nx = dx / dist;
+        const nz = dz / dist;
+        const push = (min - dist) / 2 + 0.002;
+        a.x -= nx * push;
+        a.z -= nz * push;
+        b.x += nx * push;
+        b.z += nz * push;
+        const rv = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz;
+        if (rv < 0) {
+          const imp = (-(1 + 0.8) * rv) / 2;
+          a.vx -= imp * nx;
+          a.vz -= imp * nz;
+          b.vx += imp * nx;
+          b.vz += imp * nz;
+          bumpJuice(state, a);
+          bumpJuice(state, b);
+          if (-rv > KNOCK_MIN_IMPULSE) {
+            // The victim is the one moving slower along the impact normal;
+            // on a dead tie the richer player loses a coin (leader tax).
+            const va = a.vx * nx + a.vz * nz;
+            const vb = b.vx * nx + b.vz * nz;
+            const victim = vb < va - 0.35 ? b : va < vb - 0.35 ? a : a.coins >= b.coins ? a : b;
+            const bumper = victim === a ? b : a;
+            if (victim.coins > 0 && ctx.rng() < KNOCK_P) knockCoin(state, victim, bumper);
+          }
+        }
+      }
+    }
+    for (const b of state.bodies) {
+      b.holder.position.x = b.x;
+      b.holder.position.z = b.z;
+    }
+
+    /* ---- pickup ---- */
+    for (const b of state.bodies) {
+      for (let i = state.piles.length - 1; i >= 0; i--) {
+        const p = state.piles[i];
+        if (Math.hypot(b.x - p.x, b.z - p.z) <= PICKUP_R) {
+          collectPile(state, b, p);
+          state.piles.splice(i, 1);
+        }
+      }
+    }
+
+    if (!state.hurryAnnounced && t >= 20) {
+      state.hurryAnnounced = true;
+      ctx.announce("10 SECONDS LEFT!", { durationMs: 1200, sound: "whistle" });
+    }
+    if (t >= TIME_CAP) {
+      endGame(state);
+      return;
+    }
+  },
+
+  teardown(): void {
+    const state = round;
+    if (!state) return;
+    window.removeEventListener("pointerup", state.onPointerUp);
+    state.field?.dispose();
+    state.field = null;
+    for (const b of state.bodies) {
+      const ch = state.ctx.characters[b.id];
+      if (ch) {
+        b.holder.remove(ch.group); // hand the avatar back to the screen
+        state.ctx.scene.add(ch.group);
+      }
+      state.ctx.scene.remove(b.holder);
+    }
+    state.bodies = [];
+    state.ctx.scene.remove(state.dyn);
+    for (const g of state.geos) g.dispose();
+    for (const m of state.mats) m.dispose();
+    state.geos = [];
+    state.mats = [];
+    state.piles = [];
+    state.flyers = [];
+    state.particles = [];
+    state.rings = [];
+    state.hudRoot?.remove();
+    state.hudRoot = null;
+    state.timerEl = null;
+    state.chips = [];
+    round = null;
+  },
+};
+
+/* Module-level round handle: replaced by setup() each round, nulled on
+   teardown. Rounds are strictly sequential (setup -> updates -> teardown). */
+let round: RoundState | null = null;

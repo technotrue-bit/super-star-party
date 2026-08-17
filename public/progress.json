@@ -1,33 +1,33 @@
 {
-  "updated": "2026-08-16T23:55:00-04:00",
+  "updated": "2026-08-17T00:45:00-04:00",
   "game": "SUPER STAR PARTY",
-  "status": "R3: ferris wheel PASS, camera numbers PASS — tents still specks (fixer running). Determinism root cause found & fixed (startMatch seed clobber) — slow-run byte-diff verifying now.",
+  "status": "W3: batch 1 minigames live + under critic round 1; batch 2 (drum_solo, balloon_pop, coin_grab, pipe_puzzle) building — 8 agents parallel.",
   "waves": [
     {
       "id": "W0",
       "name": "Core engine + harness (orchestrator)",
       "status": "done",
       "pieces": [
-        { "id": 0, "name": "Core engine", "status": "done", "detail": "seed plumbing fixed (startMatch preserves seed)" }
+        { "id": 0, "name": "Core engine", "status": "done", "detail": "determinism proven: 285-state byte-identical replays" }
       ]
     },
     {
       "id": "W1",
       "name": "Board · Characters · Audio · UI kit",
-      "status": "critic",
+      "status": "done",
       "pieces": [
-        { "id": 1, "name": "Board: Fizzy Fairground", "status": "critic", "detail": "R3: camera numbers all pass + ferris reads as wheel; tents still 3-12px specks → tents fixer running" },
-        { "id": 2, "name": "Characters (4 + anims + dice)", "status": "done", "detail": "R2 PASS — limbs + poses verified live" },
-        { "id": 3, "name": "Audio: music + SFX engine", "status": "done", "detail": "R2 PASS — wiring live, stingers ×12, 0 dead samples" },
-        { "id": 4, "name": "UI kit", "status": "done", "detail": "R3 PASS — Fredoka on ROLL + dice face (computed-style verified)" }
+        { "id": 1, "name": "Board: Fizzy Fairground", "status": "done", "detail": "R3 PASS: camera void fixed, ferris reads as wheel, tents relocated on-screen (tentRed 337→7,495px)" },
+        { "id": 2, "name": "Characters (4 + anims + dice)", "status": "done", "detail": "R2 PASS: limbs + poses verified live" },
+        { "id": 3, "name": "Audio: music + SFX engine", "status": "done", "detail": "R2 PASS: wiring live, stingers, 0 dead samples" },
+        { "id": 4, "name": "UI kit", "status": "done", "detail": "R3 PASS: Fredoka everywhere incl. ROLL button" }
       ]
     },
     {
       "id": "W2",
       "name": "Turn loop · Economy · Happenings · Items",
-      "status": "critic",
+      "status": "done",
       "pieces": [
-        { "id": 5, "name": "Turn loop + board screen", "status": "critic", "detail": "R3: gameplay determinism PROVEN (byte-identical when seed sticks); remaining bug was startMatch() clobbering the seed — fixed at source; slow-run verification in flight; phase=ended live" },
+        { "id": 5, "name": "Turn loop + board screen", "status": "done", "detail": "determinism PROVEN (byte-identical), phase=ended, 27s/turn, 60fps" },
         { "id": 6, "name": "Economy (coins/stars/bonus)", "status": "done", "detail": "verified live" },
         { "id": 7, "name": "Happenings (green + grumpus)", "status": "done", "detail": "verified live" },
         { "id": 8, "name": "Items + shop", "status": "done", "detail": "verified live" }
@@ -36,17 +36,17 @@
     {
       "id": "W3",
       "name": "Minigame framework + 8 minigames",
-      "status": "planned",
+      "status": "critic",
       "pieces": [
-        { "id": 9, "name": "Minigame framework", "status": "planned", "detail": "contract ready; dispatches after determinism verification lands" },
-        { "id": 10, "name": "Bumper Balls", "status": "planned", "detail": "" },
-        { "id": 11, "name": "Cake Dash", "status": "planned", "detail": "" },
-        { "id": 12, "name": "Coin Cannon", "status": "planned", "detail": "" },
-        { "id": 13, "name": "Memory Match", "status": "planned", "detail": "" },
-        { "id": 14, "name": "Drum Solo", "status": "planned", "detail": "" },
-        { "id": 15, "name": "Balloon Pop", "status": "planned", "detail": "" },
-        { "id": 16, "name": "Coin Grab", "status": "planned", "detail": "" },
-        { "id": 17, "name": "Pipe Puzzle", "status": "planned", "detail": "" }
+        { "id": 9, "name": "Minigame framework", "status": "done", "detail": "countdown→play→results→return flow live; ?minigame=ID hook" },
+        { "id": 10, "name": "Bumper Balls", "status": "critic", "detail": "live · round 1 running" },
+        { "id": 11, "name": "Cake Dash", "status": "critic", "detail": "live · round 1 running" },
+        { "id": 12, "name": "Coin Cannon", "status": "critic", "detail": "live · round 1 running" },
+        { "id": 13, "name": "Memory Match", "status": "critic", "detail": "live · round 1 running" },
+        { "id": 14, "name": "Drum Solo", "status": "building", "detail": "" },
+        { "id": 15, "name": "Balloon Pop", "status": "building", "detail": "" },
+        { "id": 16, "name": "Coin Grab", "status": "building", "detail": "" },
+        { "id": 17, "name": "Pipe Puzzle", "status": "building", "detail": "" }
       ]
     },
     {
@@ -68,17 +68,15 @@
     }
   ],
   "criticRounds": [
-    { "piece": "Board", "round": 1, "pass": false, "gap": "camera hid landmarks + ink band" },
-    { "piece": "Audio", "round": 1, "pass": false, "gap": "not wired into game flow" },
-    { "piece": "UI kit", "round": 1, "pass": false, "gap": "HUD chip micro-type" },
-    { "piece": "Characters", "round": 1, "pass": false, "gap": "no limbs" },
-    { "piece": "Board", "round": 2, "pass": false, "gap": "match camera: ink void 44-56% + landmarks illegible" },
+    { "piece": "Board", "round": 3, "pass": true, "gap": "" },
     { "piece": "Audio", "round": 2, "pass": true, "gap": "" },
-    { "piece": "UI kit", "round": 2, "pass": false, "gap": "ROLL button Times New Roman" },
+    { "piece": "UI kit", "round": 3, "pass": true, "gap": "" },
     { "piece": "Characters", "round": 2, "pass": true, "gap": "" },
-    { "piece": "Turn loop", "round": 1, "pass": false, "gap": "seeded runs diverge (anims rng); phase never 'ended'" },
-    { "piece": "Board", "round": 3, "pass": false, "gap": "camera numbers all pass; tents still 3-12px specks on portrait → fixer running" },
-    { "piece": "Turn loop", "round": 2, "pass": false, "gap": "gameplay deterministic once seed sticks; root cause = startMatch() reseeds with Math.random, clobbering __SSP__.seed() → fixed at source, re-verifying" }
+    { "piece": "Turn loop", "round": 2, "pass": true, "gap": "determinism proven byte-identical" },
+    { "piece": "Bumper Balls", "round": 1, "pass": false, "gap": "running…" },
+    { "piece": "Cake Dash", "round": 1, "pass": false, "gap": "running…" },
+    { "piece": "Coin Cannon", "round": 1, "pass": false, "gap": "running…" },
+    { "piece": "Memory Match", "round": 1, "pass": false, "gap": "running…" }
   ],
   "urls": { "game": "http://localhost:5177/", "showcase": "http://localhost:5177/?screen=showcase", "progress": "/progress.html" }
 }
