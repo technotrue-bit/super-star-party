@@ -109,7 +109,8 @@ export function buildArena(scene: THREE.Scene, spawnPoints: { x: number; z: numb
   return {
     update(t: number, ringR: number, danger: number): void {
       // Ring pulses harder as it shrinks; turns lava as danger rises.
-      const progress = 1 - (ringR - 2.2) / 3.4;
+      // (progress derived from ARENA_R so it tracks any ring schedule.)
+      const progress = Math.min(1, Math.max(0, 1 - ringR / ARENA_R));
       const pulse = 1 + 0.13 * Math.sin(t * 6.5) * (0.35 + 0.65 * progress);
       ring.scale.set(ringR, pulse, ringR);
       tmp.copy(sunC).lerp(lavaC, Math.min(1, danger));

@@ -7,12 +7,16 @@
  * deterministic (ctx.rng only), palette-only cel look.
  *
  * Time budget: the framework screen force-finishes at
- * settings.minigameTimeLimit (30s), so this game caps at TIME_CAP = 28s:
- * ring fully closed by 26s, distance-to-centre tiebreak at the cap.
+ * settings.minigameTimeLimit (30s). The sun ring closes with an
+ * ACCELERATING ease (outQuad) from RING_START down to RING_END = 0.45u —
+ * smaller than a player footprint (CHAR_R 0.55) — by 26s, so the endgame
+ * is GEOMETRICALLY FORCED: from ~22s on, at most one player can physically
+ * fit inside the ring, and eliminations walk 4->3->2->1 (one per frame,
+ * lowest player id first). TIME_CAP = 28s is only a safety net with a
+ * deterministic id-order fallback (never float-distance tiebreaks).
  */
 import * as THREE from "three";
 import type { Minigame, MinigameContext } from "../framework";
-import { ease } from "../../core/rng";
 import { ui } from "../../ui/kit";
 import { characterColor } from "../../characters/roster";
 import { buildArena, ARENA_R, type ArenaHandle } from "./arena";
@@ -27,9 +31,12 @@ const FRICTION = 9; // u/s^2 drift decay with no input
 const BUMP_REST = 0.8; // restitution on character bump (bouncy!)
 const WALL_REST = 0.55; // restitution on the rim wall
 const RING_START = 5.6; // ring begins just inside the wall (6.0)
-const RING_END = 2.2; // ring final radius
+const RING_END = 0.45; // ring final radius — SMALLER than a player footprint
+// (CHAR_R = 0.55): at most one player can physically fit inside, so the
+// finale is a forced knockout, never a timer tiebreak.
 const RING_DURATION = 26; // seconds for the ring to fully close
-const TIME_CAP = 28; // hard cap (framework safety net fires at 30s)
+const TIME_CAP = 28; // safety net only — the closed ring forces the
+// knockout by ~22.5s; never float-distance tiebreaks (see endGameByCap)
 const ELIM_FALL_TIME = 0.6; // eliminated fall+sink animation length
 const SPAWN_RADIUS = 3.5; // quarter-point spawn ring
 const BOING_GAP = 0.09; // sfx throttle between boings
@@ -85,10 +92,14 @@ interface RoundState {
   onPointerUp: () => void;
 }
 
-/** Shrinking ring radius at play time t (ease in-out: slow start, tight squeeze mid-game). */
+/** Shrinking ring radius at play time t. ACCELERATING ease (outQuad: slow
+ * open, fast close) so the squeeze gathers speed — the ring passes below
+ * the player footprint radius (~0.55) at ~22.4s and holds at 0.45 from 26s,
+ * geometrically forcing the final knockouts well before TIME_CAP. */
 function ringRadiusAt(t: number): number {
   const u = Math.min(1, t / RING_DURATION);
-  return RING_START - (RING_START - RING_END) * ease.inOutQuad(u);
+  const e = 2 * u - u * u; // outQuad — deterministic pure function of t
+  return RING_START - (RING_START - RING_END) * e;
 }
 
 /* --------------------------- implementation -------------------------- */
@@ -201,6 +212,9 @@ export const bumperBallsMinigame: Minigame = {
     };
     window.addEventListener("pointerup", state.onPointerUp);
     round = state;
+    // Fresh telemetry mirror per round (critic probes read window.__BB__).
+    (window as unknown as { __BB__?: unknown }).__BB__ = undefined;
+    publishDebug(state, 0, ringRadiusAt(0));
   },
 
   update(dt: number): void {
@@ -322,16 +336,34 @@ export const bumperBallsMinigame: Minigame = {
       b.holder.position.z = b.z;
     }
 
-    /* ---- the ring: anyone pushed beyond it is out ---- */
+    /* ---- the ring: anyone pushed beyond it is out. ONE elimination per
+       frame, lowest player id first — the round walks 4->3->2->1 in distinct
+       deterministic steps, and once the ring is below the footprint radius
+       (r < CHAR_R) at most one player can fit inside, so the finale is a
+       forced knockout, never a frame-timing tiebreak. ---- */
+    let outBody: Body | null = null;
     for (const b of state.bodies) {
       if (!b.alive) continue;
-      if (Math.hypot(b.x, b.z) > ringR) eliminate(state, b);
+      if (Math.hypot(b.x, b.z) > ringR && (outBody === null || b.id < outBody.id)) {
+        outBody = b;
+      }
     }
+    if (outBody) eliminate(state, outBody);
 
     if (state.ended) return;
     if (state.aliveCount === 1) {
       const winner = state.bodies.find((b) => b.alive);
-      if (winner) endGame(state, winner.id);
+      // Only crown a survivor who is actually inside the ring; a sole
+      // survivor still outside it gets popped by the ring next frame.
+      if (winner && Math.hypot(winner.x, winner.z) <= ringR) {
+        endGame(state, winner.id);
+        return;
+      }
+    }
+    if (state.aliveCount === 0) {
+      // Unreachable with the geometric ring, but never rank an empty board:
+      // the last player out is the survivor.
+      endGame(state, state.elimOrder[state.elimOrder.length - 1]);
       return;
     }
     if (t >= TIME_CAP) {
@@ -354,6 +386,7 @@ export const bumperBallsMinigame: Minigame = {
     }
 
     state.arena?.update(t, ringR, danger);
+    publishDebug(state, t, ringR);
   },
 
   teardown(): void {
@@ -445,9 +478,49 @@ function eliminate(state: RoundState, b: Body): void {
   }
 }
 
+/**
+ * Critic telemetry: mirrors the live round onto window.__BB__ so a probe can
+ * trace the ring schedule, the elimination order and which end path fired
+ * without inferring it from banner text. Write-only mirror — the game never
+ * reads it back, so it cannot affect determinism.
+ */
+interface BBDebug {
+  t: number;
+  ringR: number;
+  alive: number[];
+  elimOrder: number[];
+  ended: boolean;
+  endPath: "knockout" | "cap" | null;
+  ranking: number[] | null;
+}
+function bbDebug(): BBDebug {
+  const w = window as unknown as { __BB__?: BBDebug };
+  if (!w.__BB__) {
+    w.__BB__ = { t: 0, ringR: 0, alive: [], elimOrder: [], ended: false, endPath: null, ranking: null };
+  }
+  return w.__BB__;
+}
+function publishDebug(state: RoundState, t: number, ringR: number): void {
+  const d = bbDebug();
+  d.t = +t.toFixed(3);
+  d.ringR = +ringR.toFixed(4);
+  d.alive = state.bodies.filter((b) => b.alive).map((b) => b.id);
+  d.elimOrder = [...state.elimOrder];
+  d.ended = state.ended;
+}
+function recordEnd(path: "knockout" | "cap", state: RoundState, ranking: number[]): void {
+  const d = bbDebug();
+  d.ended = true;
+  d.endPath = path;
+  d.ranking = [...ranking];
+  d.elimOrder = [...state.elimOrder];
+  d.alive = state.bodies.filter((b) => b.alive).map((b) => b.id);
+}
+
 function endGame(state: RoundState, winnerId: number): void {
   state.ended = true;
   const ranking = [winnerId, ...state.elimOrder.slice().reverse()];
+  recordEnd("knockout", state, ranking);
   state.ctx.finish(ranking);
   const p = state.ctx.players[winnerId];
   state.ctx.characters[winnerId]?.anim.cheer();
@@ -456,13 +529,20 @@ function endGame(state: RoundState, winnerId: number): void {
   state.ctx.announce(`${p.name} WINS BUMPER BALLS!`, { durationMs: 2400, sound: null });
 }
 
-/** Time-cap end: rank survivors by distance-to-centre (closest = best). */
+/**
+ * Time-cap end — safety net ONLY. The ring closes below the player
+ * footprint (RING_END 0.45 < CHAR_R 0.55) by 26s, geometrically forcing the
+ * knockout by ~22.5s, so this should never rank live survivors. If it ever
+ * fires, rank deterministically by player id — never by floating-point
+ * distances, which vary with frame timing between replays.
+ */
 function endGameByCap(state: RoundState): void {
   state.ended = true;
   const survivors = state.bodies
     .filter((b) => b.alive)
-    .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
+    .sort((a, b) => a.id - b.id);
   const ranking = [...survivors.map((b) => b.id), ...state.elimOrder.slice().reverse()];
+  recordEnd("cap", state, ranking);
   state.ctx.finish(ranking);
   const winnerId = ranking[0];
   const p = state.ctx.players[winnerId];
