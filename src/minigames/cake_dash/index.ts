@@ -22,6 +22,7 @@
 import * as THREE from "three";
 import type { Minigame, MinigameContext } from "../framework";
 import type { Character } from "../../characters/characterFactory";
+import { palette } from "../../config/palette";
 import { Course, FINISH_X, START_X, LANE_Z } from "./course";
 import {
   buildObstacle,
@@ -41,6 +42,9 @@ const TIME_CAP = 25; // rank by distance if nobody finishes
 const STUN_TIME = 0.6; // obstacle hit stun (s)
 const SLOW_TIME = 1.0; // confetti puddle slip (s)
 const SLOW_FACTOR = 0.6; // slip speed multiplier
+const FLAIL_TIME = 0.55; // slip flail wobble (s)
+const PULSE_WINDOW = 6.0; // warning pulse reach ahead of the leader (u)
+const PULSE_AMOUNT = 0.08; // 1.0..1.08 gentle warning pulse
 const JUMP_BUFFER = 0.15; // input buffer before landing (s)
 const JUMP_CROUCH = 0.12; // matches anims.ts crouch
 const JUMP_AIR = 0.5; // matches anims.ts air
@@ -69,8 +73,22 @@ interface Runner {
   landT: number;
   stunT: number;
   slowT: number;
+  flailT: number;
   anim: AnimName;
   skill: number; // CPU only
+}
+
+/** One shard of a penalty burst (confetti splash / cake crumbs). */
+interface BurstShard {
+  mesh: THREE.Mesh;
+  vx: number;
+  vy: number;
+  vz: number;
+  rx: number;
+  ry: number;
+  rz: number;
+  t: number;
+  life: number;
 }
 
 type Phase = "play" | "win" | "idle";
@@ -84,9 +102,11 @@ const S = {
   nextSpawn: [0, 0, 0, 0],
   phase: "idle" as Phase,
   winT: 0,
+  t: 0, // animation clock (dt-driven only — never gameplay decisions)
   ranking: [] as number[],
   announced: false,
   shakeT: 0,
+  bursts: [] as BurstShard[],
   camLook: new THREE.Vector3(),
 };
 
@@ -138,6 +158,74 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Penalty bursts (slip splash + hit crumbs)                          */
+/* ------------------------------------------------------------------ */
+
+const BURST_COLORS = [palette.candy, palette.sun, palette.mint, palette.bubble, palette.berry, palette.cream];
+const CRUMB_COLORS = [palette.cream, palette.sun, palette.berry, palette.candy, palette.mint];
+
+/** Deterministic 32-bit hash → 0..1. NO ctx.rng here: collisions are
+ *  frame-timed, so drawing from the seeded stream in collide() would make
+ *  the rng position frame-dependent (breaks seeded replays). This integer
+ *  hash stream is byte-stable for the same event sequence. */
+let burstSeq = 0;
+function hash01(n: number): number {
+  let x = (n * 2654435761) >>> 0;
+  x ^= x >>> 13;
+  x = (x * 2246822519) >>> 0;
+  x ^= x >>> 16;
+  return (x >>> 0) / 4294967296;
+}
+
+/** Small colored-shard burst at (x, z) so penalty causes read on screen. */
+function burstAt(x: number, z: number, colors: string[], count: number, power: number): void {
+  const ctx = S.ctx;
+  const assets = S.course?.assets;
+  if (!ctx || !assets || !S.scene) return;
+  const geo = assets.geo(new THREE.BoxGeometry(0.07, 0.07, 0.07));
+  for (let i = 0; i < count; i++) {
+    const c = colors[Math.floor(hash01(burstSeq * 13 + i * 7) * colors.length)];
+    const mesh = new THREE.Mesh(geo, assets.flat(c));
+    const a = hash01(burstSeq * 31 + i * 3) * Math.PI * 2;
+    const sp = 1.2 + hash01(burstSeq * 17 + i * 11) * 1.6;
+    mesh.position.set(x, 0.3, z);
+    S.scene.add(mesh);
+    S.bursts.push({
+      mesh,
+      vx: Math.cos(a) * sp * power,
+      vy: 2.6 + hash01(burstSeq * 5 + i) * 2.2,
+      vz: Math.sin(a) * sp * power,
+      rx: (hash01(burstSeq * 23 + i * 5) - 0.5) * 16,
+      ry: (hash01(burstSeq * 29 + i * 9) - 0.5) * 16,
+      rz: (hash01(burstSeq * 37 + i * 13) - 0.5) * 16,
+      t: 0,
+      life: 0.45 + hash01(burstSeq * 41 + i * 17) * 0.35,
+    });
+    burstSeq++;
+  }
+}
+
+function updateBursts(dt: number): void {
+  const scene = S.scene;
+  if (!scene || S.bursts.length === 0) return;
+  for (let i = S.bursts.length - 1; i >= 0; i--) {
+    const b = S.bursts[i];
+    b.t += dt;
+    b.vy -= 9.5 * dt;
+    b.mesh.position.x += b.vx * dt;
+    b.mesh.position.y += b.vy * dt;
+    b.mesh.position.z += b.vz * dt;
+    b.mesh.rotation.x += b.rx * dt;
+    b.mesh.rotation.y += b.ry * dt;
+    b.mesh.rotation.z += b.rz * dt;
+    if (b.t >= b.life) {
+      scene.remove(b.mesh);
+      S.bursts.splice(i, 1);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Setup                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -149,6 +237,8 @@ function setup(ctx: MinigameContext): void {
   S.ranking = [];
   S.announced = false;
   S.shakeT = 0;
+  S.t = 0;
+  S.bursts = [];
   S.obstacles = [];
   S.runners = [];
   S.course = new Course(ctx.scene);
@@ -173,6 +263,7 @@ function setup(ctx: MinigameContext): void {
       landT: 0,
       stunT: 0,
       slowT: 0,
+      flailT: 0,
       anim: "idle",
       skill: 0,
     };
@@ -263,8 +354,16 @@ function collide(r: Runner): void {
     o.consumed = true;
     if (o.kind === "puddle") {
       if (h < 0.05) {
+        // SLIP — read the cause: flail, confetti splash, whoosh+pop, toast.
         r.slowT = SLOW_TIME;
+        r.flailT = FLAIL_TIME;
+        animTo(r, "sad");
+        burstAt(o.x, LANE_Z[o.lane], BURST_COLORS, 7, 1);
         S.ctx?.playSfx("whoosh", { pitch: 0.7, volume: 0.8 });
+        S.ctx?.playSfx("pop", { pitch: 0.5, volume: 0.5 });
+        const nm = S.ctx?.players[r.id]?.name ?? "?";
+        S.ctx?.announce(`${nm} slipped!`, { durationMs: 900, sound: null });
+        S.shakeT = 0.25;
       }
     } else if (h < o.h - HIT_SLACK) {
       r.stunT = STUN_TIME;
@@ -273,6 +372,7 @@ function collide(r: Runner): void {
       r.grounded = true;
       r.landT = 0;
       animTo(r, "sad");
+      burstAt(o.x, LANE_Z[o.lane], CRUMB_COLORS, 6, 0.85); // crumb burst — cause reads
       S.ctx?.playSfx("pop", { pitch: 0.75 });
       S.ctx?.playSfx("crowd.aah", { volume: 0.6 });
       S.shakeT = 0.3;
@@ -354,6 +454,8 @@ function update(dt: number): void {
   const ctx = S.ctx;
   if (!ctx || !S.course || S.phase === "idle") return;
 
+  S.t += dt; // animation clock (cosmetic only)
+
   if (!S.announced) {
     S.announced = true;
     ctx.announce("TAP / SPACE TO JUMP!", { durationMs: 1600 });
@@ -362,6 +464,7 @@ function update(dt: number): void {
   if (S.phase === "win") {
     S.winT -= dt;
     S.course.updateConfetti(dt);
+    updateBursts(dt);
     updateCamera(dt);
     if (S.winT <= 0) {
       ctx.finish(S.ranking);
@@ -375,6 +478,21 @@ function update(dt: number): void {
   let leaderX = START_X;
   for (const r of S.runners) if (r.x > leaderX) leaderX = r.x;
   S.course.updateScenery(leaderX);
+
+  // Obstacle readability at speed: everything within ~6u ahead of the
+  // leader gets a gentle 1.0..1.08 warning pulse; forks idle-wiggle.
+  for (const o of S.obstacles) {
+    const d = o.x - leaderX;
+    if (d >= 0 && d <= PULSE_WINDOW) {
+      const p = 1 + PULSE_AMOUNT * (0.5 + 0.5 * Math.sin(S.t * 6 + o.x * 1.7 + o.lane * 2.1));
+      o.group.scale.setScalar(p);
+    } else if (o.group.scale.x !== 1) {
+      o.group.scale.setScalar(1);
+    }
+    if (o.kind === "fork") {
+      o.group.rotation.z = Math.sin(S.t * 2.3 + o.x * 0.9) * 0.035;
+    }
+  }
 
   // Runners: jump state, movement, CPU thoughts, collisions.
   for (const r of S.runners) {
@@ -411,6 +529,17 @@ function update(dt: number): void {
     }
     if (r.slowT > 0) r.slowT -= dt;
 
+    // Slip flail: wobble the holder while the runner shakes it off.
+    if (r.flailT > 0) {
+      r.flailT -= dt;
+      const amp = Math.max(0, r.flailT / FLAIL_TIME);
+      r.holder.rotation.z = Math.sin(r.flailT * 34) * 0.38 * amp;
+      if (r.flailT <= 0) {
+        r.holder.rotation.z = 0;
+        if (r.stunT <= 0) animTo(r, "walk");
+      }
+    }
+
     r.char.group.position.x = r.x;
     r.holder.position.y = holderLift(r);
 
@@ -419,6 +548,7 @@ function update(dt: number): void {
   }
 
   S.course.updateConfetti(dt);
+  updateBursts(dt);
   updateCamera(dt);
 
   // Win / cap checks.
@@ -438,12 +568,14 @@ function teardown(): void {
   if (S.course) S.course.teardown();
   if (S.scene) {
     for (const o of S.obstacles) S.scene.remove(o.group);
+    for (const b of S.bursts) S.scene.remove(b.mesh);
     for (const r of S.runners) {
       // The holder owns char.group; detach it back out so the framework's
       // own character cleanup keeps working, then drop the holder.
       if (r.holder.parent === S.scene) S.scene.remove(r.holder);
     }
   }
+  S.bursts = [];
   S.obstacles = [];
   S.runners = [];
   if (S.ctx) {

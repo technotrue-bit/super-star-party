@@ -28,6 +28,7 @@ export class Assets {
   private toons = new Map<string, THREE.MeshToonMaterial>();
   private flats = new Map<string, THREE.MeshBasicMaterial>();
   private geos = new Set<THREE.BufferGeometry>();
+  private inkOut: THREE.MeshBasicMaterial | null = null;
 
   toon(color: string): THREE.MeshToonMaterial {
     let m = this.toons.get(color);
@@ -47,6 +48,29 @@ export class Assets {
     return m;
   }
 
+  /**
+   * Opaque ink material for silhouette outlines. Deliberately a SEPARATE
+   * instance from the cached ink flat: shadowMat mutates that shared flat
+   * (transparent + opacity 0.3), which would leak into every outline shell
+   * if they shared it.
+   */
+  inkOutline(): THREE.MeshBasicMaterial {
+    if (!this.inkOut) {
+      // Inverted-hull silhouette: the outline shell is a copy of the source
+      // geometry scaled OUTLINE_SCALE and rendered BackSide, so its front
+      // faces are culled and only the back faces show — behind the real
+      // mesh. That makes the dark hull peek out as a thin outline instead of
+      // an opaque box that HIDES the colored obstacle (candy handle / lava
+      // tips) inside it.
+      this.inkOut = new THREE.MeshBasicMaterial({
+        color: hex(palette.ink),
+        side: THREE.BackSide,
+      });
+      this.inkOut.name = "ink-outline";
+    }
+    return this.inkOut;
+  }
+
   geo(g: THREE.BufferGeometry): THREE.BufferGeometry {
     this.geos.add(g);
     return g;
@@ -56,6 +80,8 @@ export class Assets {
     for (const m of this.toons.values()) m.dispose();
     for (const m of this.flats.values()) m.dispose();
     for (const g of this.geos) g.dispose();
+    this.inkOut?.dispose();
+    this.inkOut = null;
     this.toons.clear();
     this.flats.clear();
     this.geos.clear();
