@@ -112,6 +112,8 @@ export interface FlowResult {
   reached: number;
   /** Winning cell chain (2,0)..(2,4) when solved, else null. */
   path: Array<{ r: number; c: number }> | null;
+  /** Per-cell water presence (true = connected to source). */
+  reachedGrid: boolean[][];
 }
 
 /**
@@ -165,7 +167,15 @@ export function computeFlow(tiles: TileDef[][]): FlowResult {
     }
     path = cells.reverse();
   }
-  return { solved, reached: reachedCells.size, path };
+
+  // Per-cell water presence for live rendering.
+  const reachedGrid: boolean[][] = [];
+  for (let r = 0; r < GRID_ROWS; r++) {
+    const row: boolean[] = [];
+    for (let c = 0; c < GRID_COLS; c++) row.push(reachedCells.has(`${r},${c}`));
+    reachedGrid.push(row);
+  }
+  return { solved, reached: reachedCells.size, path, reachedGrid };
 }
 
 /* ------------------------------------------------------------------ */
@@ -439,6 +449,51 @@ const pipeTextureFor = new Map<string, THREE.CanvasTexture>([
   ["decorDot", decorDotTexture],
 ]);
 
+/* ---- live water-flow textures (full tile faces, cyan channel) ---- */
+/* Same chrome + channel geometry as the dry textures above, only the  */
+/* channel body is water-blue instead of mint, so a wet tile is a bright  */
+/* cyan pipe and a dry tile is the muted mint original. Alignment is     */
+/* guaranteed because both faces are drawn from the same path + canvas.   */
+
+function drawWaterChannel(ctx: CanvasRenderingContext2D, path: (c: CanvasRenderingContext2D) => void): void {
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  path(ctx);
+  ctx.lineWidth = 34;
+  ctx.strokeStyle = INK;
+  ctx.stroke();
+  path(ctx);
+  ctx.lineWidth = 26;
+  ctx.strokeStyle = palette.bubble; // water body
+  ctx.stroke();
+  path(ctx);
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = "rgba(255,255,255,0.85)";
+  ctx.stroke();
+  ctx.restore();
+}
+
+function makeWetPipeTexture(drawer: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
+  const [canvas, ctx] = makeCanvas(TEX);
+  drawChrome(ctx);
+  drawWaterChannel(ctx, drawer);
+  return toTexture(canvas);
+}
+
+const straightWetTexture = makeWetPipeTexture(hPath);
+const elbowWetTexture = makeWetPipeTexture(elbowPath);
+const teeWetTexture = makeWetPipeTexture(teePath);
+
+const wetTextureFor = new Map<string, THREE.CanvasTexture>([
+  ["straight", straightWetTexture],
+  ["elbow", elbowWetTexture],
+  ["tee", teeWetTexture],
+]);
+
+/** Dry tiles are dimmed toward gray so wet cyan pops at a glance. */
+const DRY_TILE_BRIGHTNESS = 0.6;
+
 /** Small white/gold star used by pips, confetti and the goal basin. */
 function makeStarSpriteTexture(): THREE.CanvasTexture {
   const [canvas, ctx] = makeCanvas(64);
@@ -494,6 +549,30 @@ export function placeTile(tm: TileMesh, r: number, c: number): void {
   tm.mesh.rotation.y = 0;
   tm.underlay.position.x = gridX(c);
   tm.underlay.position.z = gridZ(r);
+}
+
+/**
+ * Set the water visual state for one tile.
+ * `connected` = this tile is reached by the flood-fill from source.
+ * `t` = current tile def (to pick the right wet texture).
+ * `time` = animation clock seconds (for the subtle flow pulse).
+ */
+export function setTileWater(tm: TileMesh, t: TileDef, connected: boolean, time: number): void {
+  const key = textureKeyFor(t);
+  if (connected) {
+    // Wet: swap to the bright cyan water texture.
+    const wetTex = wetTextureFor.get(key);
+    if (wetTex) tm.topMat.map = wetTex;
+    // Subtle brightness pulse for wet tiles (flow feel).
+    tm.topMat.color.setScalar(0.92 + 0.08 * Math.sin(time * 3.5));
+    tm.topMat.needsUpdate = true;
+  } else {
+    // Dry: restore the original muted texture and dim it.
+    const dryTex = pipeTextureFor.get(key);
+    if (dryTex) tm.topMat.map = dryTex;
+    tm.topMat.color.setScalar(DRY_TILE_BRIGHTNESS);
+    tm.topMat.needsUpdate = true;
+  }
 }
 
 /* ------------------------------------------------------------------ */

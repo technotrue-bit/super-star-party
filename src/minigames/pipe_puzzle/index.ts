@@ -33,11 +33,13 @@ import {
   GRID_COLS,
   GRID_STEP,
   TILE_CENTER_Y,
+  TABLE_TOP_Y,
   WATER_Y,
   computeFlow,
   generateRound,
   createTileMesh,
   placeTile,
+  setTileWater,
   isDecor,
   rotateClockwise,
   buildPodium,
@@ -111,6 +113,11 @@ interface PipeState {
   raycaster: THREE.Raycaster;
   ndc: THREE.Vector2;
   shakeT: number;
+  /** Connected-tile percentage HUD. */
+  hudMesh: THREE.Mesh;
+  hudMat: THREE.MeshBasicMaterial;
+  hudCanvas: HTMLCanvasElement;
+  hudCtx: CanvasRenderingContext2D;
 }
 
 /* ------------------------------------------------------------------ */
@@ -186,6 +193,10 @@ const pipePuzzle: Minigame = {
       raycaster: new THREE.Raycaster(),
       ndc: new THREE.Vector2(),
       shakeT: 0,
+      hudMesh: null as unknown as THREE.Mesh,
+      hudMat: null as unknown as THREE.MeshBasicMaterial,
+      hudCanvas: null as unknown as HTMLCanvasElement,
+      hudCtx: null as unknown as CanvasRenderingContext2D,
     };
     ctx.scene.add(st.root);
     st.root.add(st.podium.group);
@@ -204,6 +215,24 @@ const pipePuzzle: Minigame = {
       ch.setFacing(0); // front is +Z -> faces the camera/grid
       ch.anim.idle();
     }
+
+    /* ---- connected-tile % HUD (canvas-texture plane) ---- */
+    const hudCanvas = document.createElement("canvas");
+    hudCanvas.width = 128;
+    hudCanvas.height = 64;
+    const hudCtx = hudCanvas.getContext("2d");
+    if (!hudCtx) throw new Error("HUD 2D context unavailable");
+    const hudTex = new THREE.CanvasTexture(hudCanvas);
+    hudTex.colorSpace = THREE.SRGBColorSpace;
+    const hudMat = new THREE.MeshBasicMaterial({ map: hudTex, transparent: true, depthWrite: false });
+    const hudMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.8), hudMat);
+    hudMesh.position.set(0, TABLE_TOP_Y + 1.1, 0);
+    hudMesh.rotation.x = -0.35;
+    st.root.add(hudMesh);
+    st.hudMesh = hudMesh;
+    st.hudMat = hudMat;
+    st.hudCanvas = hudCanvas;
+    st.hudCtx = hudCtx;
 
     /* ---- per-player completion pips (3 gold stars above each head) ---- */
     for (let p = 0; p < 4; p++) {
@@ -239,6 +268,7 @@ const pipePuzzle: Minigame = {
     /* ---- round 1 grid ---- */
     st.defs = generateRound(ctx.rng);
     buildTiles(st);
+    refreshWater(st); // initial flood so water state is visible immediately
     ctx.announce("CONNECT THE PIPES!", { durationMs: 1500, sound: null });
 
     /* ---- input handlers ---- */
@@ -493,6 +523,8 @@ function tickTurn(st: PipeState, dt: number): void {
       break;
     }
     case "settle": {
+      // Re-flood immediately so the player sees water state change.
+      refreshWater(st);
       if (st.phaseT >= SETTLE_TIME) {
         st.phaseT = 0;
         const flow = computeFlow(st.defs);
@@ -540,6 +572,50 @@ function endRotation(st: PipeState): void {
   }
   st.turnStep = "settle";
   st.phaseT = 0;
+}
+
+/**
+ * Recompute the flood-fill from source and update every tile's water
+ * visual state immediately. Uses the SAME computeFlow the solver uses.
+ */
+function refreshWater(st: PipeState): void {
+  const flow = computeFlow(st.defs);
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let c = 0; c < GRID_COLS; c++) {
+      const tm = st.meshes[r][c];
+      const t = st.defs[r][c];
+      const connected = flow.reachedGrid[r]?.[c] ?? false;
+      setTileWater(tm, t, connected, st.time);
+    }
+  }
+  // Update HUD readout.
+  const total = GRID_ROWS * GRID_COLS;
+  const pct = Math.round((flow.reached / total) * 100);
+  drawHud(st, pct, flow.solved);
+}
+
+/** Draw the connected-% HUD onto the canvas texture. */
+function drawHud(st: PipeState, pct: number, solved: boolean): void {
+  const ctx = st.hudCtx;
+  const w = st.hudCanvas.width;
+  const h = st.hudCanvas.height;
+  ctx.clearRect(0, 0, w, h);
+  // Background pill
+  ctx.fillStyle = solved ? palette.bubble : palette.ink;
+  ctx.globalAlpha = 0.88;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, w, h, 16);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  // Text
+  ctx.fillStyle = palette.white;
+  ctx.font = "bold 34px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const label = solved ? "SOLVED!" : `${pct}% FLOW`;
+  ctx.fillText(label, w / 2, h / 2 + 2);
+  // Mark texture for re-upload
+  st.hudMat.map!.needsUpdate = true;
 }
 
 /**
@@ -658,6 +734,7 @@ function advanceRound(st: PipeState): void {
   // regenerate the grid
   st.defs = generateRound(st.ctx.rng);
   buildTiles(st);
+  refreshWater(st); // re-flood the new grid
   st.phase = "popIn";
   st.phaseT = 0;
   st.ctx.announce(`ROUND ${st.round + 1}`, { durationMs: 800, sound: null });

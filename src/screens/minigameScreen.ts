@@ -44,6 +44,7 @@ import {
 } from "../minigames/framework";
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
+import { startResultsCeremony, type ResultsCeremony } from "./resultsCeremony";
 
 /* ------------------------------------------------------------------ */
 /*  Scoped styles (injected once; every color from the palette)        */
@@ -124,6 +125,8 @@ interface MgScreenState {
   _beginPlay: () => void;
   _countEl?: HTMLDivElement;
   _flashEl?: HTMLDivElement;
+  _ceremony?: ResultsCeremony | null;
+  _ceremonyDone?: boolean;
   _onPointerDown?: (e: PointerEvent) => void;
   _onPointerMove?: (e: PointerEvent) => void;
   _onPointerUp?: (e: PointerEvent) => void;
@@ -374,12 +377,14 @@ const minigameScreenImpl: MgScreenState & Screen = {
       }
       case "results": {
         this._resultsT = (this._resultsT ?? 0) - dt;
+        // Tick the ceremony (banner/coins/confetti/card timeline).
+        this._ceremony?.update(dt);
         if ((this._resultsT ?? 0) <= 0) {
           if (!this._presented) {
             this._presented = true;
             this._present();
-            this._resultsT = 3.5; // hold the podium, then auto-return
-          } else {
+          } else if (this._ceremony?.isDone() && !this._ceremonyDone) {
+            this._ceremonyDone = true;
             screens.goto("board");
             return;
           }
@@ -393,10 +398,33 @@ const minigameScreenImpl: MgScreenState & Screen = {
 
   render() {},
 
-  /** RESULTS beat: payout, fanfare, podium popup (runs once). */
+  /** RESULTS beat: payout + full MP7-style ceremony (runs once). */
   _present() {
     this._presented = true;
-    presentResults(this);
+    this._ceremonyDone = false;
+
+    const ranking = this._ranking ?? [];
+    const winner = ranking[0] ?? match.players[0]?.id ?? 0;
+    const coins = settings.minigameWinCoins;
+    const mg = this._minigame;
+
+    // Payout + match bookkeeping (economy logic stays in economy.ts).
+    minigamePayout(winner);
+    const winnerPlayer = match.players[winner];
+    if (winnerPlayer) winnerPlayer.minigameWins += 1;
+    bus.emit("minigame:end", { id: mg?.id ?? "?", winner, coins });
+
+    // Crowd cheer via the existing bus hook (minigame:end wired in crowd.ts).
+    audio.music.play("win", { intensity: 0.9 });
+
+    // Start the ceremony (camera + podium + banner + coins + confetti + card).
+    this._ceremony = startResultsCeremony({
+      chars: this._chars ?? [],
+      ranking,
+      winner,
+      coins,
+      minigameName: mg?.name ?? "MINIGAME",
+    });
   },
 
   /** GO! — play begins: minigame music (rng-picked) + minigame:start. */
@@ -422,6 +450,10 @@ const minigameScreenImpl: MgScreenState & Screen = {
 
   exit() {
     this._active = false;
+    // Destroy ceremony first (removes podium, DOM, restores characters).
+    this._ceremony?.destroy();
+    this._ceremony = null;
+    this._ceremonyDone = false;
     this._minigame?.teardown();
     this._minigame = undefined;
     this._ctx = undefined;
@@ -459,53 +491,5 @@ const minigameScreenImpl: MgScreenState & Screen = {
     audio.music.stop(0.3);
   },
 };
-
-/* ------------------------------------------------------------------ */
-/*  Results presentation (private)                                     */
-/* ------------------------------------------------------------------ */
-
-function presentResults(self: MgScreenState & Screen): void {
-  const mg = self._minigame;
-  const ranking = self._ranking ?? [];
-  const winner = ranking[0];
-  const winnerPlayer = match.players[winner];
-  const coins = settings.minigameWinCoins;
-
-  // Payout + match bookkeeping (Mini Star needs the win counted).
-  minigamePayout(winner);
-  if (winnerPlayer) winnerPlayer.minigameWins += 1;
-  bus.emit("minigame:end", { id: mg?.id ?? "?", winner, coins });
-
-  // Juice: fanfare, win track, confetti, banner.
-  audio.sfx.play("fanfare.win");
-  audio.music.play("win", { intensity: 0.9 });
-  ui.confettiBurst(undefined, undefined, { count: 110, sound: null });
-  ui.banner(`${winnerPlayer?.name ?? "?"} WINS!`, { durationMs: 2400, sound: null });
-
-  // Characters react: winner cheers, everyone else sulks.
-  for (const ch of self._chars ?? []) ch.anim.idle();
-  self._chars?.[winner]?.anim.cheer();
-  for (const p of match.players) {
-    if (p.id !== winner) self._chars?.[p.id]?.anim.sad();
-  }
-
-  // Rank popup (winner row highlighted + coin prize shown).
-  const ordered = [...ranking];
-  for (const p of match.players) if (!ordered.includes(p.id)) ordered.push(p.id);
-  const content = document.createElement("div");
-  content.className = "ssp-mg-results";
-  ordered.forEach((pid, i) => {
-    const p = match.players[pid];
-    const row = document.createElement("div");
-    row.className = `ssp-mg-results__row${i === 0 ? " ssp-mg-results__row--win" : ""}`;
-    row.textContent = i === 0 ? `${i + 1}. ${p?.name ?? "?"}  +${coins}c` : `${i + 1}. ${p?.name ?? "?"}`;
-    content.appendChild(row);
-  });
-  ui.popup({
-    title: `${mg?.name ?? "MINIGAME"} — RESULTS`,
-    content,
-    sound: null,
-  });
-}
 
 export const minigameScreen = minigameScreenImpl as Screen;
