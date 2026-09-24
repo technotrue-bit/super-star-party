@@ -410,7 +410,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
       window.removeEventListener("keydown", this._onPauseKey);
       this._onPauseKey = undefined;
     }
-    this._pause?.close();
+    this._pause?.destroy();
     this._pause = undefined;
     this._pauseBtn?.destroy();
     this._pauseBtn = undefined;

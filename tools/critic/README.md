@@ -54,5 +54,7 @@ A console error on the happy path = defect. Log all of them.
 ## 6. Verdict format
 PASS with an evidence table (what you ran, what you saw), OR FAIL with
 EXACTLY ONE largest gap (named against the MP7 quality bar in
-refs/QUALITY_BAR.md) — the single biggest reason it is not yet a polished
-Nintendo-party game. One gap only. No laundry lists.
+`refs/QUALITY_BAR.md`, path relative to the REPO ROOT — i.e.
+`D:/Play Games/super-star-party/refs/QUALITY_BAR.md`; read it from there,
+not relative to this tools/ dir) — the single biggest reason it is not yet
+a polished Nintendo-party game. One gap only. No laundry lists.

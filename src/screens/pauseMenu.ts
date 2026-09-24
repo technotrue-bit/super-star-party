@@ -220,6 +220,8 @@ export interface PauseOverlayHandle {
   open(): void;
   close(): void;
   isOpen(): boolean;
+  /** Remove the scrim from the DOM. Call once when the host screen exits. */
+  destroy(): void;
 }
 
 export interface PauseOverlayOpts {
@@ -623,6 +625,12 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
     },
     isOpen() {
       return open;
+    },
+    destroy() {
+      // Remove scrim + panel from the DOM and detach their listeners. The
+      // scrim node clones cleanly because the handler closures only touch
+      // local state — no external subscriptions to unregister.
+      scrim.remove();
     },
   };
 }
