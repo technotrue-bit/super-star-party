@@ -7,12 +7,15 @@
  * and lands as a fresh pile anyone can grab (mischievous, comeback-friendly
  * theft). 30 seconds, most coins wins, ties go to the lower player id.
  *
- * Determinism: coin spawns, CPU brains, and knock rolls all use ctx.rng()
- * only. Per-frame steering is pure math over live positions, so seeded
- * runs replay identically.
+ * Determinism: ALL gameplay — movement integration, steering, pickup tests,
+ * CPU decisions/knocks, pile spawns/respawns, and therefore every ctx.rng()
+ * draw — runs inside a fixed-step simulation (whole 1/60s steps, identical
+ * to the proven bumper_balls pattern). update(dt) only accumulates real dt
+ * and runs fixed steps; every rng draw is gated on the integer step index,
+ * so seeded runs replay byte-identically regardless of frame timing.
  *
  * Time budget: the framework force-finishes at settings.minigameTimeLimit
- * (30s); this game calls finish() at TIME_CAP = 30 in the same frame the
+ * (30s); this game calls finish() at TIME_CAP = 30 in the same step the
  * limit is reached, so it always ranks itself before the safety net.
  */
 import * as THREE from "three";
@@ -69,6 +72,10 @@ const POP_GAP = 0.12; // sfx throttle between land pops
 const POINTER_AUTO_RELEASE = 0.5; // held pointer with no events => release
 const KEY_STALE = 0.35; // keyboard steer drops after this long without keys
 
+/* --------------------- fixed-step simulation ---------------------- */
+const FIXED_DT = 1 / 60; // simulation step (s)
+const MAX_STEPS_PER_FRAME = 5; // catch-up cap (avoids spiral-of-death)
+
 /* ------------------------------ types ------------------------------- */
 
 interface Body {
@@ -85,7 +92,7 @@ interface Body {
 }
 
 interface CpuBrain {
-  pickT: number; // seconds until the next re-pick
+  pickIn: number; // FIXED-STEP countdown (integer steps) until the next re-pick
   mode: "pile" | "wander";
   speedMul: number; // fraction of the human top speed
   wanderX: number; // wander target point
@@ -187,7 +194,7 @@ interface RoundState {
   particles: Particle[];
   rings: RingPop[];
   spawnT: number;
-  t: number; // own clock (ctx.time is fine too; this starts at GO like it)
+  t: number; // fixed-step clock (stepIndex * FIXED_DT)
   ended: boolean;
   hurryAnnounced: boolean;
   boingT: number;
@@ -206,6 +213,11 @@ interface RoundState {
   radiusIndicators: RadiusIndicator[];
   plusOnes: PlusOne[];
   prng: () => number; // presentation-only
+  /* Fixed-step simulation: accumulator + integer step counter. All gameplay
+     advances in whole 1/60s steps; stepIndex drives every decision so rng
+     draw order is identical across runs regardless of frame timing. */
+  simTime: number; // accumulated fixed-step time (s)
+  stepIndex: number; // current simulation step
 }
 
 /* --------------------------- tiny helpers --------------------------- */
@@ -639,13 +651,15 @@ function removePileVisual(state: RoundState, pile: Pile): void {
   state.dyn.remove(pile.group);
 }
 
+/** Fade/expire piles + glint animation — fixed-step, pure dt math, no rng. */
 function updatePiles(state: RoundState, dt: number): void {
   const t = state.t;
   for (let i = state.piles.length - 1; i >= 0; i--) {
     const p = state.piles[i];
     p.life -= dt;
     if (p.life <= 0) {
-      spawnBurst(state, p.x, 0.35, p.z, [palette.sun, palette.sunDeep, palette.cream], 7, 2.4, 0.45, 5, 0.06);
+      // Expire burst is presentation rng only — zero gameplay draws.
+      spawnBurst(state, p.x, 0.35, p.z, [palette.sun, palette.sunDeep, palette.cream], 7, 2.4, 0.45, 5, 0.06, state.prng);
       removePileVisual(state, p);
       state.piles.splice(i, 1);
       continue;
@@ -661,6 +675,9 @@ function updatePiles(state: RoundState, dt: number): void {
   }
 }
 
+/** Spawn a rain pile — runs INSIDE fixed steps only; every ctx.rng draw
+ *  (coin count, position search, then buildPile's coin cluster + glint
+ *  layout) is gated on the integer step index. */
 function spawnPile(state: RoundState): void {
   const ctx = state.ctx;
   const coins = PILE_MIN + Math.floor(ctx.rng() * (PILE_MAX - PILE_MIN + 1));
@@ -694,6 +711,7 @@ function spawnPile(state: RoundState): void {
 
 /* ------------------------------ flyers ------------------------------ */
 
+/** Knocked-coin flight — fixed-step, pure physics, no rng. */
 function updateFlyers(state: RoundState, dt: number): void {
   for (let i = state.flyers.length - 1; i >= 0; i--) {
     const f = state.flyers[i];
@@ -704,7 +722,8 @@ function updateFlyers(state: RoundState, dt: number): void {
     f.group.position.set(f.x, f.y, f.z);
     f.group.rotation.y += dt * 9;
     if (f.y <= COIN_R + 0.02) {
-      // Land: clamp into the play ring, drop a fresh 1-coin pile.
+      // Land: clamp into the play ring, drop a fresh 1-coin pile. Runs in a
+      // fixed step, so buildPile's layout draws land in deterministic order.
       const d = Math.max(CENTER_CLEAR + 0.15, Math.min(WALL_CLAMP, Math.hypot(f.x, f.z)));
       const a = Math.atan2(f.z, f.x);
       const lx = Math.cos(a) * d;
@@ -712,7 +731,8 @@ function updateFlyers(state: RoundState, dt: number): void {
       state.dyn.remove(f.group);
       state.flyers.splice(i, 1);
       buildPile(state, lx, lz, 1, PILE_LIFE);
-      spawnBurst(state, lx, 0.3, lz, [palette.sunDeep, palette.cream], 5, 2.0, 0.4, 5, 0.05);
+      // Land burst is presentation rng only — zero gameplay draws.
+      spawnBurst(state, lx, 0.3, lz, [palette.sunDeep, palette.cream], 5, 2.0, 0.4, 5, 0.05, state.prng);
       if (state.popT <= 0) {
         state.popT = POP_GAP;
         state.ctx.playSfx("pop", { volume: 0.5, pitch: 1.1 });
@@ -723,14 +743,16 @@ function updateFlyers(state: RoundState, dt: number): void {
 
 /* ------------------------------ gameplay ---------------------------- */
 
+/** Collect a pile — runs INSIDE fixed steps only. The grab burst + "+1"
+ *  pop use presentation rng (zero ctx.rng draws), so no compensating dummy
+ *  draws are needed: gameplay rng is consumed ONLY by genuine gameplay events
+ *  (pile spawn, knock, CPU choice). */
 function collectPile(state: RoundState, b: Body, pile: Pile): void {
   const ctx = state.ctx;
   b.coins += pile.coins;
   ctx.playSfx("coin.gain", { volume: 0.8, pitch: 0.85 + pile.coins * 0.17 });
   // GRAB MOMENT: tight burst of larger gold shards + "+1" pop.
-  // The burst uses presentation rng; compensate ctx.rng() with the same
-  // number of draws the old burst would have made, so the gameplay rng
-  // sequence (pile spawns, knock rolls, CPU rolls) is byte-identical.
+  // Presentation rng only — the gameplay sequence is untouched.
   spawnBurst(
     state,
     pile.x,
@@ -744,12 +766,6 @@ function collectPile(state: RoundState, b: Body, pile: Pile): void {
     0.14,
     state.prng
   );
-  // Compensating dummy draws: old burst consumed 5*(8+coins*2) ctx.rng draws.
-  // New burst uses prng (0 ctx.rng draws), so consume the full old amount.
-  {
-    const oldDraws = 5 * (8 + pile.coins * 2);
-    for (let k = 0; k < oldDraws; k++) state.ctx.rng();
-  }
   spawnPlusOne(state, pile.x, pile.z, state.prng);
   const ch = ctx.characters[b.id];
   ch?.anim.squash();
@@ -757,6 +773,8 @@ function collectPile(state: RoundState, b: Body, pile: Pile): void {
   removePileVisual(state, pile);
 }
 
+/** Steal a coin — fixed-step; its 4 ctx.rng draws (side, angle lean,
+ *  speed, vy) are gated on the step index. */
 function knockCoin(state: RoundState, victim: Body, bumper: Body): void {
   const ctx = state.ctx;
   victim.coins -= 1;
@@ -835,23 +853,29 @@ function pointerDir(state: RoundState, b: Body): { x: number; z: number } | null
 
 /* ------------------------------ CPU brain --------------------------- */
 
+/** Fresh brain — repicks on the first fixed step of play. */
 function freshBrain(): CpuBrain {
-  return { pickT: 0, mode: "pile", speedMul: 0.85, wanderX: 0, wanderZ: 0 };
+  return { pickIn: 0, mode: "pile", speedMul: 0.85, wanderX: 0, wanderZ: 0 };
 }
 
-/** Full re-pick: mode roll, speed roll, timer roll, wander point rolls. */
+/**
+ * Full re-pick — runs INSIDE fixed steps only; its 5 ctx.rng draws (mode,
+ * speed, timer, wander angle, wander radius) are gated on the step index.
+ * The timer is stored in WHOLE FIXED STEPS (integer), so the re-pick fires
+ * at a deterministic step index regardless of frame timing.
+ */
 function repick(brain: CpuBrain, state: RoundState): void {
   const ctx = state.ctx;
   brain.mode = ctx.rng() < CPU_PILE_P ? "pile" : "wander";
   brain.speedMul = 0.75 + ctx.rng() * 0.2;
-  brain.pickT = 0.5 + ctx.rng() * 0.5;
+  brain.pickIn = Math.round((0.5 + ctx.rng() * 0.5) * 60);
   const a = ctx.rng() * Math.PI * 2;
   const r = 1.0 + ctx.rng() * (WALL_CLAMP - 1.0);
   brain.wanderX = Math.cos(a) * r;
   brain.wanderZ = Math.sin(a) * r;
 }
 
-/** Per-frame steering — pure math, no rng. */
+/** Per-step steering — pure math over live positions, no rng. */
 function cpuDir(state: RoundState, b: Body): { x: number; z: number } | null {
   const brain = b.brain;
   if (brain.mode === "pile") {
@@ -877,6 +901,7 @@ function cpuDir(state: RoundState, b: Body): { x: number; z: number } | null {
 
 function endGame(state: RoundState): void {
   state.ended = true;
+  publishDebug(state);
   const ctx = state.ctx;
   const ranking = [...state.bodies]
     .sort((a, b) => b.coins - a.coins || a.id - b.id)
@@ -902,6 +927,36 @@ function updateCamera(state: RoundState, dt: number): void {
     cam.position.copy(state.camBase);
   }
   cam.lookAt(0, 0, 0);
+}
+
+/* ----------------------- critic telemetry mirror --------------------- */
+
+interface CGDebug {
+  stepIndex: number;
+  t: number;
+  chips: number[];
+  ranking: number[] | null;
+}
+
+function cgDebug(): CGDebug {
+  const w = window as unknown as { __CG__?: CGDebug };
+  if (!w.__CG__) {
+    w.__CG__ = { stepIndex: 0, t: 0, chips: [0, 0, 0, 0], ranking: null };
+  }
+  return w.__CG__;
+}
+
+function publishDebug(state: RoundState): void {
+  const d = cgDebug();
+  d.stepIndex = state.stepIndex;
+  d.t = +state.t.toFixed(4);
+  d.chips = state.bodies.map((b) => b.coins);
+  if (state.ended && !d.ranking) {
+    const ranking = [...state.bodies]
+      .sort((a, b) => b.coins - a.coins || a.id - b.id)
+      .map((b) => b.id);
+    d.ranking = ranking;
+  }
 }
 
 /* --------------------------- minigame object ------------------------ */
@@ -951,6 +1006,8 @@ export const coinGrabMinigame: Minigame = {
       radiusIndicators: [],
       plusOnes: [],
       prng: mulberry32(12345),
+      simTime: 0,
+      stepIndex: 0,
     };
     ctx.scene.add(state.dyn);
 
@@ -1028,164 +1085,39 @@ export const coinGrabMinigame: Minigame = {
     };
     window.addEventListener("pointerup", state.onPointerUp);
     round = state;
+    // Fresh telemetry mirror per round (critic probes read window.__CG__).
+    (window as unknown as { __CG__?: unknown }).__CG__ = undefined;
+    publishDebug(state);
   },
 
   update(dt: number): void {
     const state = round;
     if (!state) return;
-    const ctx = state.ctx;
-    const t = state.t + dt;
 
-    state.t = t;
-    state.field?.update(t);
+    /* ---- fixed-step accumulator: run whole 1/60s steps only ---- */
+    state.simTime += dt;
+    let steps = 0;
+    while (state.simTime >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
+      stepFixed(state, FIXED_DT);
+      state.simTime -= FIXED_DT;
+      state.stepIndex++;
+      steps++;
+      if (state.ended) break;
+    }
+    // If we hit the step cap, drop the backlog (spiral-of-death guard).
+    if (steps >= MAX_STEPS_PER_FRAME && state.simTime >= FIXED_DT) {
+      state.simTime = 0;
+    }
+
+    /* ---- per-frame visuals (presentation only — no gameplay, no rng) ---- */
+    state.t = state.stepIndex * FIXED_DT;
+    state.field?.update(state.t);
     updateHud(state);
     updateCamera(state, dt);
     updateParticles(state, dt);
     updatePlusOnes(state, dt);
-    updatePiles(state, dt);
-    updateFlyers(state, dt);
-
-    if (state.ended) return;
-
-    state.boingT = Math.max(0, state.boingT - dt);
-    state.popT = Math.max(0, state.popT - dt);
-
-    /* ---- input freshness ---- */
-    state.human.idleT += dt;
-    if (state.human.held && state.human.idleT > POINTER_AUTO_RELEASE) state.human.held = false;
-    state.human.keyIdleT += dt;
-    if (state.human.keyDir && state.human.keyIdleT > KEY_STALE) state.human.keyDir = null;
-
-    /* ---- coin rain ---- */
-    state.spawnT -= dt;
-    if (state.spawnT <= 0) {
-      state.spawnT = SPAWN_MIN + ctx.rng() * (SPAWN_MAX - SPAWN_MIN);
-      if (state.piles.length < MAX_PILES) spawnPile(state);
-    }
-
-    /* ---- steer + integrate (id order: 0 human, 1-3 CPU) ---- */
-    for (const b of state.bodies) {
-      b.animHoldT = Math.max(0, b.animHoldT - dt);
-
-      let dir: { x: number; z: number } | null = null;
-      let maxSpeed = HUMAN_SPEED;
-      if (b.id === 0) {
-        if (state.human.held) dir = pointerDir(state, b);
-        else if (state.human.keyDir) dir = state.human.keyDir;
-      } else {
-        b.brain.pickT -= dt;
-        if (b.brain.pickT <= 0) repick(b.brain, state);
-        dir = cpuDir(state, b);
-        maxSpeed = HUMAN_SPEED * b.brain.speedMul;
-      }
-
-      if (dir && (dir.x !== 0 || dir.z !== 0)) {
-        b.vx += dir.x * ACCEL * dt;
-        b.vz += dir.z * ACCEL * dt;
-        const sp = Math.hypot(b.vx, b.vz);
-        if (sp > maxSpeed) {
-          b.vx *= maxSpeed / sp;
-          b.vz *= maxSpeed / sp;
-        }
-      } else {
-        const sp = Math.hypot(b.vx, b.vz);
-        if (sp > 0) {
-          const ns = Math.max(0, sp - FRICTION * dt);
-          b.vx *= ns / sp;
-          b.vz *= ns / sp;
-        }
-      }
-
-      b.x += b.vx * dt;
-      b.z += b.vz * dt;
-
-      /* ---- rim wall: clamp + reflect ---- */
-      const d = Math.hypot(b.x, b.z);
-      if (d > WALL_CLAMP && d > 1e-6) {
-        const nx = b.x / d;
-        const nz = b.z / d;
-        b.x = nx * WALL_CLAMP;
-        b.z = nz * WALL_CLAMP;
-        const rv = b.vx * nx + b.vz * nz;
-        if (rv > 0) {
-          b.vx -= 1.8 * rv * nx;
-          b.vz -= 1.8 * rv * nz;
-          b.vx *= 0.96;
-          b.vz *= 0.96;
-          bumpJuice(state, b);
-        }
-      }
-
-      b.holder.position.x = b.x;
-      b.holder.position.z = b.z;
-      applyMoveAnim(state, b);
-    }
-
-    /* ---- circle-circle collisions + bump-to-knock theft ---- */
-    for (let i = 0; i < state.bodies.length; i++) {
-      const a = state.bodies[i];
-      for (let j = i + 1; j < state.bodies.length; j++) {
-        const b = state.bodies[j];
-        const dx = b.x - a.x;
-        const dz = b.z - a.z;
-        const dist = Math.hypot(dx, dz);
-        const min = CHAR_R * 2;
-        if (dist >= min || dist < 1e-6) continue;
-        const nx = dx / dist;
-        const nz = dz / dist;
-        const push = (min - dist) / 2 + 0.002;
-        a.x -= nx * push;
-        a.z -= nz * push;
-        b.x += nx * push;
-        b.z += nz * push;
-        const rv = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz;
-        if (rv < 0) {
-          const imp = (-(1 + 0.8) * rv) / 2;
-          a.vx -= imp * nx;
-          a.vz -= imp * nz;
-          b.vx += imp * nx;
-          b.vz += imp * nz;
-          bumpJuice(state, a);
-          bumpJuice(state, b);
-          if (-rv > KNOCK_MIN_IMPULSE) {
-            // The victim is the one moving slower along the impact normal;
-            // on a dead tie the richer player loses a coin (leader tax).
-            const va = a.vx * nx + a.vz * nz;
-            const vb = b.vx * nx + b.vz * nz;
-            const victim = vb < va - 0.35 ? b : va < vb - 0.35 ? a : a.coins >= b.coins ? a : b;
-            const bumper = victim === a ? b : a;
-            if (victim.coins > 0 && ctx.rng() < KNOCK_P) knockCoin(state, victim, bumper);
-          }
-        }
-      }
-    }
-    for (const b of state.bodies) {
-      b.holder.position.x = b.x;
-      b.holder.position.z = b.z;
-    }
-
-    /* ---- pickup ---- */
-    for (const b of state.bodies) {
-      for (let i = state.piles.length - 1; i >= 0; i--) {
-        const p = state.piles[i];
-        if (Math.hypot(b.x - p.x, b.z - p.z) <= PICKUP_R) {
-          collectPile(state, b, p);
-          state.piles.splice(i, 1);
-        }
-      }
-    }
-
-    /* ---- radius indicators (visual only, no gameplay effect) ---- */
     updateRadiusIndicators(state, dt);
-
-    if (!state.hurryAnnounced && t >= 20) {
-      state.hurryAnnounced = true;
-      ctx.announce("10 SECONDS LEFT!", { durationMs: 1200, sound: "whistle" });
-    }
-    if (t >= TIME_CAP) {
-      endGame(state);
-      return;
-    }
+    publishDebug(state);
   },
 
   teardown(): void {
@@ -1221,6 +1153,162 @@ export const coinGrabMinigame: Minigame = {
     round = null;
   },
 };
+
+/**
+ * Advance the simulation by exactly one fixed step (1/60s).
+ * Every gameplay decision — movement integration, steering, pickup tests,
+ * CPU decisions/knocks, pile spawns/respawns, and therefore every ctx.rng()
+ * draw — happens here, driven by the integer stepIndex. All rng draws are a
+ * pure function of (seeded rng, stepIndex), so the draw order is identical
+ * across runs regardless of frame timing.
+ */
+function stepFixed(state: RoundState, dt: number): void {
+  const ctx = state.ctx;
+  const t = state.stepIndex * FIXED_DT;
+  state.t = t;
+
+  /* ---- sfx throttles (fixed-step countdown) ---- */
+  state.boingT = Math.max(0, state.boingT - dt);
+  state.popT = Math.max(0, state.popT - dt);
+
+  /* ---- input freshness (fixed-step accumulation) ---- */
+  state.human.idleT += dt;
+  if (state.human.held && state.human.idleT > POINTER_AUTO_RELEASE) state.human.held = false;
+  state.human.keyIdleT += dt;
+  if (state.human.keyDir && state.human.keyIdleT > KEY_STALE) state.human.keyDir = null;
+
+  /* ---- coin rain (fixed-step countdown; spawnPile draws ctx.rng) ---- */
+  state.spawnT -= dt;
+  if (state.spawnT <= 0) {
+    state.spawnT = SPAWN_MIN + ctx.rng() * (SPAWN_MAX - SPAWN_MIN);
+    if (state.piles.length < MAX_PILES) spawnPile(state);
+  }
+
+  /* ---- steer + integrate (id order: 0 human, 1-3 CPU) ---- */
+  for (const b of state.bodies) {
+    b.animHoldT = Math.max(0, b.animHoldT - dt);
+
+    let dir: { x: number; z: number } | null = null;
+    let maxSpeed = HUMAN_SPEED;
+    if (b.id === 0) {
+      if (state.human.held) dir = pointerDir(state, b);
+      else if (state.human.keyDir) dir = state.human.keyDir;
+    } else {
+      b.brain.pickIn--;
+      if (b.brain.pickIn <= 0) repick(b.brain, state);
+      dir = cpuDir(state, b);
+      maxSpeed = HUMAN_SPEED * b.brain.speedMul;
+    }
+
+    if (dir && (dir.x !== 0 || dir.z !== 0)) {
+      b.vx += dir.x * ACCEL * dt;
+      b.vz += dir.z * ACCEL * dt;
+      const sp = Math.hypot(b.vx, b.vz);
+      if (sp > maxSpeed) {
+        b.vx *= maxSpeed / sp;
+        b.vz *= maxSpeed / sp;
+      }
+    } else {
+      const sp = Math.hypot(b.vx, b.vz);
+      if (sp > 0) {
+        const ns = Math.max(0, sp - FRICTION * dt);
+        b.vx *= ns / sp;
+        b.vz *= ns / sp;
+      }
+    }
+
+    b.x += b.vx * dt;
+    b.z += b.vz * dt;
+
+    /* ---- rim wall: clamp + reflect ---- */
+    const d = Math.hypot(b.x, b.z);
+    if (d > WALL_CLAMP && d > 1e-6) {
+      const nx = b.x / d;
+      const nz = b.z / d;
+      b.x = nx * WALL_CLAMP;
+      b.z = nz * WALL_CLAMP;
+      const rv = b.vx * nx + b.vz * nz;
+      if (rv > 0) {
+        b.vx -= 1.8 * rv * nx;
+        b.vz -= 1.8 * rv * nz;
+        b.vx *= 0.96;
+        b.vz *= 0.96;
+        bumpJuice(state, b);
+      }
+    }
+
+    b.holder.position.x = b.x;
+    b.holder.position.z = b.z;
+    applyMoveAnim(state, b);
+  }
+
+  /* ---- circle-circle collisions + bump-to-knock theft ---- */
+  for (let i = 0; i < state.bodies.length; i++) {
+    const a = state.bodies[i];
+    for (let j = i + 1; j < state.bodies.length; j++) {
+      const b = state.bodies[j];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const dist = Math.hypot(dx, dz);
+      const min = CHAR_R * 2;
+      if (dist >= min || dist < 1e-6) continue;
+      const nx = dx / dist;
+      const nz = dz / dist;
+      const push = (min - dist) / 2 + 0.002;
+      a.x -= nx * push;
+      a.z -= nz * push;
+      b.x += nx * push;
+      b.z += nz * push;
+      const rv = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz;
+      if (rv < 0) {
+        const imp = (-(1 + 0.8) * rv) / 2;
+        a.vx -= imp * nx;
+        a.vz -= imp * nz;
+        b.vx += imp * nx;
+        b.vz += imp * nz;
+        bumpJuice(state, a);
+        bumpJuice(state, b);
+        if (-rv > KNOCK_MIN_IMPULSE) {
+          // The victim is the one moving slower along the impact normal;
+          // on a dead tie the richer player loses a coin (leader tax).
+          const va = a.vx * nx + a.vz * nz;
+          const vb = b.vx * nx + b.vz * nz;
+          const victim = vb < va - 0.35 ? b : va < vb - 0.35 ? a : a.coins >= b.coins ? a : b;
+          const bumper = victim === a ? b : a;
+          if (victim.coins > 0 && ctx.rng() < KNOCK_P) knockCoin(state, victim, bumper);
+        }
+      }
+    }
+  }
+  for (const b of state.bodies) {
+    b.holder.position.x = b.x;
+    b.holder.position.z = b.z;
+  }
+
+  /* ---- pickup (collectPile: presentation-only visuals, zero ctx.rng) ---- */
+  for (const b of state.bodies) {
+    for (let i = state.piles.length - 1; i >= 0; i--) {
+      const p = state.piles[i];
+      if (Math.hypot(b.x - p.x, b.z - p.z) <= PICKUP_R) {
+        collectPile(state, b, p);
+        state.piles.splice(i, 1);
+      }
+    }
+  }
+
+  /* ---- pile lifecycles + knocked-coin flight (fixed-step) ---- */
+  updatePiles(state, dt);
+  updateFlyers(state, dt);
+
+  if (!state.hurryAnnounced && t >= 20) {
+    state.hurryAnnounced = true;
+    ctx.announce("10 SECONDS LEFT!", { durationMs: 1200, sound: "whistle" });
+  }
+  if (t >= TIME_CAP) {
+    endGame(state);
+    return;
+  }
+}
 
 /* Module-level round handle: replaced by setup() each round, nulled on
    teardown. Rounds are strictly sequential (setup -> updates -> teardown). */

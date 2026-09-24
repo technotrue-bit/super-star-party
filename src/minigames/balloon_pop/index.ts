@@ -92,6 +92,14 @@ interface RingFx {
   base: number;
 }
 
+interface Popup {
+  sprite: THREE.Sprite;
+  mat: THREE.SpriteMaterial;
+  tex: THREE.CanvasTexture;
+  born: number;
+  baseY: number;
+}
+
 interface Balloon {
   group: THREE.Group;
   col: number; // player id = column index
@@ -126,6 +134,7 @@ interface State {
   balloons: Balloon[];
   shards: Shard[];
   rings: RingFx[];
+  popups: Popup[];
   spawnT: number[];
   t: number;
   shake: number;
@@ -255,6 +264,77 @@ function spawnRing(st: State, pos: [number, number, number], base: number): void
   mesh.scale.setScalar(base * 0.2);
   st.root.add(mesh);
   st.rings.push({ mesh, mat, life: 0.3, maxLife: 0.3, base });
+}
+
+/* ------------------------- floating score popups ------------------------ */
+/* Canvas-texture sprites (Fredoka + ink outline) that rise ~0.75 world    */
+/* units and fade over 0.7s at the pop point. No ctx.rng here: fully        */
+/* deterministic (texture dims + text fixed at module init).                 */
+
+const POPUP_RISE = 0.75; // world units
+const POPUP_LIFE = 0.7; // seconds
+const POPUP_SCALE = 0.66; // world width — legible ~20-28px at 390px portrait
+
+function makePopupTexture(text: string, fill: string): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 128;
+  const c = canvas.getContext("2d");
+  if (!c) throw new Error("2D canvas context unavailable");
+  c.font = "700 84px Fredoka, sans-serif";
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  c.lineJoin = "round";
+  c.lineWidth = 14;
+  c.strokeStyle = palette.ink;
+  c.strokeText(text, 128, 70);
+  c.fillStyle = fill;
+  c.fillText(text, 128, 70);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  return tex;
+}
+
+/** Bonus (+2 tall target) pops show gold; regular +1 pops use the scoring
+ * player's character color. */
+const POPUP_PLUS2 = makePopupTexture("+2", palette.sun);
+const POPUP_PLUS1: { tex: THREE.CanvasTexture }[] = [];
+
+function playerPopupTex(st: State, color: number): THREE.CanvasTexture {
+  for (const e of POPUP_PLUS1) if ((e.tex as unknown as { __c?: number }).__c === color) return e.tex;
+  const tex = makePopupTexture("+1", "#" + color.toString(16).padStart(6, "0"));
+  (tex as unknown as { __c?: number }).__c = color;
+  POPUP_PLUS1.push({ tex });
+  return tex;
+}
+
+/** Spawn the floating score popup at the pop position. */
+function spawnPopup(st: State, pos: [number, number, number], pts: number, color: number): void {
+  const tex = pts >= 2 ? POPUP_PLUS2 : playerPopupTex(st, color);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(POPUP_SCALE, POPUP_SCALE * 0.5, 1);
+  sprite.position.set(pos[0], pos[1], pos[2] + 0.25);
+  sprite.renderOrder = 4;
+  st.root.add(sprite);
+  st.popups.push({ sprite, mat, tex, born: st.t, baseY: pos[1] });
+}
+
+function updatePopups(st: State, dt: number): void {
+  for (let i = st.popups.length - 1; i >= 0; i--) {
+    const pu = st.popups[i];
+    const k = Math.min(1, (st.t - pu.born) / POPUP_LIFE);
+    pu.sprite.position.y = pu.baseY + POPUP_RISE * k;
+    pu.mat.opacity = 1 - k;
+    if (k >= 1) {
+      st.root.remove(pu.sprite);
+      pu.mat.dispose();
+      st.popups.splice(i, 1);
+    }
+  }
 }
 
 /** Win confetti rain: colorful shards falling from above the arena. */
@@ -518,6 +598,7 @@ function popBalloon(st: State, pid: number, b: Balloon, byHuman: boolean): void 
   spawnShards(st, pos, b.color, 9, 3.2, 0.5, 7, 0.09);
   spawnShards(st, pos, hex(SHARD_WHITES[Math.floor(st.ctx.rng() * SHARD_WHITES.length)]), 4, 2.6, 0.45, 6, 0.06);
   spawnRing(st, pos, b.r * 1.2);
+  spawnPopup(st, pos, pts, P.color);
   st.shake = Math.min(0.28, st.shake + (pts === 2 ? 0.1 : 0.045));
 
   // character reaction: human always cheer-hops; CPUs cheer sometimes
@@ -633,6 +714,7 @@ const balloonPop: Minigame = {
       balloons: [],
       shards: [],
       rings: [],
+      popups: [],
       spawnT: [0.4, 0.7, 0.5, 0.9], // staggered first arrivals
       t: 0,
       shake: 0,
@@ -765,6 +847,7 @@ const balloonPop: Minigame = {
       ctx.camera.lookAt(st.camLook[0], st.camLook[1], st.camLook[2]);
     }
     updateFx(st, dt);
+    updatePopups(st, dt);
     updateTimeBar(st);
 
     // ---- end: 30s cap ----
@@ -788,6 +871,8 @@ const balloonPop: Minigame = {
     st.ctx.scene.remove(st.root);
     disposeObj(st.root);
     st.uiRoot?.remove();
+    // popup textures are cached for the round's lifetime; drop the refs
+    POPUP_PLUS1.length = 0;
     state = null;
   },
 };
