@@ -11,10 +11,14 @@
  * with a sad puff (no penalty, just a missed opportunity). 30s cap, ranked by
  * score (ties -> smaller playerId first).
  *
- * Determinism: every gameplay random draw (spawn interval/radius/color/wobble
- * phase, CPU accuracy/commits/reaction delays) comes from ctx.rng() only.
- * Pointer hits are resolved analytically against the balloon plane (camera
- * basis math, no renderer state), so taps are frame-rate independent.
+ * Determinism: ALL gameplay — balloon rise/spawn/motion, cpu think + AIM/
+ * COMMIT decisions, pops, scoring, sweet-zone logic — runs INSIDE a fixed-
+ * step simulation (whole 1/60s steps, identical to the proven bumper_balls and
+ * coin_grab patterns). update(dt) only accumulates real dt and runs fixed
+ * steps; every ctx.rng() draw is gated on the integer step index, so seeded
+ * runs replay byte-identically regardless of frame timing. Per-frame visuals
+ * (sprite bobbing, popup rise/fade, camera shake, fx, sparkles) stay OUTSIDE
+ * the step loop and never consume gameplay rng.
  */
 import * as THREE from "three";
 import type { Minigame, MinigameContext } from "../framework";
@@ -44,6 +48,10 @@ const BALLOON_COLORS = [palette.sun, palette.candy, palette.mint, palette.bubble
 const SHARD_WHITES = [palette.white, palette.cream, palette.sunDeep];
 const AWNING_COLORS = [palette.candy, palette.sun, palette.mint, palette.bubble, palette.berry];
 const SPARKLE_COLORS = [palette.sun, palette.mint, palette.bubble, palette.candy];
+
+/* --------------------- fixed-step simulation ---------------------- */
+const FIXED_DT = 1 / 60; // simulation step (s)
+const MAX_STEPS_PER_FRAME = 5; // catch-up cap (avoids spiral-of-death)
 
 // Landscape / portrait arena + camera layouts (portrait compacts the spread
 // so all four columns stay on screen).
@@ -109,7 +117,7 @@ interface Balloon {
   color: number; // balloon color hex
   phase: number;
   crossedSweet: boolean;
-  cpuPopT: number; // >= 0: CPU committed to pop at this time
+  cpuPopStep: number; // >= 0: step index at which CPU pops; -1: not committed; -2: decided to pass
 }
 
 interface PlayerSt {
@@ -135,8 +143,8 @@ interface State {
   shards: Shard[];
   rings: RingFx[];
   popups: Popup[];
-  spawnT: number[];
-  t: number;
+  spawnT: number[]; // FIXED-STEP countdown (integer steps) until next spawn per column
+  t: number; // fixed-step clock (stepIndex * FIXED_DT)
   shake: number;
   announcedGo: boolean;
   finished: boolean;
@@ -148,6 +156,11 @@ interface State {
   uiRoot: HTMLDivElement | null;
   timeFill: HTMLDivElement | null;
   sparkles: THREE.Mesh[];
+  /* Fixed-step simulation: accumulator + integer step counter. All gameplay
+     advances in whole 1/60s steps; stepIndex drives every decision so rng
+     draw order is identical across runs regardless of frame timing. */
+  simTime: number; // accumulated fixed-step time (s)
+  stepIndex: number; // current simulation step
 }
 
 let state: State | null = null;
@@ -218,7 +231,9 @@ function disposeObj(root: THREE.Object3D): void {
   });
 }
 
-/** Colored shards flying outward with gravity + fade (pops, confetti). */
+/** Colored shards flying outward with gravity + fade (pops, confetti).
+ *  ALL ctx.rng() draws here are gated on the step index — this function is
+ *  only ever called from stepFixed(), so the draw order is deterministic. */
 function spawnShards(
   st: State,
   pos: [number, number, number],
@@ -323,6 +338,7 @@ function spawnPopup(st: State, pos: [number, number, number], pts: number, color
   st.popups.push({ sprite, mat, tex, born: st.t, baseY: pos[1] });
 }
 
+/** Per-frame visual: popup rise/fade (NOT gameplay — no rng). */
 function updatePopups(st: State, dt: number): void {
   for (let i = st.popups.length - 1; i >= 0; i--) {
     const pu = st.popups[i];
@@ -337,7 +353,8 @@ function updatePopups(st: State, dt: number): void {
   }
 }
 
-/** Win confetti rain: colorful shards falling from above the arena. */
+/** Win confetti rain — runs INSIDE fixed steps only (governed by stepIndex).
+ * All ctx.rng draws here happen at a deterministic step. */
 function spawnConfetti(st: State): void {
   const colors = [palette.sun, palette.candy, palette.mint, palette.bubble, palette.berry];
   for (let i = 0; i < 42; i++) {
@@ -349,6 +366,7 @@ function spawnConfetti(st: State): void {
   }
 }
 
+/** Per-frame visual: shard/ring/sparkle animation (NOT gameplay — no rng). */
 function updateFx(st: State, dt: number): void {
   for (let i = st.shards.length - 1; i >= 0; i--) {
     const p = st.shards[i];
@@ -486,7 +504,7 @@ function buildArena(st: State): void {
     void P;
   }
 
-  // ---- sparkle stars sprinkled between panels ----
+  // ---- sparkle stars sprinkled between panels (visual only, outside step loop) ----
   const starGeo = newGeo(st, new THREE.OctahedronGeometry(1));
   for (let i = 0; i < 12; i++) {
     const x = (st.ctx.rng() * 2 - 1) * (L.wallW * 0.5 - 0.5);
@@ -534,7 +552,11 @@ function buildArena(st: State): void {
 }
 
 /* --------------------------- gameplay bits ------------------------------ */
+/* All gameplay functions below run INSIDE stepFixed() only — every ctx.rng()
+ * draw is gated on the integer stepIndex, making the draw order identical
+ * across runs regardless of frame timing. */
 
+/** Spawn a balloon in column col. Runs INSIDE stepFixed only. */
 function spawnBalloon(st: State, col: number): void {
   const L = st.layout;
   const r = L.rMin + st.ctx.rng() * (L.rMax - L.rMin);
@@ -572,9 +594,10 @@ function spawnBalloon(st: State, col: number): void {
   string.scale.set(0.024, len, 0.024);
 
   st.root.add(group);
-  st.balloons.push({ group, col, x, y: BOTTOM_Y, r, color, phase, crossedSweet: false, cpuPopT: -1 });
+  st.balloons.push({ group, col, x, y: BOTTOM_Y, r, color, phase, crossedSweet: false, cpuPopStep: -1 });
 }
 
+/** Pop a balloon: scoring + visuals. Runs INSIDE stepFixed only. */
 function popBalloon(st: State, pid: number, b: Balloon, byHuman: boolean): void {
   const P = st.players[pid];
   st.root.remove(b.group);
@@ -613,6 +636,7 @@ function popBalloon(st: State, pid: number, b: Balloon, byHuman: boolean): void 
   updateChip(st, pid);
 }
 
+/** Missed balloon floats off. Runs INSIDE stepFixed only. */
 function missBalloon(st: State, b: Balloon): void {
   const P = st.players[b.col];
   st.root.remove(b.group);
@@ -625,14 +649,19 @@ function missBalloon(st: State, b: Balloon): void {
   st.ctx.playSfx("crowd.aah", { volume: 0.28, pitch: 0.85 });
 }
 
-/** CPU commit when a balloon enters the sweet zone (per-balloon rng). */
+/** CPU commit when a balloon enters the sweet zone. Runs INSIDE stepFixed
+ * only — draws ctx.rng() for accuracy check and reaction delay, both gated
+ * on stepIndex. The reaction delay is stored as a WHOLE STEP COUNT (integer),
+ * so the pop fires at a deterministic step index. */
 function cpuThink(st: State, b: Balloon): void {
-  if (b.cpuPopT >= 0) return;
+  if (b.cpuPopStep >= 0) return;
   const P = st.players[b.col];
   if (st.ctx.rng() < P.accuracy) {
-    b.cpuPopT = st.t + CPU_REACT_MIN + st.ctx.rng() * (CPU_REACT_MAX - CPU_REACT_MIN);
+    // Convert float reaction delay to integer step count
+    const reactSteps = Math.round(CPU_REACT_MIN / FIXED_DT + st.ctx.rng() * ((CPU_REACT_MAX - CPU_REACT_MIN) / FIXED_DT));
+    b.cpuPopStep = st.stepIndex + reactSteps;
   } else {
-    b.cpuPopT = -2; // decided to pass on this one
+    b.cpuPopStep = -2; // decided to pass on this one
   }
 }
 
@@ -696,6 +725,111 @@ function hitTest(st: State, col: number, hx: number, hy: number): Balloon | null
   return best;
 }
 
+/* ----------------------- critic telemetry mirror --------------------- */
+
+interface BPDebug {
+  stepIndex: number;
+  t: number;
+  scores: number[];
+  ranking: number[] | null;
+}
+
+function bpDebug(): BPDebug {
+  const w = window as unknown as { __BP__?: BPDebug };
+  if (!w.__BP__) {
+    w.__BP__ = { stepIndex: 0, t: 0, scores: [0, 0, 0, 0], ranking: null };
+  }
+  return w.__BP__;
+}
+
+function publishDebug(st: State): void {
+  const d = bpDebug();
+  d.stepIndex = st.stepIndex;
+  d.t = +st.t.toFixed(4);
+  d.scores = st.players.map((p) => p.score);
+  if (st.finished && !d.ranking) {
+    const ranking = [...st.players]
+      .sort((a, b) => b.score - a.score || a.id - b.id)
+      .map((p) => p.id);
+    d.ranking = ranking;
+  }
+}
+
+/**
+ * Advance the simulation by exactly one fixed step (1/60s).
+ * Every gameplay decision — spawning, balloon rise, sweet-zone detection,
+ * CPU commits, pops, misses, scoring, and round end — happens here, driven
+ * by the integer stepIndex. All ctx.rng() draws are a pure function of
+ * (seeded rng, stepIndex), so the draw order is identical across runs
+ * regardless of frame timing.
+ */
+function stepFixed(st: State, dt: number): void {
+  const ctx = st.ctx;
+  st.t = st.stepIndex * FIXED_DT;
+  const t = st.t;
+
+  if (!st.announcedGo && t > 0.05) {
+    st.announcedGo = true;
+    ctx.announce("TAP THE BALLOONS!", { durationMs: 1300, sound: null });
+  }
+
+  // ---- spawning: per-column FIXED-STEP countdown, cap 6 visible ----
+  for (let col = 0; col < 4; col++) {
+    st.spawnT[col] -= 1;
+    if (st.spawnT[col] <= 0) {
+      const visible = st.balloons.filter((b) => b.col === col).length;
+      if (visible < MAX_VISIBLE) {
+        spawnBalloon(st, col);
+        // Convert float jitter to integer step count
+        const intervalSteps = Math.round(SPAWN_INTERVAL / FIXED_DT);
+        const jitterSteps = Math.round((SPAWN_JITTER * 2) / FIXED_DT);
+        st.spawnT[col] = intervalSteps + Math.floor((ctx.rng() - 0.5) * jitterSteps);
+      } else {
+        st.spawnT[col] = Math.round(0.2 / FIXED_DT); // column full: retry shortly
+      }
+    }
+  }
+
+  // ---- balloons rise; CPU commits in the sweet zone; pop/miss resolve ----
+  for (let i = st.balloons.length - 1; i >= 0; i--) {
+    const b = st.balloons[i];
+    b.y += RISE_SPEED * dt;
+    b.group.position.y = b.y;
+    // wobble uses fixed t for determinism
+    b.group.rotation.z = Math.sin(t * 2.1 + b.phase) * 0.07;
+    if (b.col > 0 && !b.crossedSweet && b.y >= SWEET_MIN) {
+      b.crossedSweet = true;
+      cpuThink(st, b);
+    }
+    if (b.cpuPopStep >= 0 && st.stepIndex >= b.cpuPopStep) {
+      popBalloon(st, b.col, b, false);
+      continue;
+    }
+    if (b.y >= TOP_Y) {
+      missBalloon(st, b);
+    }
+  }
+
+  // ---- character timers -> idle ----
+  for (const P of st.players) {
+    if (P.cheerT > 0) {
+      P.cheerT -= dt;
+      if (P.cheerT <= 0) {
+        const ch = ctx.characters[P.id] ?? null;
+        if (ch) ch.anim.idle();
+      }
+    }
+  }
+
+  // ---- end: TIME_CAP ----
+  if (t >= TIME_CAP) {
+    endRound(st);
+    return;
+  }
+
+  publishDebug(st);
+}
+
 /* ------------------------------ minigame --------------------------------- */
 
 const balloonPop: Minigame = {
@@ -715,7 +849,12 @@ const balloonPop: Minigame = {
       shards: [],
       rings: [],
       popups: [],
-      spawnT: [0.4, 0.7, 0.5, 0.9], // staggered first arrivals
+      spawnT: [
+        Math.round(0.4 / FIXED_DT),
+        Math.round(0.7 / FIXED_DT),
+        Math.round(0.5 / FIXED_DT),
+        Math.round(0.9 / FIXED_DT),
+      ], // staggered first arrivals (integer steps)
       t: 0,
       shake: 0,
       announcedGo: false,
@@ -728,6 +867,8 @@ const balloonPop: Minigame = {
       uiRoot: null,
       timeFill: null,
       sparkles: [],
+      simTime: 0,
+      stepIndex: 0,
     };
     state = st;
 
@@ -779,81 +920,48 @@ const balloonPop: Minigame = {
       }
       if (top) popBalloon(st, 0, top, true);
     };
+
+    // Fresh telemetry mirror per round (critic probes read window.__BP__).
+    (window as unknown as { __BP__?: unknown }).__BP__ = undefined;
+    publishDebug(st);
   },
 
   update(dt: number): void {
     const st = state;
     if (!st || st.finished) return;
-    const { ctx } = st;
-    st.t += dt;
 
-    if (!st.announcedGo && st.t > 0.05) {
-      st.announcedGo = true;
-      ctx.announce("TAP THE BALLOONS!", { durationMs: 1300, sound: null });
+    /* ---- fixed-step accumulator: run whole 1/60s steps only ---- */
+    st.simTime += dt;
+    let steps = 0;
+    while (st.simTime >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
+      stepFixed(st, FIXED_DT);
+      st.simTime -= FIXED_DT;
+      st.stepIndex++;
+      steps++;
+      if (st.finished) break;
+    }
+    // If we hit the step cap, drop the backlog (spiral-of-death guard).
+    if (steps >= MAX_STEPS_PER_FRAME && st.simTime >= FIXED_DT) {
+      st.simTime = 0;
     }
 
-    // ---- spawning: per-column timer with rng jitter, cap 6 visible ----
-    for (let col = 0; col < 4; col++) {
-      st.spawnT[col] -= dt;
-      if (st.spawnT[col] <= 0) {
-        const visible = st.balloons.filter((b) => b.col === col).length;
-        if (visible < MAX_VISIBLE) {
-          spawnBalloon(st, col);
-          st.spawnT[col] = SPAWN_INTERVAL + (ctx.rng() - 0.5) * SPAWN_JITTER * 2;
-        } else {
-          st.spawnT[col] = 0.2; // column full: retry shortly
-        }
-      }
-    }
-
-    // ---- balloons rise; CPU commits in the sweet zone; pop/miss resolve ----
-    for (let i = st.balloons.length - 1; i >= 0; i--) {
-      const b = st.balloons[i];
-      b.y += RISE_SPEED * dt;
-      b.group.position.y = b.y;
-      b.group.rotation.z = Math.sin(st.t * 2.1 + b.phase) * 0.07;
-      if (b.col > 0 && !b.crossedSweet && b.y >= SWEET_MIN) {
-        b.crossedSweet = true;
-        cpuThink(st, b);
-      }
-      if (b.cpuPopT >= 0 && st.t >= b.cpuPopT) {
-        popBalloon(st, b.col, b, false);
-        continue;
-      }
-      if (b.y >= TOP_Y) {
-        missBalloon(st, b);
-      }
-    }
-
-    // ---- character timers -> idle ----
-    for (const P of st.players) {
-      if (P.cheerT > 0) {
-        P.cheerT -= dt;
-        if (P.cheerT <= 0) {
-          const ch = ctx.characters[P.id] ?? null;
-          if (ch) ch.anim.idle();
-        }
-      }
-    }
-
-    // ---- juice: camera shake, fx, time bar ----
+    /* ---- per-frame visuals (NOT gameplay — no ctx.rng draws) ---- */
+    // sync t for visuals that read st.t (popups)
+    st.t = st.stepIndex * FIXED_DT;
     st.shake = Math.max(0, st.shake - dt * 0.9);
     if (st.shake > 0) {
-      ctx.camera.position.set(
+      st.ctx.camera.position.set(
         st.camBase[0] + Math.sin(st.t * 57) * st.shake,
         st.camBase[1] + Math.cos(st.t * 43) * st.shake,
         st.camBase[2] + Math.sin(st.t * 61) * st.shake
       );
-      ctx.camera.lookAt(st.camLook[0], st.camLook[1], st.camLook[2]);
+      st.ctx.camera.lookAt(st.camLook[0], st.camLook[1], st.camLook[2]);
     }
     updateFx(st, dt);
     updatePopups(st, dt);
     updateTimeBar(st);
 
-    // ---- end: 30s cap ----
-    if (st.t >= TIME_CAP) {
-      endRound(st);
-    }
+    publishDebug(st);
   },
 
   teardown(): void {

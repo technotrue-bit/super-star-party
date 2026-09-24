@@ -86,6 +86,7 @@ function boot(): void {
     import("./screens/showcaseScreen").then((m) => screens.register(m.showcaseScreen)),
     import("./screens/boardScreenPlaceholder").then((m) => screens.register(m.boardScreenPlaceholder)),
     import("./screens/minigameScreen").then((m) => screens.register(m.minigameScreen)),
+    import("./screens/characterSelect").then((m) => screens.register(m.characterSelect)),
   ];
   void Promise.all(screenImports).then(() => {
     screens.goto(screen);

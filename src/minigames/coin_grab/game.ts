@@ -173,13 +173,15 @@ interface RadiusIndicator {
   prng: () => number; // presentation-only rng
 }
 
-/** "+1" text sprites that float up and fade. */
+/** Floating score sprites ("+N") that pop, float up, and fade. */
 interface PlusOne {
   mesh: THREE.Sprite;
   mat: THREE.SpriteMaterial;
   life: number;
   maxLife: number;
   vy: number;
+  popT: number; // spawn-pop animation timer (counts down from ~0.12s)
+  baseScale: number; // resting world-space width of the sprite
 }
 
 interface RoundState {
@@ -414,29 +416,75 @@ function createRadiusIndicator(
   };
 }
 
-/* ------------------------- "+1" text sprites ------------------------ */
+/* ------------------------- "+N" pickup sprites ----------------------- */
 
-function spawnPlusOne(state: RoundState, x: number, z: number, prng: () => number): void {
+const PLUSONE_MAX_LIFE = 0.9;
+const PLUSONE_RISE = 1.1; // world units risen over lifetime
+const PLUSONE_BASE_SCALE = 2.4; // world units wide (~50px at 390px portrait)
+const PLUSONE_POP_TIME = 0.12; // spawn-pop duration (s)
+const PLUSONE_RENDER_ORDER = 999;
+
+function spawnPlusOne(state: RoundState, x: number, z: number, amount: number, prng: () => number): void {
   const canvas = document.createElement("canvas");
-  canvas.width = 128;
-  canvas.height = 64;
+  canvas.width = 256;
+  canvas.height = 192;
   const g = canvas.getContext("2d")!;
-  g.font = "bold 42px Fredoka, sans-serif";
+  const text = `+${amount}`;
+
+  // Dark backing plate (rounded rect) so the glyph separates from the floor
+  const padX = 20;
+  const padY = 12;
+  const plateW = 256 - padX * 2;
+  const plateH = 192 - padY * 2;
+  const radius = 28;
+  g.beginPath();
+  g.moveTo(padX + radius, padY);
+  g.arcTo(padX + plateW, padY, padX + plateW, padY + plateH, radius);
+  g.arcTo(padX + plateW, padY + plateH, padX, padY + plateH, radius);
+  g.arcTo(padX, padY + plateH, padX, padY, radius);
+  g.arcTo(padX, padY, padX + plateW, padY, radius);
+  g.closePath();
+  g.fillStyle = palette.ink;
+  g.fill();
+  g.lineWidth = 6;
+  g.strokeStyle = palette.white;
+  g.stroke();
+
+  // Glyph
+  g.font = "bold 80px Fredoka, sans-serif";
   g.textAlign = "center";
   g.textBaseline = "middle";
-  g.lineWidth = 6;
+  g.lineWidth = 10;
   g.strokeStyle = palette.ink;
-  g.strokeText("+1", 64, 32);
+  g.strokeText(text, 128, 100);
   g.fillStyle = palette.sun;
-  g.fillText("+1", 64, 32);
+  g.fillText(text, 128, 100);
+
   const tex = new THREE.CanvasTexture(canvas);
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  tex.anisotropy = 4;
+  const mat = new THREE.SpriteMaterial({
+    map: tex,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
   const sprite = new THREE.Sprite(mat);
-  sprite.position.set(x + (prng() - 0.5) * 0.3, 0.9, z);
-  sprite.scale.set(0.8, 0.4, 1);
+  sprite.renderOrder = PLUSONE_RENDER_ORDER;
+  const jitter = (prng() - 0.5) * 0.25;
+  sprite.position.set(x + jitter, 0.9, z);
+  // Pop animation: start small, overshoot, settle
+  sprite.scale.set(PLUSONE_BASE_SCALE * 0.6, PLUSONE_BASE_SCALE * 0.6 * (192 / 256), 1);
   sprite.castShadow = false;
   state.dyn.add(sprite);
-  state.plusOnes.push({ mesh: sprite, mat, life: 0.7, maxLife: 0.7, vy: 1.2 });
+  state.plusOnes.push({
+    mesh: sprite,
+    mat,
+    life: PLUSONE_MAX_LIFE,
+    maxLife: PLUSONE_MAX_LIFE,
+    vy: PLUSONE_RISE / PLUSONE_MAX_LIFE,
+    popT: PLUSONE_POP_TIME,
+    baseScale: PLUSONE_BASE_SCALE,
+  });
 }
 
 function updatePlusOnes(state: RoundState, dt: number): void {
@@ -450,7 +498,29 @@ function updatePlusOnes(state: RoundState, dt: number): void {
       state.plusOnes.splice(i, 1);
       continue;
     }
+    // Rise
     p.mesh.position.y += p.vy * dt;
+    // Spawn pop: 0.6 -> 1.1 -> 1.0 scale factor over popT
+    const aspect = 192 / 256;
+    if (p.popT > 0) {
+      p.popT = Math.max(0, p.popT - dt);
+      const k = 1 - p.popT / PLUSONE_POP_TIME; // 0 -> 1
+      // Ease-out back: 0.6 -> 1.1 -> 1.0
+      let s: number;
+      if (k < 0.5) {
+        // 0.6 -> 1.1
+        const k2 = k / 0.5;
+        s = 0.6 + 0.5 * k2;
+      } else {
+        // 1.1 -> 1.0
+        const k2 = (k - 0.5) / 0.5;
+        s = 1.1 - 0.1 * k2;
+      }
+      p.mesh.scale.set(p.baseScale * s, p.baseScale * s * aspect, 1);
+    } else {
+      p.mesh.scale.set(p.baseScale, p.baseScale * aspect, 1);
+    }
+    // Fade out in last 30% of life
     const k = p.life / p.maxLife;
     p.mat.opacity = k < 0.3 ? k / 0.3 : 1;
   }
@@ -766,7 +836,7 @@ function collectPile(state: RoundState, b: Body, pile: Pile): void {
     0.14,
     state.prng
   );
-  spawnPlusOne(state, pile.x, pile.z, state.prng);
+  spawnPlusOne(state, pile.x, pile.z, pile.coins, state.prng);
   const ch = ctx.characters[b.id];
   ch?.anim.squash();
   b.animHoldT = Math.max(b.animHoldT, 0.18);
