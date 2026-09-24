@@ -136,6 +136,20 @@ interface Chip {
   last: number;
 }
 
+interface RadiusIndicator {
+  group: THREE.Group;
+  ring: THREE.Mesh;
+  ringMat: THREE.MeshBasicMaterial;
+  disc: THREE.Mesh;
+  discMat: THREE.MeshBasicMaterial;
+  glow: THREE.Mesh;
+  glowMat: THREE.MeshBasicMaterial;
+  pulseT: number;
+  wasInRange: boolean;
+  baseOpacity: number;
+  rimOpacity: number;
+}
+
 interface RoundState {
   ctx: MinigameContext;
   field: FieldHandle | null;
@@ -164,6 +178,7 @@ interface RoundState {
   timerEl: HTMLDivElement | null;
   timerLast: number;
   chips: Chip[];
+  radiusIndicators: RadiusIndicator[];
 }
 
 /* --------------------------- tiny helpers --------------------------- */
@@ -279,6 +294,97 @@ function updateHud(state: RoundState): void {
     state.timerLast = left;
     state.timerEl.lastChild!.textContent = String(left);
     state.timerEl.classList.toggle("cg-timer--hot", left <= 5);
+  }
+}
+
+/* ------------------------- radius indicators ----------------------- */
+
+function createRadiusIndicator(
+  state: RoundState,
+  color: string,
+  x: number,
+  z: number
+): RadiusIndicator {
+  const group = new THREE.Group();
+  group.position.set(x, 0, z);
+
+  // Soft translucent disc fill (low opacity per spec)
+  const discGeo = new THREE.CircleGeometry(PICKUP_R, 32);
+  state.geos.push(discGeo);
+  const discMat = basic(state, color, 0.22);
+  const disc = new THREE.Mesh(discGeo, discMat);
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.y = 0.045;
+  disc.castShadow = false;
+  disc.receiveShadow = false;
+  group.add(disc);
+
+  // Thin bright rim ring — the primary visible element
+  const ringGeo = new THREE.RingGeometry(PICKUP_R - 0.05, PICKUP_R, 32);
+  state.geos.push(ringGeo);
+  const ringMat = basic(state, color, 0.9);
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.05;
+  ring.castShadow = false;
+  ring.receiveShadow = false;
+  group.add(ring);
+
+  state.dyn.add(group);
+
+  return {
+    group,
+    ring,
+    ringMat,
+    disc,
+    discMat,
+    glow: ring,       // not used, but interface requires it
+    glowMat: ringMat,  // not used
+    pulseT: 0,
+    wasInRange: false,
+    baseOpacity: 0.22,
+    rimOpacity: 0.9,
+  };
+}
+
+function updateRadiusIndicators(state: RoundState, dt: number): void {
+  for (let i = 0; i < state.bodies.length; i++) {
+    const b = state.bodies[i];
+    const ind = state.radiusIndicators[i];
+    if (!ind) continue;
+
+    // Move indicator to follow the player
+    ind.group.position.x = b.x;
+    ind.group.position.z = b.z;
+
+    // Check if any pile is within pickup range
+    let inRange = false;
+    for (const p of state.piles) {
+      if (Math.hypot(b.x - p.x, b.z - p.z) <= PICKUP_R) {
+        inRange = true;
+        break;
+      }
+    }
+
+    // Trigger pulse on transition into range
+    if (inRange && !ind.wasInRange) {
+      ind.pulseT = 0.35;
+    }
+    ind.wasInRange = inRange;
+
+    // Decay pulse
+    ind.pulseT = Math.max(0, ind.pulseT - dt);
+    const pulseK = ind.pulseT > 0 ? ind.pulseT / 0.35 : 0;
+
+    // Apply opacity: base + pulse boost
+    const targetDiscOpacity = ind.baseOpacity + pulseK * 0.22;
+    const targetRimOpacity = ind.rimOpacity + pulseK * 0.45;
+    ind.discMat.opacity = targetDiscOpacity;
+    ind.ringMat.opacity = targetRimOpacity;
+
+    // Subtle scale pulse on the ring
+    const scale = 1 + pulseK * 0.12;
+    ind.ring.scale.setScalar(scale);
   }
 }
 
@@ -716,6 +822,7 @@ export const coinGrabMinigame: Minigame = {
       timerEl: null,
       timerLast: -1,
       chips: [],
+      radiusIndicators: [],
     };
     ctx.scene.add(state.dyn);
 
@@ -749,6 +856,12 @@ export const coinGrabMinigame: Minigame = {
         animHoldT: 0,
         brain: freshBrain(),
       });
+
+      // Create pickup radius indicator for this player
+      const indicatorColor = characterColor(p.kind);
+      state.radiusIndicators.push(
+        createRadiusIndicator(state, indicatorColor, x, z)
+      );
     });
 
     state.field = buildCoinField(
@@ -932,6 +1045,9 @@ export const coinGrabMinigame: Minigame = {
       }
     }
 
+    /* ---- radius indicators (visual only, no gameplay effect) ---- */
+    updateRadiusIndicators(state, dt);
+
     if (!state.hurryAnnounced && t >= 20) {
       state.hurryAnnounced = true;
       ctx.announce("10 SECONDS LEFT!", { durationMs: 1200, sound: "whistle" });
@@ -966,6 +1082,7 @@ export const coinGrabMinigame: Minigame = {
     state.flyers = [];
     state.particles = [];
     state.rings = [];
+    state.radiusIndicators = [];
     state.hudRoot?.remove();
     state.hudRoot = null;
     state.timerEl = null;

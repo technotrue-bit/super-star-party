@@ -62,6 +62,7 @@ function injectMinigameStyles(): void {
 .ssp-mg-count--pop { animation:sspMgPop .55s cubic-bezier(.34,1.56,.64,1); }
 @keyframes sspMgPop { 0% { transform:translateX(-50%) scale(.2) rotate(-10deg); opacity:0; } 100% { transform:translateX(-50%) scale(1) rotate(0deg); opacity:1; } }
 .ssp-mg-count--go { color:${palette.mint}; }
+.ssp-mg-count--out { opacity:0; transform:translateX(-50%) scale(1.15); transition:opacity 200ms ease-out, transform 200ms ease-out; }
 .ssp-mg-flash { position:fixed; inset:0; pointer-events:none; z-index:79; opacity:0; }
 .ssp-mg-results { display:flex; flex-direction:column; gap:8px; text-align:left; font-size:17px; }
 .ssp-mg-results__row { background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:14px; padding:8px 12px; box-shadow:0 3px 0 ${palette.ink}; }
@@ -402,6 +403,18 @@ const minigameScreenImpl: MgScreenState & Screen = {
   _beginPlay() {
     this._phase = "play";
     this._playT = 0;
+    // Clear the GO! countdown overlay so it never overlaps play or results.
+    const el = this._countEl;
+    if (el) {
+      el.classList.add("ssp-mg-count--out");
+      window.setTimeout(() => el.remove(), 250);
+      this._countEl = undefined;
+    }
+    const flash = this._flashEl;
+    if (flash) {
+      flash.style.opacity = "0";
+      this._flashEl = undefined;
+    }
     audio.music.play(rng.pick(["minigame_a", "minigame_b"]), { intensity: 1 });
     const mg = this._minigame;
     if (mg) bus.emit("minigame:start", { id: mg.id, name: mg.name });

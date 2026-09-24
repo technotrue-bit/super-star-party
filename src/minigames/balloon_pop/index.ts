@@ -464,14 +464,26 @@ function spawnBalloon(st: State, col: number): void {
   const group = new THREE.Group();
   group.position.set(x, BOTTOM_Y, BALLOON_Z);
 
-  // balloon body (cel) + ink outline shell
+  // balloon body (cel) + ink outline shell (backside-only so it doesn't occlude)
   const body = addMesh(st, group, newGeo(st, new THREE.SphereGeometry(1, 12, 9)), toon(st, color), [0, 0, 0]);
   body.scale.setScalar(r);
   const shellGeo = newGeo(st, new THREE.SphereGeometry(1, 12, 9));
-  const shell = new THREE.Mesh(shellGeo, basic(st, hex(palette.ink)));
+  const shellMat = basic(st, hex(palette.ink));
+  shellMat.side = THREE.BackSide;
+  const shell = new THREE.Mesh(shellGeo, shellMat);
   shell.scale.setScalar(r * 1.09);
   shell.castShadow = false;
   group.add(shell);
+  // glossy highlight spot (upper-left)
+  const hlGeo = newGeo(st, new THREE.SphereGeometry(1, 8, 6));
+  const hlMat = basic(st, hex(palette.white));
+  hlMat.transparent = true;
+  hlMat.opacity = 0.55;
+  const hl = new THREE.Mesh(hlGeo, hlMat);
+  hl.position.set(-r * 0.35, r * 0.35, r * 0.82);
+  hl.scale.set(r * 0.22, r * 0.22, r * 0.08);
+  hl.castShadow = false;
+  group.add(hl);
   // knot + string
   const knot = addMesh(st, group, newGeo(st, new THREE.ConeGeometry(1, 1, 8)), toon(st, hex(palette.ink)), [0, -r - 0.04, 0], [Math.PI, 0, 0]);
   knot.scale.set(r * 0.16, r * 0.3, r * 0.16);
