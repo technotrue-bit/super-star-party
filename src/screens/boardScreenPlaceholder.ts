@@ -18,7 +18,7 @@ import { rng } from "../core/rng";
 import { bus } from "../core/events";
 import { roster } from "../characters/roster";
 import { audio } from "../audio/audioEngine";
-import { ui } from "../ui/kit";
+import { ui, queue } from "../ui/kit";
 import { setAutoplay } from "../core/debug";
 import { isAutoplay } from "../core/debug";
 import { buildBoardScene, boardBounds, type BoardScene } from "../board/boardScene";
@@ -43,10 +43,10 @@ function injectBoardStyles(): void {
   const style = document.createElement("style");
   style.id = "ssp-board-styles";
   style.textContent = `
-.ssp-roll-wrap { position:fixed; left:50%; bottom:calc(22px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); z-index:64; animation:sspRollPulse 1.15s ease-in-out infinite; }
+.ssp-roll-wrap { position:fixed; left:50%; bottom:calc(22px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); z-index:89; animation:sspRollPulse 1.15s ease-in-out infinite; }
 @keyframes sspRollPulse { 0%,100% { transform:translateX(-50%) scale(1); } 50% { transform:translateX(-50%) scale(1.08); } }
 .ssp-item-bar { position:fixed; left:50%; bottom:118px; transform:translateX(-50%); display:flex; gap:10px; z-index:63; }
-.ssp-die { position:fixed; left:50%; top:32%; transform:translateX(-50%); width:104px; height:104px; border-radius:24px; background:${palette.cream}; border:5px solid ${palette.ink}; box-shadow:7px 7px 0 ${palette.ink}; display:flex; align-items:center; justify-content:center; z-index:70; }
+.ssp-die { position:fixed; left:50%; top:32%; transform:translateX(-50%); width:104px; height:104px; border-radius:24px; background:${palette.cream}; border:5px solid ${palette.ink}; box-shadow:7px 7px 0 ${palette.ink}; display:flex; align-items:center; justify-content:center; z-index:90; }
 .ssp-die__face { font-size:52px; font-weight:700; color:${palette.ink}; user-select:none; line-height:1; }
 .ssp-die--tumble { animation:sspDieTumble .8s ease-in-out infinite; }
 @keyframes sspDieTumble {
@@ -151,6 +151,7 @@ interface BoardScreenState {
   _onPauseKey?: (e: KeyboardEvent) => void;
   _unfreezeAutoplay?: boolean;
   _finaleShown?: boolean;
+  _unsubs: Array<() => void>;
   _openPause: () => void;
   _closePause: () => void;
 }
@@ -167,6 +168,7 @@ function projectToScreen(pos: THREE.Vector3): { x: number; y: number } | null {
 
 const boardScreenImpl: BoardScreenState & Screen = {
   id: "board",
+  _unsubs: [],
 
   enter() {
     injectBoardStyles();
@@ -341,11 +343,60 @@ const boardScreenImpl: BoardScreenState & Screen = {
     window.addEventListener("resize", onResize);
     this._onResize = onResize;
 
+    // ---- feedback wiring: route HUD banners through the queue, ----
+    // ---- listen for coin changes + happenings + star buys.    ----
+    this._unsubs = [];
+    const suppressNextBanner = { current: false };
+    const queuedHud = {
+      ...hud,
+      showBanner: (text: string, opts?: { durationMs?: number }) => {
+        if (suppressNextBanner.current) {
+          suppressNextBanner.current = false;
+          return { el: document.createElement("div"), destroy() {} };
+        }
+        return queue.banner(text, { durationMs: opts?.durationMs });
+      },
+    };
+    const charPos = (pid: number): THREE.Vector3 => {
+      const off = PLAYER_OFFSETS[pid] ?? [0, 0];
+      const v = board.spaceWorldPos(match.players[pid]?.space ?? 0);
+      v.x += off[0];
+      v.z += off[1];
+      return v;
+    };
+    this._unsubs.push(
+      bus.on("coins:change", ({ player, delta }) => {
+        if (delta === 0) return;
+        const pos = charPos(player);
+        const sc = projectToScreen(pos);
+        if (sc) {
+          ui.showFloatingNumber(sc.x, sc.y - 30, delta);
+        }
+      })
+    );
+    this._unsubs.push(
+      bus.on("happening:event", ({ player, label, eventId }) => {
+        suppressNextBanner.current = true;
+        const isGrumpus = eventId.startsWith("grumpus");
+        queue.happening(label, {
+          durationMs: 1900,
+          kind: isGrumpus ? "grumpus" : "green",
+        });
+      })
+    );
+    this._unsubs.push(
+      bus.on("star:buy", ({ player }) => {
+        const pos = charPos(player);
+        const sc = projectToScreen(pos);
+        if (sc) ui.showFloatingNumber(sc.x, sc.y - 30, -settings.starCost);
+      })
+    );
+
     // ---- turn loop ----
     this._loop = createTurnLoop({
       board,
       chars: this._chars,
-      hud,
+      hud: queuedHud,
       rollButton: rollBtn,
       dice: diceView,
       itemBar,
@@ -378,6 +429,9 @@ const boardScreenImpl: BoardScreenState & Screen = {
   },
 
   exit() {
+    for (const off of this._unsubs ?? []) off();
+    this._unsubs = [];
+    ui.clearFeedback();
     this._loop?.dispose();
     this._loop = undefined;
     if (this._onResize) {
