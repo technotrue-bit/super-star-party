@@ -567,10 +567,12 @@ function setup(ctx: MinigameContext): void {
   for (let l = 0; l < 4; l++) S.nextSpawn[l] = 11 + ctx.rng() * 5;
   pregenerateObstacles();
 
-  // Camera frames the start line during the countdown.
+  // Camera frames the start line during the countdown. Initialise the look
+  // target to the human's lane (z=2.55) so the human is centred from the
+  // first frame — no lerp from z=0 needed.
   const cam = ctx.camera;
   cam.position.set(START_X + 7.2, 4.4, 9.6);
-  S.camLook.set(START_X + 3.2, 1.5, 0);
+  S.camLook.set(START_X + 0.3, 1.5, LANE_Z[3]);
   cam.lookAt(S.camLook);
 
   // Human input: any press jumps (buffered 0.15s if pressed mid-air).
@@ -713,18 +715,39 @@ function updateCamera(dt: number): void {
   const ctx = S.ctx;
   if (!ctx) return;
   const cam = ctx.camera;
-  let leaderX = START_X;
+  // Follow the HUMAN runner (id 0) — the camera must keep the human's
+  // avatar on screen at all times, never race blind when trailing.
+  const human = S.runners[0];
+  if (!human) return;
+  const humanX = human.x;
+
+  // Leader position — used only for the forward bias when trailing.
+  let leaderX = humanX;
   for (const r of S.runners) if (r.x > leaderX) leaderX = r.x;
 
+  // Look at the human's lane. The camera sits 7.2 ahead and 9.6 to the
+  // side of the human (nearest lane, z=2.55); looking at z=0 would put
+  // the human ~15° off-centre — outside the ~11° portrait horizontal
+  // half-FOV. Looking at the human's lane centres them horizontally.
+  // A tiny forward bias (0.3) gives a hint of the course ahead without
+  // pushing the human off-frame; it grows slightly when trailing so the
+  // leaders peek in, but is capped so the human never leaves the viewport.
+  const trail = Math.max(0, leaderX - humanX);
+  const lead = 0.3 + Math.min(trail * 0.1, 0.7);
+  const humanZ = LANE_Z[human.lane];
+
+  // Snap camera position to the human (no lag — the human moves at
+  // 6 u/s * speed, and a lerp would fall behind at high speed).
+  cam.position.x = clamp(humanX + 7.2, START_X + 7.2, 64);
+  cam.position.y = 4.4;
+  cam.position.z = 9.6;
+
+  // Lerp look target for smoothness (no snap/jitter).
   const k = 1 - Math.exp(-5 * dt);
-  const tx = clamp(leaderX + 7.2, START_X + 7.2, 64);
-  cam.position.x += (tx - cam.position.x) * k;
-  cam.position.y += (4.4 - cam.position.y) * k;
-  cam.position.z += (9.6 - cam.position.z) * k;
-  const lx = clamp(leaderX + 3.2, START_X + 3.2, 58);
+  const lx = clamp(humanX + lead, START_X + 3.2, 58);
   S.camLook.x += (lx - S.camLook.x) * k;
   S.camLook.y += (1.5 - S.camLook.y) * k;
-  S.camLook.z += (0 - S.camLook.z) * k;
+  S.camLook.z += (humanZ - S.camLook.z) * k;
 
   let sx = 0;
   let sy = 0;
