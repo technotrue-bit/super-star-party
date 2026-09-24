@@ -24,6 +24,18 @@ import { celGradient } from "../../characters/cel";
 import { palette, hex } from "../../config/palette";
 import { buildCoinField, ARENA_R, type FieldHandle } from "./field";
 
+/* --------------------- presentation rng (visual only) --------------- */
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 /* ------------------------- tuning constants ------------------------- */
 
 const CHAR_R = 0.55; // character collision radius
@@ -97,8 +109,6 @@ interface Pile {
   coins: number;
   life: number; // counts down from PILE_LIFE
   phase: number; // visual pulse phase
-  ring: THREE.Mesh;
-  ringMat: THREE.MeshBasicMaterial;
   glints: { mesh: THREE.Mesh; speed: number; phase: number; radius: number; y: number }[];
 }
 
@@ -128,6 +138,8 @@ interface RingPop {
   mat: THREE.MeshBasicMaterial;
   life: number;
   maxLife: number;
+  flat: boolean; // true = flat expanding ring on the ground
+  maxScale: number;
 }
 
 interface Chip {
@@ -144,10 +156,23 @@ interface RadiusIndicator {
   discMat: THREE.MeshBasicMaterial;
   glow: THREE.Mesh;
   glowMat: THREE.MeshBasicMaterial;
+  chevrons: THREE.Mesh[];
+  chevronMat: THREE.MeshBasicMaterial;
+  flashT: number; // in-range flash timer (~0.18s)
   pulseT: number;
   wasInRange: boolean;
   baseOpacity: number;
   rimOpacity: number;
+  prng: () => number; // presentation-only rng
+}
+
+/** "+1" text sprites that float up and fade. */
+interface PlusOne {
+  mesh: THREE.Sprite;
+  mat: THREE.SpriteMaterial;
+  life: number;
+  maxLife: number;
+  vy: number;
 }
 
 interface RoundState {
@@ -179,6 +204,8 @@ interface RoundState {
   timerLast: number;
   chips: Chip[];
   radiusIndicators: RadiusIndicator[];
+  plusOnes: PlusOne[];
+  prng: () => number; // presentation-only
 }
 
 /* --------------------------- tiny helpers --------------------------- */
@@ -303,26 +330,28 @@ function createRadiusIndicator(
   state: RoundState,
   color: string,
   x: number,
-  z: number
+  z: number,
+  prng: () => number
 ): RadiusIndicator {
   const group = new THREE.Group();
   group.position.set(x, 0, z);
 
-  // Soft translucent disc fill (low opacity per spec)
+  // Inner dim fill — very subtle so the ring shape doesn't compete
   const discGeo = new THREE.CircleGeometry(PICKUP_R, 32);
   state.geos.push(discGeo);
-  const discMat = basic(state, color, 0.22);
+  const discMat = basic(state, color, 0.10);
   const disc = new THREE.Mesh(discGeo, discMat);
   disc.rotation.x = -Math.PI / 2;
-  disc.position.y = 0.045;
+  disc.position.y = 0.042;
   disc.castShadow = false;
   disc.receiveShadow = false;
   group.add(disc);
 
-  // Thin bright rim ring — the primary visible element
-  const ringGeo = new THREE.RingGeometry(PICKUP_R - 0.05, PICKUP_R, 32);
+  // Bright thin rim — the primary player-owned shape language
+  const rimW = 0.045;
+  const ringGeo = new THREE.RingGeometry(PICKUP_R - rimW, PICKUP_R, 48);
   state.geos.push(ringGeo);
-  const ringMat = basic(state, color, 0.9);
+  const ringMat = basic(state, color, 1.0);
   const ring = new THREE.Mesh(ringGeo, ringMat);
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.05;
@@ -330,7 +359,29 @@ function createRadiusIndicator(
   ring.receiveShadow = false;
   group.add(ring);
 
+  // Chevron tick marks at 4 compass points — instant "this ring is PLAYER-owned"
+  const chevrons: THREE.Mesh[] = [];
+  const chevronMat = basic(state, color, 1.0);
+  const chevGeo = new THREE.ConeGeometry(0.09, 0.22, 3);
+  state.geos.push(chevGeo);
+  for (let k = 0; k < 4; k++) {
+    const a = k * Math.PI / 2 + Math.PI / 4;
+    const chev = new THREE.Mesh(chevGeo, chevronMat);
+    chev.position.set(
+      Math.cos(a) * (PICKUP_R + 0.12),
+      0.05,
+      Math.sin(a) * (PICKUP_R + 0.12)
+    );
+    chev.rotation.x = Math.PI / 2; // point outward
+    chev.rotation.z = -a;
+    chev.castShadow = false;
+    chev.receiveShadow = false;
+    group.add(chev);
+    chevrons.push(chev);
+  }
+
   state.dyn.add(group);
+  group.userData.baseColor = color;
 
   return {
     group,
@@ -338,14 +389,62 @@ function createRadiusIndicator(
     ringMat,
     disc,
     discMat,
-    glow: ring,       // not used, but interface requires it
-    glowMat: ringMat,  // not used
+    glow: ring,
+    glowMat: ringMat,
+    chevrons,
+    chevronMat,
+    flashT: 0,
     pulseT: 0,
     wasInRange: false,
-    baseOpacity: 0.22,
-    rimOpacity: 0.9,
+    baseOpacity: 0.10,
+    rimOpacity: 1.0,
+    prng,
   };
 }
+
+/* ------------------------- "+1" text sprites ------------------------ */
+
+function spawnPlusOne(state: RoundState, x: number, z: number, prng: () => number): void {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 64;
+  const g = canvas.getContext("2d")!;
+  g.font = "bold 42px Fredoka, sans-serif";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.lineWidth = 6;
+  g.strokeStyle = palette.ink;
+  g.strokeText("+1", 64, 32);
+  g.fillStyle = palette.sun;
+  g.fillText("+1", 64, 32);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.position.set(x + (prng() - 0.5) * 0.3, 0.9, z);
+  sprite.scale.set(0.8, 0.4, 1);
+  sprite.castShadow = false;
+  state.dyn.add(sprite);
+  state.plusOnes.push({ mesh: sprite, mat, life: 0.7, maxLife: 0.7, vy: 1.2 });
+}
+
+function updatePlusOnes(state: RoundState, dt: number): void {
+  for (let i = state.plusOnes.length - 1; i >= 0; i--) {
+    const p = state.plusOnes[i];
+    p.life -= dt;
+    if (p.life <= 0) {
+      state.dyn.remove(p.mesh);
+      p.mat.map?.dispose();
+      p.mat.dispose();
+      state.plusOnes.splice(i, 1);
+      continue;
+    }
+    p.mesh.position.y += p.vy * dt;
+    const k = p.life / p.maxLife;
+    p.mat.opacity = k < 0.3 ? k / 0.3 : 1;
+  }
+}
+
+/* ----------------------- radius indicators ------------------------- */
 
 function updateRadiusIndicators(state: RoundState, dt: number): void {
   for (let i = 0; i < state.bodies.length; i++) {
@@ -353,38 +452,54 @@ function updateRadiusIndicators(state: RoundState, dt: number): void {
     const ind = state.radiusIndicators[i];
     if (!ind) continue;
 
-    // Move indicator to follow the player
     ind.group.position.x = b.x;
     ind.group.position.z = b.z;
 
-    // Check if any pile is within pickup range
     let inRange = false;
+    let nearestPile: Pile | null = null;
+    let nearestD = Infinity;
     for (const p of state.piles) {
-      if (Math.hypot(b.x - p.x, b.z - p.z) <= PICKUP_R) {
+      const d = Math.hypot(b.x - p.x, b.z - p.z);
+      if (d <= PICKUP_R && d < nearestD) {
         inRange = true;
-        break;
+        nearestD = d;
+        nearestPile = p;
       }
     }
 
-    // Trigger pulse on transition into range
+    // IN-RANGE MOMENT: flash rim to white-gold, scale pulse, ring pop at pile
     if (inRange && !ind.wasInRange) {
-      ind.pulseT = 0.35;
+      ind.flashT = 0.18;
+      if (nearestPile) {
+        spawnRingPop(state, nearestPile.x, nearestPile.z, true, 2.0);
+      }
     }
     ind.wasInRange = inRange;
 
-    // Decay pulse
+    ind.flashT = Math.max(0, ind.flashT - dt);
     ind.pulseT = Math.max(0, ind.pulseT - dt);
+    const flashK = ind.flashT > 0 ? ind.flashT / 0.18 : 0;
     const pulseK = ind.pulseT > 0 ? ind.pulseT / 0.35 : 0;
 
-    // Apply opacity: base + pulse boost
-    const targetDiscOpacity = ind.baseOpacity + pulseK * 0.22;
-    const targetRimOpacity = ind.rimOpacity + pulseK * 0.45;
-    ind.discMat.opacity = targetDiscOpacity;
-    ind.ringMat.opacity = targetRimOpacity;
+    // Flash: rim → white-gold, scale 1.0→1.12→1.0
+    const flashScale = 1 + flashK * 0.12;
+    ind.ring.scale.setScalar(flashScale);
+    ind.discMat.opacity = ind.baseOpacity + flashK * 0.15;
 
-    // Subtle scale pulse on the ring
-    const scale = 1 + pulseK * 0.12;
-    ind.ring.scale.setScalar(scale);
+    // White-gold flash color on rim
+    if (flashK > 0) {
+      ind.ringMat.color.lerpColors(new THREE.Color(palette.sun), new THREE.Color(palette.white), 0.5);
+      ind.chevronMat.color.lerpColors(new THREE.Color(palette.sun), new THREE.Color(palette.white), 0.5);
+    } else {
+      ind.ringMat.color.setHex(hex(ind.group.userData.baseColor));
+      ind.chevronMat.color.setHex(hex(ind.group.userData.baseColor));
+    }
+
+    // Chevron flash brightness
+    ind.chevronMat.opacity = 0.85 + flashK * 0.15;
+
+    // Disc fill subtle pulse
+    ind.discMat.opacity = Math.max(ind.discMat.opacity, ind.baseOpacity + pulseK * 0.08);
   }
 }
 
@@ -400,21 +515,23 @@ function spawnBurst(
   speed: number,
   life: number,
   grav: number,
-  base = 0.07
+  base = 0.07,
+  rng: (() => number) | null = null
 ): void {
   const ctx = state.ctx;
+  const draw = rng ?? ctx.rng;
   const geo = new THREE.SphereGeometry(1, 8, 6);
   state.geos.push(geo);
   for (let i = 0; i < count; i++) {
-    const mat = basic(state, colors[Math.floor(ctx.rng() * colors.length)]);
+    const mat = basic(state, colors[Math.floor(draw() * colors.length)]);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(x, y, z);
     mesh.scale.setScalar(base);
     mesh.castShadow = false;
     state.dyn.add(mesh);
-    const th = ctx.rng() * Math.PI * 2;
-    const ph = ctx.rng() * Math.PI - Math.PI / 2;
-    const sp = speed * (0.5 + ctx.rng() * 0.8);
+    const th = draw() * Math.PI * 2;
+    const ph = draw() * Math.PI - Math.PI / 2;
+    const sp = speed * (0.5 + draw() * 0.8);
     state.particles.push({
       mesh,
       vx: Math.cos(th) * Math.cos(ph) * sp,
@@ -423,20 +540,26 @@ function spawnBurst(
       life,
       maxLife: life,
       grav,
-      base: base * (0.7 + ctx.rng() * 0.6),
+      base: base * (0.7 + draw() * 0.6),
     });
   }
 }
 
-function spawnRingPop(state: RoundState, x: number, z: number): void {
-  const mat = basic(state, palette.sun, 0.9);
-  const mesh = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.07, 8, 24), mat);
+function spawnRingPop(
+  state: RoundState,
+  x: number,
+  z: number,
+  flat = true,
+  maxScale = 3.2
+): void {
+  const mat = basic(state, palette.sun, 1.0);
+  const mesh = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.06, 8, 32), mat);
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.set(x, 0.06, z);
-  mesh.scale.setScalar(0.5);
+  mesh.scale.setScalar(0.3);
   mesh.castShadow = false;
   state.dyn.add(mesh);
-  state.rings.push({ mesh, mat, life: 0.45, maxLife: 0.45 });
+  state.rings.push({ mesh, mat, life: 0.25, maxLife: 0.25, flat, maxScale });
 }
 
 function updateParticles(state: RoundState, dt: number): void {
@@ -463,8 +586,9 @@ function updateParticles(state: RoundState, dt: number): void {
       continue;
     }
     const k = 1 - r.life / r.maxLife;
-    r.mesh.scale.setScalar(0.5 + ease.outCubic(k) * 2.6);
-    r.mat.opacity = 0.9 * (1 - k);
+    const s = r.flat ? (0.3 + ease.outCubic(k) * r.maxScale) : r.maxScale;
+    r.mesh.scale.setScalar(s);
+    r.mat.opacity = 1.0 * (1 - k);
   }
 }
 
@@ -475,13 +599,7 @@ function buildPile(state: RoundState, x: number, z: number, coins: number, life:
   const group = new THREE.Group();
   group.position.set(x, 0, z);
 
-  const ringMat = basic(state, palette.sun, 0.45);
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.62, 24), ringMat);
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.025;
-  ring.castShadow = false;
-  group.add(ring);
-
+  // No ring — the pile reads as a coin cluster, not a circle.
   const coinGeo = new THREE.SphereGeometry(1, 12, 10);
   state.geos.push(coinGeo);
   const coinMat = toon(state, palette.sun);
@@ -512,7 +630,7 @@ function buildPile(state: RoundState, x: number, z: number, coins: number, life:
   }
 
   state.dyn.add(group);
-  const pile: Pile = { group, x, z, coins, life, phase: ctx.rng() * Math.PI * 2, ring, ringMat, glints };
+  const pile: Pile = { group, x, z, coins, life, phase: ctx.rng() * Math.PI * 2, glints };
   state.piles.push(pile);
   return pile;
 }
@@ -535,9 +653,6 @@ function updatePiles(state: RoundState, dt: number): void {
     if (p.life < PILE_FADE) {
       const s = Math.max(0.01, p.life / PILE_FADE);
       p.group.scale.setScalar(s);
-      p.ringMat.opacity = 0.45 * s;
-    } else {
-      p.ringMat.opacity = 0.32 + 0.2 * (0.5 + 0.5 * Math.sin(t * 5 + p.phase));
     }
     for (const gl of p.glints) {
       const a = t * gl.speed + gl.phase;
@@ -612,19 +727,30 @@ function collectPile(state: RoundState, b: Body, pile: Pile): void {
   const ctx = state.ctx;
   b.coins += pile.coins;
   ctx.playSfx("coin.gain", { volume: 0.8, pitch: 0.85 + pile.coins * 0.17 });
+  // GRAB MOMENT: tight burst of larger gold shards + "+1" pop.
+  // The burst uses presentation rng; compensate ctx.rng() with the same
+  // number of draws the old burst would have made, so the gameplay rng
+  // sequence (pile spawns, knock rolls, CPU rolls) is byte-identical.
   spawnBurst(
     state,
     pile.x,
     0.5,
     pile.z,
-    [palette.sun, palette.sunDeep, palette.mint],
-    8 + pile.coins * 2,
-    3.4,
-    0.55,
-    6,
-    0.08
+    [palette.sun, palette.sunDeep, palette.cream],
+    6 + pile.coins,
+    2.8,
+    0.4,
+    5,
+    0.14,
+    state.prng
   );
-  spawnRingPop(state, pile.x, pile.z);
+  // Compensating dummy draws: old burst consumed 5*(8+coins*2) ctx.rng draws.
+  // New burst uses prng (0 ctx.rng draws), so consume the full old amount.
+  {
+    const oldDraws = 5 * (8 + pile.coins * 2);
+    for (let k = 0; k < oldDraws; k++) state.ctx.rng();
+  }
+  spawnPlusOne(state, pile.x, pile.z, state.prng);
   const ch = ctx.characters[b.id];
   ch?.anim.squash();
   b.animHoldT = Math.max(b.animHoldT, 0.18);
@@ -823,6 +949,8 @@ export const coinGrabMinigame: Minigame = {
       timerLast: -1,
       chips: [],
       radiusIndicators: [],
+      plusOnes: [],
+      prng: mulberry32(12345),
     };
     ctx.scene.add(state.dyn);
 
@@ -859,8 +987,9 @@ export const coinGrabMinigame: Minigame = {
 
       // Create pickup radius indicator for this player
       const indicatorColor = characterColor(p.kind);
+      const prng = mulberry32(1000 + i * 777);
       state.radiusIndicators.push(
-        createRadiusIndicator(state, indicatorColor, x, z)
+        createRadiusIndicator(state, indicatorColor, x, z, prng)
       );
     });
 
@@ -912,6 +1041,7 @@ export const coinGrabMinigame: Minigame = {
     updateHud(state);
     updateCamera(state, dt);
     updateParticles(state, dt);
+    updatePlusOnes(state, dt);
     updatePiles(state, dt);
     updateFlyers(state, dt);
 
@@ -1082,6 +1212,7 @@ export const coinGrabMinigame: Minigame = {
     state.flyers = [];
     state.particles = [];
     state.rings = [];
+    state.plusOnes = [];
     state.radiusIndicators = [];
     state.hudRoot?.remove();
     state.hudRoot = null;
