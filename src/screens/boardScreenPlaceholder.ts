@@ -164,7 +164,23 @@ interface BoardScreenState {
 function projectToScreen(pos: THREE.Vector3): { x: number; y: number } | null {
   const cam = world.camera;
   if (!cam) return null;
+
+  // Three.js updates camera.matrixWorldInverse inside renderer.render().
+  // Callers fire during screens.update() (BEFORE render), so on the first
+  // frame it is identity and on subsequent frames it is one frame behind —
+  // projecting points far off-screen (x ≈ -193px on a 390px viewport).
+  // Fix: refresh the matrix before projecting.
+  cam.updateMatrixWorld();
+  cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
+
   const v = pos.clone().project(cam);
+
+  // Guard: return null for off-screen / behind-camera points so callers
+  // can skip rather than pile up invisible DOM nodes.
+  if (v.z < -1 || v.z > 1 || v.x < -1.5 || v.x > 1.5 || v.y < -1.5 || v.y > 1.5) {
+    return null;
+  }
+
   return {
     x: (v.x * 0.5 + 0.5) * window.innerWidth,
     y: (-v.y * 0.5 + 0.5) * window.innerHeight,
