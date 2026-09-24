@@ -22,7 +22,7 @@
 import * as THREE from "three";
 import type { Minigame, MinigameContext } from "../framework";
 import type { Character } from "../../characters/characterFactory";
-import { palette } from "../../config/palette";
+import { palette, hex } from "../../config/palette";
 import { Course, FINISH_X, START_X, LANE_Z } from "./course";
 import {
   buildObstacle,
@@ -56,8 +56,291 @@ const WIN_BEAT = 0.9; // celebration beat before finish()
 const LAST_SPAWN_X = FINISH_X - 3; // no obstacles in the final stretch
 
 /* ------------------------------------------------------------------ */
-/*  Types + state                                                      */
+/*  In-race position indicator (HUD)                                   */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Place is derived from runner x EVERY FRAME with the exact comparator the
+ * finish logic uses (b.x - a.x || a.id - b.id) — the badge can never disagree
+ * with the eventual ranking. It is pure display: no gameplay reads it, so the
+ * seeded outcome (coins / wins / obstacle stream) is untouched.
+ *
+ * Two layers, both always visible during "play":
+ *  1. A floating badge above each runner's head: 1st/2nd/3rd/4th in
+ *     gold/silver/bronze/plain, scale-popping on a place change.
+ *  2. A progress rail fixed at the top-left: one colour-coded segment per
+ *     runner showing its fraction of the course covered, ordered top = 1st.
+ *
+ * Cheap: no per-frame allocation — badge sprites are created once in setup
+ * and only mutated (scale / texture / material opacity); the rail meshes are
+ * pre-created box+marker pairs scaled in place. Textures are cached by the
+ * string that describes them, so repeat updates draw zero canvases.
+ */
+
+type BadgeTier = 0 | 1 | 2 | 3; // 1st..4th
+
+const PLACE_WORDS = ["1st", "2nd", "3rd", "4th"] as const;
+/** Badge fill colours by place — palette-derived, warm → neutral. */
+const PLACE_COLORS = [palette.sun, palette.cream, "#E8A35C", palette.white] as const;
+/** Badge ring colours — strong contrast on any course colour. */
+const PLACE_RING = ["#B8860B", "#9A9A9A", "#A05A2C", palette.inkSoft] as const;
+const BADGE_FLASH_TIME = 0.45; // s — scale-pop + colour blink on a place change
+
+const PROGRESS_H = 0.38; // runner segment height
+const PROGRESS_GAP = 0.14;
+const PROGRESS_DEPTH = 0.22;
+const PROGRESS_TRACK_W = 4.2; // visible rail length (world units)
+/** Rail offset from the camera's look target — keeps the strip on-screen. */
+const PROGRESS_LOOK_DX = -1.5; // left of the look target
+const PROGRESS_LOOK_DY = 2.8; // above the look target, in the upper screen
+const PROGRESS_LOOK_DZ = 0; // at the course plane
+
+interface Badge {
+  sprite: THREE.Sprite;
+  tier: BadgeTier;
+  flashT: number; // remaining flash time; 0 = idle
+}
+
+interface RunnerHud {
+  badge: Badge;
+  /** Progress rail segment (runner colour). */
+  seg: THREE.Mesh;
+  /** Chevron marker on the rail showing this runner's place. */
+  mark: THREE.Mesh;
+  /** Player accent (pip/bounce/...) — drives the rail colour. */
+  color: string;
+}
+
+// The HUD reads the module-level S declared in the state section below
+// (forward reference — fine because all HUD functions run after module eval).
+// Position-indicator state (pure display — never read by gameplay) is kept in
+// S.hud alongside the race state.
+
+/** Cached canvas textures keyed by their exact content string. */
+const badgeTexCache = new Map<string, THREE.CanvasTexture>();
+
+function badgeTexture(text: string, fill: string, ring: string): THREE.CanvasTexture {
+  const key = `${text}|${fill}|${ring}`;
+  const hit = badgeTexCache.get(key);
+  if (hit) return hit;
+
+  const size = 128;
+  const cv = document.createElement("canvas");
+  cv.width = size;
+  cv.height = size;
+  const g = cv.getContext("2d")!;
+  const c = size / 2;
+  const r = 44;
+
+  // Soft drop shadow so the badge reads against the sky AND the grass.
+  g.clearRect(0, 0, size, size);
+  g.beginPath();
+  g.arc(c + 2, c + 4, r, 0, Math.PI * 2);
+  g.fillStyle = "rgba(43, 29, 78, 0.35)";
+  g.fill();
+
+  // Ring + fill.
+  g.beginPath();
+  g.arc(c, c, r, 0, Math.PI * 2);
+  g.fillStyle = fill;
+  g.fill();
+  g.lineWidth = 10;
+  g.strokeStyle = ring;
+  g.stroke();
+
+  // Ordinal text.
+  g.fillStyle = ring;
+  g.font = "bold 44px system-ui, sans-serif";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(text, c, c + 2);
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  badgeTexCache.set(key, tex);
+  return tex;
+}
+
+/** World position of a runner's head, given its group + holder offset. */
+function headPos(r: Runner, out: THREE.Vector3): THREE.Vector3 {
+  out.copy(r.char.group.position);
+  out.y += 2.1; // comfortably above the character
+  return out;
+}
+
+const _hv = new THREE.Vector3();
+const _hv2 = new THREE.Vector3();
+
+/** Sort runners into current places with the finish-logic comparator. */
+function computePlaces(): Runner[] {
+  return [...S.runners].sort((a, b) => b.x - a.x || a.id - b.id);
+}
+
+/** Distance a runner has covered, 0 at the start line, 1 at the cake. */
+function courseProgress(r: Runner): number {
+  return clamp((r.x - START_X) / (FINISH_X - START_X), 0, 1);
+}
+
+function ensureHud(): void {
+  const scene = S.scene;
+  const ctx = S.ctx;
+  if (!scene || !ctx || S.hud.group) return;
+
+  const group = new THREE.Group();
+  S.hud.group = group;
+  scene.add(group);
+
+  // --- progress rail: a dim track with per-runner segments.
+  // The rail's WORLD position is recomputed each frame from the camera
+  // (updateHud) so the strip stays on-screen in portrait as the camera
+  // tracks the leader down the course. Built once here at origin.
+  const railMat = new THREE.MeshBasicMaterial({
+    color: hex(palette.ink),
+    transparent: true,
+    opacity: 0.6,
+    depthWrite: false,
+  });
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(PROGRESS_TRACK_W + 0.5, PROGRESS_H * 4 + PROGRESS_GAP * 3 + 0.3, PROGRESS_DEPTH), railMat);
+  rail.renderOrder = 17;
+  group.add(rail);
+  S.hud.rail = rail;
+
+  // --- per-runner badge + rail segment ---
+  const badges: RunnerHud[] = S.runners.map((r) => {
+    const color = ctx.players[r.id]?.color ?? palette.white;
+
+    // Floating badge sprite above the head.
+    const mat = new THREE.SpriteMaterial({
+      map: badgeTexture(PLACE_WORDS[0], PLACE_COLORS[0], PLACE_RING[0]),
+      transparent: true,
+      depthTest: false,
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(1.3, 1.3, 1);
+    sprite.renderOrder = 20;
+    headPos(r, _hv);
+    sprite.position.copy(_hv);
+    group.add(sprite);
+
+    // Rail segment (runner colour).
+    const segMat = new THREE.MeshBasicMaterial({
+      color: hex(color),
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+    });
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(1, PROGRESS_H, PROGRESS_DEPTH + 0.06), segMat);
+    seg.renderOrder = 18;
+    group.add(seg);
+
+    // Place chevron marker on the rail.
+    const markMat = new THREE.MeshBasicMaterial({
+      color: hex(color),
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+    });
+    const mark = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.36, 4), markMat);
+    mark.rotation.z = -Math.PI / 2; // point right, reads as a position arrow
+    mark.renderOrder = 19;
+    group.add(mark);
+
+    return {
+      badge: { sprite, tier: 0 as BadgeTier, flashT: 0 },
+      seg,
+      mark,
+      color,
+    };
+  });
+
+  S.hud.runners = badges;
+}
+
+/** Update badges + rail. Call AFTER runner positions are final for the frame. */
+function updateHud(): void {
+  const hud = S.hud;
+  if (!hud.group || S.phase !== "play") return;
+
+  const places = computePlaces();
+  const n = S.runners.length;
+
+  // --- progress rail: anchor to the camera's look target so it stays on-screen ---
+  const cam = S.ctx?.camera;
+  if (cam && hud.rail) {
+    // The camera looks at S.camLook; position the rail relative to that
+    // point so it stays in the upper-left of the screen.
+    hud.rail.position.set(
+      S.camLook.x + PROGRESS_LOOK_DX,
+      S.camLook.y + PROGRESS_LOOK_DY,
+      S.camLook.z + PROGRESS_LOOK_DZ
+    );
+  }
+  const railX = hud.rail ? hud.rail.position.x : 0;
+  const railY = hud.rail ? hud.rail.position.y : 0;
+  const railZ = hud.rail ? hud.rail.position.z : 0;
+
+  for (let i = 0; i < n; i++) {
+    const r = S.runners[i];
+    const h = hud.runners[i];
+    const place = places.indexOf(r); // 0..3
+    const tier = place as BadgeTier;
+
+    // Badge texture + flash on place change.
+    if (tier !== h.badge.tier) {
+      h.badge.tier = tier;
+      h.badge.flashT = BADGE_FLASH_TIME;
+      (h.badge.sprite.material as THREE.SpriteMaterial).map = badgeTexture(
+        PLACE_WORDS[tier],
+        PLACE_COLORS[tier],
+        PLACE_RING[tier]
+      );
+    }
+
+    // Flash: scale pop + material opacity blink, decaying to idle.
+    let scale = 1.3;
+    let opacity = 1;
+    if (h.badge.flashT > 0) {
+      h.badge.flashT -= 1 / 60;
+      const p = Math.max(0, h.badge.flashT) / BADGE_FLASH_TIME;
+      scale = 1.3 + 0.55 * Math.sin(Math.min(1, 1 - p) * Math.PI); // pop up then settle
+      opacity = 0.55 + 0.45 * Math.sin(p * Math.PI * 3); // blink while it lasts
+    }
+    h.badge.sprite.scale.set(scale, scale, 1);
+    (h.badge.sprite.material as THREE.SpriteMaterial).opacity = opacity;
+
+    // Position the badge above the runner's head.
+    headPos(r, _hv);
+    h.badge.sprite.position.copy(_hv);
+
+    // Rail segment: width ∝ course progress, stacked by place (1st on top).
+    const prog = courseProgress(r);
+    const segW = Math.max(0.02, prog * PROGRESS_TRACK_W);
+    h.seg.scale.x = segW;
+    h.seg.position.set(
+      railX + segW / 2,
+      railY + ((n - 1) / 2 - place) * (PROGRESS_H + PROGRESS_GAP),
+      railZ
+    );
+
+    // Chevron marker: slides to the segment's leading edge, stacked by place.
+    h.mark.position.set(
+      railX + segW,
+      railY + ((n - 1) / 2 - place) * (PROGRESS_H + PROGRESS_GAP),
+      railZ
+    );
+    h.mark.rotation.y = (place * Math.PI) / 2; // rotate per place so the stack reads
+  }
+}
+
+function teardownHud(): void {
+  const scene = S.scene;
+  if (scene && S.hud.group) {
+    scene.remove(S.hud.group);
+  }
+  S.hud.group = null;
+  S.hud.rail = null;
+  S.hud.runners = [];
+}
 
 type AnimName = "idle" | "walk" | "jump" | "cheer" | "sad" | "squash";
 
@@ -108,6 +391,12 @@ const S = {
   shakeT: 0,
   bursts: [] as BurstShard[],
   camLook: new THREE.Vector3(),
+  /** Position indicator (pure display — never read by gameplay). */
+  hud: {
+    group: null as THREE.Group | null,
+    rail: null as THREE.Mesh | null,
+    runners: [] as RunnerHud[],
+  },
 };
 
 /* ------------------------------------------------------------------ */
@@ -291,6 +580,10 @@ function setup(ctx: MinigameContext): void {
   ctx.input.key = (action) => {
     if (action === "up" || action === "confirm") pressJump(0);
   };
+
+  // Build the position indicator AFTER runners exist (badge above each head).
+  ensureHud();
+  updateHud(); // place everyone correctly on frame 1
 }
 
 /* ------------------------------------------------------------------ */
@@ -550,6 +843,7 @@ function update(dt: number): void {
   S.course.updateConfetti(dt);
   updateBursts(dt);
   updateCamera(dt);
+  updateHud(); // badges + rail follow the final positions of this frame
 
   // Win / cap checks.
   const crossed = S.runners.filter((r) => r.x >= FINISH_X);
@@ -566,6 +860,7 @@ function update(dt: number): void {
 
 function teardown(): void {
   if (S.course) S.course.teardown();
+  teardownHud();
   if (S.scene) {
     for (const o of S.obstacles) S.scene.remove(o.group);
     for (const b of S.bursts) S.scene.remove(b.mesh);
