@@ -58,6 +58,7 @@ const TIME_CAP = 27; // framework hard-stops at settings.minigameTimeLimit (30s)
 const INTRO_TIME = 1.5; // staggered grid pop-in
 const TURN_START_BEAT = 0.55;
 const FLIP_TIME = 0.22;
+const MISMATCH_HOLD = 0.7; // face-up reveal hold before a mismatch flips back
 const CPU_THINK1 = 0.0; // pick is computed instantly at turnStart expiry
 const CPU_THINK2 = 0.0;
 const RESOLVE_TIME = 0.55;
@@ -82,15 +83,25 @@ type Phase =
   | "win"
   | "timeup";
 
+type FlipPhase =
+  | "idle"
+  | "flipping" // tween flipFrom -> targetRotY; runs to completion + exact snap
+  | "revealed"; // face-up, holding; flips back when holdT expires (mismatch)
+
 interface Card {
   index: number;
   pair: number;
   mesh: THREE.Mesh;
   state: "down" | "up" | "matched";
   rotY: number;
-  targetRotY: number;
+  /** Per-card flip state machine — driven by its OWN timer in update(),
+   *  NEVER cancelled by phase/turn changes, always ends snapped to 0/PI. */
+  flipPhase: FlipPhase;
   flipFrom: number;
-  flipP: number; // -1 = not flipping, else 0..1
+  targetRotY: number;
+  flipT: number; // seconds into the current "flipping" segment
+  holdT: number; // seconds left in the "revealed" hold (0 when not holding)
+  pendingDown: boolean; // flip-up landing should hold, then flip back down
   wobbleT: number; // mismatch shake 1 -> 0
   pulseT: number; // match pop 1 -> 0
   popT: number; // grid pop-in clock (starts negative = stagger)
@@ -220,9 +231,12 @@ const memoryMatch: Minigame = {
         mesh: cm.mesh,
         state: "down" as const,
         rotY: 0,
-        targetRotY: 0,
+        flipPhase: "idle" as const,
         flipFrom: 0,
-        flipP: -1,
+        targetRotY: 0,
+        flipT: 0,
+        holdT: 0,
+        pendingDown: false,
         wobbleT: 0,
         pulseT: 0,
         popT: -index * 0.07, // staggered pop-in
@@ -298,6 +312,19 @@ const memoryMatch: Minigame = {
     // The framework keeps this instance cached; per-round state lives in
     // the closure above. Store it for update()/teardown().
     (memoryMatch as unknown as { _st?: MemoryMatchState })._st = st;
+
+    /* ---- critic probe: live card-rotation audit (read-only) ---- */
+    const ssp = (window as unknown as { __SSP__?: { auditMemoryCards?: () => unknown } }).__SSP__;
+    if (ssp) {
+      ssp.auditMemoryCards = () =>
+        st.cards.map((c) => ({
+          index: c.index,
+          pair: c.pair,
+          state: c.state,
+          flipPhase: c.flipPhase,
+          rotY: +c.mesh.rotation.y.toFixed(4), // the LIVE mesh value
+        }));
+    }
   },
 
   update(dt: number) {
@@ -313,20 +340,44 @@ const memoryMatch: Minigame = {
       const popK = Math.min(1, Math.max(0, card.popT));
       const popScale = easeOutBack(popK);
 
-      if (card.flipP >= 0) {
-        card.flipP += dt / FLIP_TIME;
-        if (card.flipP >= 1) {
-          card.flipP = -1;
-          card.rotY = card.targetRotY;
+      // Per-card flip machine: driven by its OWN timer, runs in EVERY phase
+      // (play, timeup, win alike) and CANNOT be cancelled by turn changes.
+      // Every flip ends with an exact snap to 0 (face-down) or PI (face-up).
+      if (card.flipPhase === "flipping") {
+        card.flipT += dt;
+        if (card.flipT >= FLIP_TIME) {
+          card.rotY = card.targetRotY; // final snap — no accumulation drift
+          if (card.targetRotY === Math.PI && card.pendingDown) {
+            card.pendingDown = false;
+            card.flipPhase = "revealed";
+            card.holdT = MISMATCH_HOLD;
+          } else {
+            card.flipPhase = "idle";
+          }
         } else {
-          const k = easeOutBack(card.flipP);
+          const k = easeOutBack(card.flipT / FLIP_TIME);
           card.rotY = card.flipFrom + (card.targetRotY - card.flipFrom) * k;
+        }
+      } else if (card.flipPhase === "revealed") {
+        card.holdT -= dt;
+        if (card.holdT <= 0) {
+          // Uninterruptible flip-back from exactly PI.
+          card.flipFrom = Math.PI;
+          card.targetRotY = 0;
+          card.flipT = 0;
+          card.flipPhase = "flipping";
         }
       }
       if (card.wobbleT > 0) card.wobbleT = Math.max(0, card.wobbleT - dt / 0.3);
       if (card.pulseT > 0) card.pulseT = Math.max(0, card.pulseT - dt / 0.3);
 
-      const flipPop = card.flipP >= 0 ? 1 + 0.1 * Math.sin(Math.PI * Math.min(1, card.flipP)) : 1;
+      const flipK =
+        card.flipPhase === "flipping"
+          ? Math.min(1, card.flipT / FLIP_TIME)
+          : card.flipPhase === "revealed"
+            ? 1
+            : 0;
+      const flipPop = flipK > 0 ? 1 + 0.1 * Math.sin(Math.PI * flipK) : 1;
       const pulse = card.pulseT > 0 ? 1 + 0.16 * card.pulseT : 1;
       const wobble = card.wobbleT > 0 ? Math.sin(card.wobbleT * Math.PI * 6) * 0.08 * card.wobbleT : 0;
       card.mesh.rotation.y = card.rotY;
@@ -448,8 +499,7 @@ const memoryMatch: Minigame = {
               startTurn(st);
             }
           } else {
-            // flip both back, then pass the turn
-            for (const idx of st.flipped) flipDown(st, idx);
+            // flip-backs were already scheduled in resolveTurn; just pass.
             st.flipped = [];
             st.phase = "turnEnd";
           }
@@ -470,14 +520,24 @@ const memoryMatch: Minigame = {
         break;
       }
       case "win": {
-        if ((st.phaseT >= WIN_TIME || ctx.time >= HARD_FINISH) && st.winRanking) {
+        // Finish only once every card is settled at exactly 0/PI — the
+        // freeze frame the critic sees must never contain a half-turned card.
+        if (
+          (st.phaseT >= WIN_TIME || ctx.time >= HARD_FINISH) &&
+          tableSettled(st) &&
+          st.winRanking
+        ) {
           st.finished = true;
           ctx.finish(st.winRanking);
         }
         break;
       }
       case "timeup": {
-        if ((st.phaseT >= TIMEUP_TIME || ctx.time >= HARD_FINISH) && st.winRanking) {
+        if (
+          (st.phaseT >= TIMEUP_TIME || ctx.time >= HARD_FINISH) &&
+          tableSettled(st) &&
+          st.winRanking
+        ) {
           st.finished = true;
           ctx.finish(st.winRanking);
         }
@@ -508,6 +568,8 @@ const memoryMatch: Minigame = {
     for (const ch of ctx.characters) ch.anim.idle();
     ctx.input.pointer = () => {};
     ctx.input.key = () => {};
+    const ssp = (window as unknown as { __SSP__?: Record<string, unknown> }).__SSP__;
+    if (ssp) delete ssp.auditMemoryCards;
     (memoryMatch as unknown as { _st?: MemoryMatchState })._st = undefined;
   },
 };
@@ -547,12 +609,20 @@ function placeCursorRing(st: MemoryMatchState): void {
   st.cursorRing.visible = true;
 }
 
+/**
+ * Begin (or retarget) a card flip. The per-card machine always runs the
+ * tween to completion and snaps the final value, so retargeting mid-flight
+ * (e.g. a CPU re-pick) can NEVER leave a card half-turned.
+ */
 function startFlip(st: MemoryMatchState, index: number, faceUp: boolean): void {
   const card = st.cards[index];
   if (!card || card.state === "matched") return;
   card.flipFrom = card.rotY;
   card.targetRotY = faceUp ? Math.PI : 0;
-  card.flipP = 0.0001;
+  card.flipT = 0;
+  card.holdT = 0;
+  card.pendingDown = false;
+  card.flipPhase = "flipping";
 }
 
 function flipUp(st: MemoryMatchState, index: number): void {
@@ -565,11 +635,24 @@ function flipUp(st: MemoryMatchState, index: number): void {
   st.ctx.playSfx("whoosh", { volume: 0.45, pitch: 1.15 });
 }
 
+/**
+ * Schedule a mismatch flip-back: the card holds face-up for MISMATCH_HOLD,
+ * then flips back on its own per-card timer. If it is still mid flip-up it
+ * holds as soon as it lands. state flips to "down" immediately so rules and
+ * picks treat it as unavailable — the VISUAL flip-back is owned by the card
+ * machine and cannot be interrupted by phase/turn changes or the time cap.
+ */
 function flipDown(st: MemoryMatchState, index: number): void {
   const card = st.cards[index];
   if (!card || card.state !== "up") return;
-  startFlip(st, index, false);
   card.state = "down";
+  if (card.flipPhase === "flipping" && card.targetRotY === Math.PI) {
+    card.pendingDown = true; // hold once the flip-up lands
+    return;
+  }
+  card.rotY = Math.PI; // snap to exactly face-up before the hold
+  card.flipPhase = "revealed";
+  card.holdT = MISMATCH_HOLD;
 }
 
 /** Every CPU rolls p=0.78 memory on a reveal (including its own flips). */
@@ -658,6 +741,9 @@ function resolveTurn(st: MemoryMatchState): void {
     a.wobbleT = 1;
     b.wobbleT = 1;
     ctx.playSfx("ui.click", { volume: 0.4, pitch: -6 });
+    // The 0.7s reveal hold starts NOW (mismatch resolution); the flip-back
+    // completes on each card's own timer, independent of the phase machine.
+    for (const idx of st.flipped) flipDown(st, idx);
   }
 }
 
@@ -708,8 +794,29 @@ function startWin(st: MemoryMatchState): void {
   st.phaseT = 0;
 }
 
+/** Every card's flip machine is idle (no tween / reveal hold in flight). */
+function tableSettled(st: MemoryMatchState): boolean {
+  return st.cards.every((c) => c.flipPhase === "idle");
+}
+
+/**
+ * TIME'S UP sweep: every non-matched face-up card goes back down through
+ * the same uninterruptible per-card machine — no zombie cards at the cap.
+ * Cards already mid flip-down / mid hold are left to their own timers.
+ */
+function settleFlippedCards(st: MemoryMatchState): void {
+  for (const card of st.cards) {
+    if (card.state === "matched") continue;
+    if (card.state === "up") flipDown(st, card.index);
+    else if (card.flipPhase === "flipping" && card.targetRotY === Math.PI) {
+      card.pendingDown = true; // hold once the flip-up lands, then flip back
+    }
+  }
+}
+
 function maybeTimeUp(st: MemoryMatchState): void {
   if (st.phase === "win" || st.phase === "timeup" || st.winRanking) return;
+  settleFlippedCards(st);
   st.winRanking = computeRanking(st);
   st.ctx.announce("TIME'S UP!", { durationMs: 1200, sound: null });
   st.ctx.playSfx("crowd.aah", { volume: 0.7 });

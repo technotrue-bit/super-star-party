@@ -40,6 +40,13 @@ const BASKET_DESPAWN_X = -9.8; // ...and exit on the left
 const TIME_CAP = 28.5; // round cap — the framework force-finishes at 30s, so end before that
 const BASKET_COLORS = [palette.candy, palette.berry, palette.mint, palette.bubble];
 
+// CPU fallibility: fire probability, aim/timing error ranges, decision interval
+const CPU_FIRE_P = 0.7; // probability of firing at a basket opportunity
+const CPU_AIM_ERR = 0.45; // aim error amplitude in world units (±)
+const CPU_TIMING_MIN = 0.05; // timing error range in seconds (early/late)
+const CPU_TIMING_MAX = 0.25;
+const CPU_THINK_INTERVAL = 0.25; // fixed decision interval in seconds (frame-independent)
+
 /* ------------------------------ state ----------------------------------- */
 
 interface Basket {
@@ -48,6 +55,7 @@ interface Basket {
   x: number;
   speed: number;
   bounce: number;
+  spawnTime: number; // ctx.time when spawned (for analytic position)
 }
 
 interface Coin {
@@ -85,7 +93,7 @@ interface PlayerSt {
   chargeT: number;
   aimError: number; // CPU aim error for the in-flight shot (human: 0)
   aimSlop: number; // CPU timing slop: widens the fire window this shot
-  thinkT: number; // CPU decision cooldown
+  cpuNextThink: number; // next ctx.time at which CPU makes a decision (frame-independent)
   recoil: number; // 1 -> 0 cannon kick
   poseT: number; // squash timer -> idle
   cheerT: number; // cheer timer -> idle
@@ -108,7 +116,9 @@ interface State {
   coins: Coin[];
   particles: Particle[];
   rollers: THREE.Mesh[];
-  spawnT: number[];
+  nextSpawn: number[]; // per-lane next spawn time (frame-independent, via simTime)
+  simTime: number; // fixed-step simulation time (0.25s steps, frame-independent)
+  simAccumulator: number; // accumulates dt to fire fixed 0.25s sim steps
   t: number;
   shake: number;
   announcedGo: boolean;
@@ -252,6 +262,76 @@ function updateParticles(st: State, dt: number): void {
   }
 }
 
+/* ---------------------------- sky dressing ------------------------------ */
+
+/**
+ * Build a canvas texture for the sky backdrop: bubble-blue gradient at top
+ * fading to warm cream at the horizon, with a sun disc and 3 parallax clouds.
+ * Pure palette colors, drawn once into a CanvasTexture.
+ */
+function makeSkyTexture(): THREE.CanvasTexture {
+  const W = 512;
+  const H = 256;
+  const cv = document.createElement("canvas");
+  cv.width = W;
+  cv.height = H;
+  const g = cv.getContext("2d")!;
+
+  // Vertical gradient: bubble (top) -> cream (horizon)
+  const grad = g.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, palette.bubble);
+  grad.addColorStop(0.6, palette.bubble);
+  grad.addColorStop(1, palette.cream);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, W, H);
+
+  // Sun disc (upper-right)
+  const sunX = W * 0.75;
+  const sunY = H * 0.22;
+  const sunR = 28;
+  g.beginPath();
+  g.arc(sunX, sunY, sunR, 0, Math.PI * 2);
+  g.fillStyle = palette.sun;
+  g.fill();
+  // Sun rays (simple starburst)
+  g.strokeStyle = palette.sun;
+  g.lineWidth = 3;
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const r0 = sunR + 4;
+    const r1 = sunR + 12;
+    g.beginPath();
+    g.moveTo(sunX + Math.cos(a) * r0, sunY + Math.sin(a) * r0);
+    g.lineTo(sunX + Math.cos(a) * r1, sunY + Math.sin(a) * r1);
+    g.stroke();
+  }
+
+  // 3 clouds (parallax depth cues: varying opacity, size, y-position)
+  const clouds = [
+    { x: 0.18, y: 0.28, s: 0.7, a: 0.85 },
+    { x: 0.55, y: 0.18, s: 0.55, a: 0.7 },
+    { x: 0.85, y: 0.4, s: 0.45, a: 0.6 },
+  ];
+  for (const c of clouds) {
+    const cx = c.x * W;
+    const cy = c.y * H;
+    const s = c.s;
+    g.globalAlpha = c.a;
+    g.fillStyle = palette.white;
+    // Simple 3-bump cloud shape
+    g.beginPath();
+    g.arc(cx - 18 * s, cy, 14 * s, 0, Math.PI * 2);
+    g.arc(cx, cy - 8 * s, 18 * s, 0, Math.PI * 2);
+    g.arc(cx + 18 * s, cy, 14 * s, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.globalAlpha = 1;
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /* ---------------------------- arena build ------------------------------- */
 
 function buildArena(st: State): void {
@@ -259,6 +339,16 @@ function buildArena(st: State): void {
   const scene = ctx.scene;
   const cream = hex(palette.cream);
   const ink = hex(palette.ink);
+
+  // ---- sky backdrop: textured plane above the carnival wall ----
+  const skyTex = makeSkyTexture();
+  const skyMat = new THREE.MeshBasicMaterial({ map: skyTex });
+  st.mats.push(skyMat);
+  const sky = new THREE.Mesh(newGeo(st, new THREE.PlaneGeometry(28, 12)), skyMat);
+  sky.position.set(0, 6.5, -11.5);
+  sky.castShadow = false;
+  sky.receiveShadow = false;
+  st.root.add(sky);
 
   // ---- party floor: saturated grass checker (cel bands stay colourful) ----
   const grassA = hex(palette.grassA);
@@ -463,7 +553,7 @@ function spawnBasket(st: State, lane: number): void {
   const rim = addMesh(st, group, newGeo(st, new THREE.TorusGeometry(0.58, 0.07, 8, 18)), toon(st, hex(palette.cream)), [0, 0.66, 0], [Math.PI / 2, 0, 0], true);
   group.add(outlineShell(st, rim.geometry));
   st.root.add(group);
-  st.baskets.push({ group, lane, x: BASKET_SPAWN_X, speed, bounce: 0 });
+  st.baskets.push({ group, lane, x: BASKET_SPAWN_X, speed, bounce: 0, spawnTime: st.simTime });
 }
 
 function fireCoin(st: State, pid: number): void {
@@ -571,6 +661,98 @@ function endRound(st: State): void {
   st.ctx.finish(ranking);
 }
 
+/* ------------------------- fixed-step simulation ------------------------- */
+
+/**
+ * One fixed 0.25s simulation step. All RNG draws happen here at deterministic
+ * simTime boundaries, so the draw sequence is identical across runs regardless
+ * of frame timing. Visual-only updates (bounce, recoil, shake) run on dt in
+ * the main update loop.
+ */
+function simulateStep(st: State, step: number): void {
+  const { ctx } = st;
+
+  // ---- basket spawns (frame-independent: fixed simTime intervals) ----
+  for (let lane = 0; lane < 4; lane++) {
+    if (st.simTime >= st.nextSpawn[lane]) {
+      spawnBasket(st, lane);
+      st.nextSpawn[lane] += 1.7 + (ctx.rng() - 0.5) * 0.5;
+    }
+  }
+
+  // ---- move + despawn baskets (analytic position from spawnTime) ----
+  for (let i = st.baskets.length - 1; i >= 0; i--) {
+    const b = st.baskets[i];
+    b.x = BASKET_SPAWN_X - b.speed * (st.simTime - b.spawnTime);
+    b.group.position.x = b.x;
+    if (b.x < BASKET_DESPAWN_X) {
+      st.root.remove(b.group);
+      disposeGeos(b.group);
+      st.baskets.splice(i, 1);
+    }
+  }
+
+  // ---- CPU thinking (players 1..3): decisions at fixed simTime intervals ----
+  const tAThink = arriveTime(MUZZLE_Y, VY);
+  for (let pid = 1; pid < 4; pid++) {
+    const P = st.players[pid];
+    if (P.ammo <= 0) continue;
+    if (st.simTime >= P.cpuNextThink && !P.charging) {
+      P.cpuNextThink += CPU_THINK_INTERVAL;
+      // draw this opportunity's slop first
+      const slop = CPU_TIMING_MIN + ctx.rng() * (CPU_TIMING_MAX - CPU_TIMING_MIN);
+      // lead: where a basket must be NOW so it is within catch+slop of the
+      // aim point when the coin lands (charge delay shifts it by ~s*CHARGE)
+      const lead = tAThink + CHARGE;
+      let best = Infinity;
+      for (const b of st.baskets) {
+        if (b.lane !== P.lane) continue;
+        const d = Math.abs(b.x - b.speed * lead);
+        if (d < best) best = d;
+      }
+      if (best <= 0.84 + slop) {
+        // fallible CPU: fire with p=CPU_FIRE_P, with real aim error (±0.45u)
+        const err = (ctx.rng() * 2 - 1) * CPU_AIM_ERR;
+        if (ctx.rng() < CPU_FIRE_P) {
+          P.aimError = err;
+          P.aimSlop = slop;
+          P.charging = true;
+          P.chargeT = CHARGE;
+        }
+      }
+    }
+  }
+
+  // ---- coins: analytic rim-crossing resolve, then integrate ----
+  for (const c of st.coins) {
+    if (!c.resolved) {
+      if (c.y <= CATCH_Y || arriveTime(c.y, c.vy) <= step) {
+        resolveCoin(st, c);
+      }
+    }
+    if (c.resolved) continue;
+    c.vy -= GRAV * step;
+    c.x += c.vx * step;
+    c.y += c.vy * step;
+    c.z += c.vz * step;
+    c.group.position.set(c.x, c.y, c.z);
+    for (let i = 0; i < c.tail.length; i++) {
+      const t = c.tail[i];
+      t.position.set(c.x - c.vx * (0.03 + i * 0.035), c.y - c.vy * (0.03 + i * 0.035), c.z - c.vz * (0.03 + i * 0.035));
+      const s = 0.05 - i * 0.012;
+      t.scale.setScalar(Math.max(0.008, s * Math.min(1, c.y / (MUZZLE_Y * 0.8))));
+    }
+    if (c.y <= 0.06) {
+      c.resolved = true;
+      st.root.remove(c.group);
+      ctx.playSfx("pop", { volume: 0.3 });
+    }
+  }
+  for (let i = st.coins.length - 1; i >= 0; i--) {
+    if (st.coins[i].resolved) st.coins.splice(i, 1);
+  }
+}
+
 /* ------------------------------ minigame --------------------------------- */
 
 const coinCannon: Minigame = {
@@ -587,7 +769,9 @@ const coinCannon: Minigame = {
       coins: [],
       particles: [],
       rollers: [],
-      spawnT: [0, 0, 0, 0],
+      nextSpawn: [0, 0, 0, 0],
+      simTime: 0,
+      simAccumulator: 0,
       t: 0,
       shake: 0,
       announcedGo: false,
@@ -612,7 +796,7 @@ const coinCannon: Minigame = {
         chargeT: 0,
         aimError: 0,
         aimSlop: 0,
-        thinkT: 0.4 + lane * 0.25 + ctx.rng() * 0.3,
+        cpuNextThink: 0.4 + lane * CPU_THINK_INTERVAL + ctx.rng() * CPU_THINK_INTERVAL,
         recoil: 0,
         poseT: 0,
         cheerT: 0,
@@ -687,62 +871,19 @@ const coinCannon: Minigame = {
       ctx.announce("TAP TO FIRE!", { durationMs: 1300, sound: null });
     }
 
-    // ---- basket spawns (per-lane timers, rng jitter) ----
-    for (let lane = 0; lane < 4; lane++) {
-      st.spawnT[lane] -= dt;
-      if (st.spawnT[lane] <= 0) {
-        spawnBasket(st, lane);
-        st.spawnT[lane] = 1.7 + (ctx.rng() - 0.5) * 0.5;
-      }
-    }
-    // move + despawn baskets
-    for (let i = st.baskets.length - 1; i >= 0; i--) {
-      const b = st.baskets[i];
-      b.x -= b.speed * dt;
-      b.bounce = Math.max(0, b.bounce - dt * 2.2);
-      b.group.position.x = b.x;
-      b.group.position.y = 0.12 * b.bounce;
-      const dip = 1 - 0.18 * b.bounce; // squash on catch, with a slight stretch
-      b.group.scale.set(1 + 0.08 * b.bounce, dip, 1 + 0.08 * b.bounce);
-      if (b.x < BASKET_DESPAWN_X) {
-        st.root.remove(b.group);
-        disposeGeos(b.group);
-        st.baskets.splice(i, 1);
-      }
+    // ---- FIXED-STEP SIMULATION: accumulate dt, fire 0.25s sim steps.
+    // All RNG draws happen here at deterministic simTime boundaries, so the
+    // draw sequence is identical regardless of frame timing. Visual-only
+    // updates (bounce decay, recoil, shake) run on dt below.
+    st.simAccumulator += dt;
+    const SIM_STEP = CPU_THINK_INTERVAL; // 0.25s
+    while (st.simAccumulator >= SIM_STEP) {
+      st.simAccumulator -= SIM_STEP;
+      st.simTime += SIM_STEP;
+      simulateStep(st, SIM_STEP);
     }
 
-    // ---- CPU thinking (players 1..3): watch the lane, fire at ~60% of
-    // opportunities. Each evaluation draws this shot's aim error + timing
-    // slop and only commits when a basket is already inside the fire zone
-    // (compensating the 0.12s charge delay), so commits rarely abort.
-    const tAThink = arriveTime(MUZZLE_Y, VY);
-    for (let pid = 1; pid < 4; pid++) {
-      const P = st.players[pid];
-      if (P.ammo <= 0) continue;
-      P.thinkT -= dt;
-      if (P.thinkT <= 0 && !P.charging) {
-        P.thinkT = 0.35 + ctx.rng() * 0.3;
-        const err = (ctx.rng() * 2 - 1) * 1.3;
-        const slop = ctx.rng() * 0.55;
-        // lead: where a basket must be NOW so it is within catch+slop of the
-        // aim point when the coin lands (charge delay shifts it by ~s*CHARGE)
-        const lead = tAThink + CHARGE;
-        let best = Infinity;
-        for (const b of st.baskets) {
-          if (b.lane !== P.lane) continue;
-          const d = Math.abs(b.x - b.speed * lead - err);
-          if (d < best) best = d;
-        }
-        if (best <= 0.84 + slop && ctx.rng() < 0.6) {
-          P.aimError = err;
-          P.aimSlop = slop;
-          P.charging = true;
-          P.chargeT = CHARGE;
-        }
-      }
-    }
-
-    // ---- charge-up -> fire ----
+    // ---- charge-up -> fire (dt-based, no RNG — responsive for human) ----
     for (const P of st.players) {
       if (!P.charging) continue;
       P.chargeT -= dt;
@@ -755,8 +896,7 @@ const coinCannon: Minigame = {
         if (P.id === 0) {
           fireCoin(st, P.id);
         } else {
-          // CPU re-checks the window at fire time: a basket must be within
-          // catch + timing slop of its aim point at coin arrival, else hold.
+          // CPU re-checks the window at fire time
           const tA = arriveTime(MUZZLE_Y, VY);
           let best = Infinity;
           for (const b of st.baskets) {
@@ -776,36 +916,13 @@ const coinCannon: Minigame = {
       }
     }
 
-    // ---- coins: analytic rim-crossing resolve, then integrate ----
-    for (const c of st.coins) {
-      if (!c.resolved) {
-        if (c.y <= CATCH_Y || arriveTime(c.y, c.vy) <= dt) {
-          resolveCoin(st, c);
-        }
-      }
-      if (c.resolved) continue;
-      c.vy -= GRAV * dt;
-      c.x += c.vx * dt;
-      c.y += c.vy * dt;
-      c.z += c.vz * dt;
-      c.group.position.set(c.x, c.y, c.z);
-      for (let i = 0; i < c.tail.length; i++) {
-        const t = c.tail[i];
-        t.position.set(c.x - c.vx * (0.03 + i * 0.035), c.y - c.vy * (0.03 + i * 0.035), c.z - c.vz * (0.03 + i * 0.035));
-        const s = 0.05 - i * 0.012;
-        t.scale.setScalar(Math.max(0.008, s * Math.min(1, c.y / (MUZZLE_Y * 0.8))));
-      }
-      if (c.y <= 0.06) {
-        c.resolved = true;
-        st.root.remove(c.group);
-        ctx.playSfx("pop", { volume: 0.3 });
-      }
+    // ---- visual-only updates (frame-rate dependent, no RNG) ----
+    for (const b of st.baskets) {
+      b.bounce = Math.max(0, b.bounce - dt * 2.2);
+      b.group.position.y = 0.12 * b.bounce;
+      const dip = 1 - 0.18 * b.bounce;
+      b.group.scale.set(1 + 0.08 * b.bounce, dip, 1 + 0.08 * b.bounce);
     }
-    for (let i = st.coins.length - 1; i >= 0; i--) {
-      if (st.coins[i].resolved) st.coins.splice(i, 1);
-    }
-
-    // ---- juice: rollers, recoil, poses, shake, particles ----
     for (const r of st.rollers) r.rotation.y += dt * 4;
     for (const P of st.players) {
       if (P.recoil > 0) {
@@ -840,8 +957,8 @@ const coinCannon: Minigame = {
     }
     updateParticles(st, dt);
 
-    // ---- end conditions ----
-    if (st.t >= TIME_CAP || st.players.every((p) => p.ammo <= 0)) {
+    // ---- end conditions (checked every frame; simTime is deterministic) ----
+    if (st.simTime >= TIME_CAP || st.players.every((p) => p.ammo <= 0)) {
       endRound(st);
     }
   },
