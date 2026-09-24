@@ -234,13 +234,11 @@ interface TitleState {
   _highlighted?: number;
   _stage?: HTMLDivElement;
   _settingsOpen?: boolean;
-  _transitioning?: boolean;
   _existing?: Set<THREE.Object3D>;
   _applyHighlight: () => void;
   _goPlay: () => void;
   _goHowTo: () => void;
   _openSettings: () => void;
-  _transition: (done: () => void) => void;
   _showSettingsPanel: () => void;
   _sliderRow: (label: string, initial: number, apply: (v: number) => void) => HTMLDivElement;
 }
@@ -259,7 +257,6 @@ const titleImpl: TitleState & Screen = {
     this._t = 0;
     this._highlighted = 0;
     this._settingsOpen = false;
-    this._transitioning = false;
     this._buttons = [];
 
     // Snapshot existing scene children so exit() only sweeps what we add.
@@ -372,7 +369,6 @@ const titleImpl: TitleState & Screen = {
 
     // ---- keyboard nav ----
     this._onKeyDown = (e: KeyboardEvent) => {
-      if (this._transitioning) return;
       if (this._settingsOpen) return;
       if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
         e.preventDefault();
@@ -441,21 +437,17 @@ const titleImpl: TitleState & Screen = {
 
   /* ---- actions ---- */
   _goPlay() {
-    if (this._transitioning) return;
-    this._transitioning = true;
     audio.sfx.play("fanfare.win");
     ui.confettiBurst(window.innerWidth / 2, window.innerHeight * 0.4, {
       sound: null,
       count: 80,
     });
-    this._transition(() => screens.goto("select"));
+    screens.goto("select");
   },
 
   _goHowTo() {
-    if (this._transitioning) return;
-    this._transitioning = true;
     audio.sfx.play("pop");
-    this._transition(() => screens.goto("howto"));
+    screens.goto("howto");
   },
 
   _openSettings() {
@@ -463,17 +455,6 @@ const titleImpl: TitleState & Screen = {
     this._settingsOpen = true;
     audio.sfx.play("pop");
     this._showSettingsPanel();
-  },
-
-  /** Quick scale/fade wipe, then call the given nav. */
-  _transition(done: () => void) {
-    const stage = this._stage;
-    if (stage) {
-      stage.style.transition = "opacity .18s ease-out, transform .18s cubic-bezier(.4,1.4,.6,1)";
-      stage.style.opacity = "0";
-      stage.style.transform = "scale(1.08)";
-    }
-    window.setTimeout(done, 190);
   },
 
   /* ---- settings panel ---- */

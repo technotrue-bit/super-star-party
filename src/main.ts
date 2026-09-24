@@ -56,9 +56,13 @@ function boot(): void {
   const params = new URLSearchParams(window.location.search);
   const seed = Number(params.get("seed") ?? "1");
   rng.reset(seed); // URL seed wins at boot (critic replays)
-  const screen = params.get("screen") ?? "title";
+  let screen = params.get("screen") ?? "title";
   const audioOff = params.get("audio") === "0";
   const speed = Number(params.get("speed") ?? "1");
+
+  // ?shop=1 jumps straight to the board and opens the gumball shop for
+  // inspection — the shop stays open indefinitely (no auto-resolve).
+  if (params.get("shop") === "1") screen = "board";
 
   if (audioOff) {
     // No AudioContext at all — silence, but the engine object must still work.

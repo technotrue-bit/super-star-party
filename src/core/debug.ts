@@ -8,6 +8,8 @@ import { rng } from "./rng";
 import { audio } from "../audio/audioEngine";
 import { screens } from "../screens/screenManager";
 import { world } from "../main";
+import { openShop } from "../screens/shopScreen";
+import { resetWipeRotation } from "../ui/transitions";
 
 export interface SSPDebug {
   state(): Record<string, unknown>;
@@ -22,6 +24,14 @@ export interface SSPDebug {
   startMatch(kinds: string[], names?: string[]): void;
   /** Debug-only: jump to end-of-match (set phase='ended' for finale wiring). */
   endMatch(): void;
+  resetWipeRotation(): void;
+  /**
+   * Open the Gumball Shop for `playerId` (default 0 = human) on demand for
+   * visual inspection. Resolves when the player closes or buys. This is the
+   * critic's deterministic entry point — the shop stays open indefinitely
+   * (no auto-resolve) so it can be inspected.
+   */
+  openShop(playerId?: number): Promise<{ bought: string[] }>;
 }
 
 let autoplayOn = false;
@@ -60,6 +70,8 @@ export function installDebugAPI(): void {
       return {
         version: "0.1.0",
         screen: screens.current,
+        nextWipe: screens.nextWipe,
+        isWiping: screens.isWiping,
         camera: cam
           ? {
               pos: [cam.position.x, cam.position.y, cam.position.z].map((v) => +v.toFixed(2)),
@@ -123,6 +135,14 @@ export function installDebugAPI(): void {
       match.phase = "ended";
       match.turn = match.totalTurns;
       screens.goto("finale");
+    },
+    openShop(playerId = 0) {
+      // Open the shop directly for inspection — no auto-resolve timer.
+      return openShop(playerId);
+    },
+    resetWipeRotation() {
+      // Re-export so headless probes can reset the deterministic wipe cycle.
+      resetWipeRotation();
     },
   };
   (window as unknown as { __SSP__: SSPDebug }).__SSP__ = api;

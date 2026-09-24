@@ -57,12 +57,12 @@ function injectPauseStyles(): void {
       backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
       display: flex; align-items: center; justify-content: center;
       padding: 20px;
-      opacity: 0; pointer-events: none;
+      opacity: 0; pointer-events: none; visibility: hidden;
       transition: opacity 160ms ease-out;
       font-family: 'Fredoka', 'Comic Sans MS', sans-serif;
     }
     .ssp-pause-overlay--open {
-      opacity: 1; pointer-events: auto;
+      opacity: 1; pointer-events: auto; visibility: visible;
     }
     .ssp-pause-panel {
       background: linear-gradient(180deg, ${palette.white} 0%, ${palette.cream} 55%, ${palette.creamShadow} 100%);

@@ -29,6 +29,7 @@ import { createPauseOverlay, makePauseButton } from "./pauseMenu";
 import type { PauseOverlayHandle } from "./pauseMenu";
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
+import { openShop } from "./shopScreen";
 
 /* ------------------------------------------------------------------ */
 /*  Scoped styles (injected once; every color from the palette)        */
@@ -43,8 +44,12 @@ function injectBoardStyles(): void {
   const style = document.createElement("style");
   style.id = "ssp-board-styles";
   style.textContent = `
-.ssp-roll-wrap { position:fixed; left:50%; bottom:calc(22px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); z-index:89; animation:sspRollPulse 1.15s ease-in-out infinite; }
-@keyframes sspRollPulse { 0%,100% { transform:translateX(-50%) scale(1); } 50% { transform:translateX(-50%) scale(1.08); } }
+/* The wrap stays STABLE for clickability — pulse is a non-layout glow on the
+   inner button (.ssp-roll-pulse), never on the hit target itself. Playwright's
+   actionability check (stable bounding box) and a real finger both succeed. */
+.ssp-roll-wrap { position:fixed; left:50%; bottom:calc(22px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); z-index:89; }
+.ssp-roll-pulse { animation:sspRollPulse 1.15s ease-in-out infinite; }
+@keyframes sspRollPulse { 0%,100% { filter:brightness(1); } 50% { filter:brightness(1.18); } }
 .ssp-item-bar { position:fixed; left:50%; bottom:118px; transform:translateX(-50%); display:flex; gap:10px; z-index:63; }
 .ssp-die { position:fixed; left:50%; top:32%; transform:translateX(-50%); width:104px; height:104px; border-radius:24px; background:${palette.cream}; border:5px solid ${palette.ink}; box-shadow:7px 7px 0 ${palette.ink}; display:flex; align-items:center; justify-content:center; z-index:90; }
 .ssp-die__face { font-size:52px; font-weight:700; color:${palette.ink}; user-select:none; line-height:1; }
@@ -178,8 +183,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._finaleShown = false; // a fresh board entry can reach the finale again (rematch)
 
     // ---- match: start a default one when nothing is running (URL-direct) ----
+    const params = new URLSearchParams(window.location.search);
     if (match.players.length === 0) {
-      const params = new URLSearchParams(window.location.search);
       const seed = Number(params.get("seed") ?? "1");
       startMatch(
         roster.map((c) => c.key),
@@ -188,7 +193,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
       rng.reset(seed); // startMatch reseeds internally — re-seed for the URL
       match.seed = seed;
     }
-    if (new URLSearchParams(window.location.search).get("autoplay") === "1") {
+    if (params.get("autoplay") === "1") {
       setAutoplay(true);
     }
     bus.emit("match:start", { seed: match.seed, players: match.players.map((p) => p.id) });
@@ -226,7 +231,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
     const hud = ui.hud();
     this._hud = hud;
 
-    // ---- ROLL button (gold, pulsing) ----
+    // ---- ROLL button (gold, pulsing — pulse is an inner glow so the
+    // ---- wrap stays a STABLE hit target for automation and real fingers)
     const rollWrap = document.createElement("div");
     rollWrap.className = "ssp-roll-wrap";
     const rollBtn = ui.button({
@@ -236,6 +242,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
       ariaLabel: "Roll the dice",
       onClick: () => this._loop?.rollPressed(),
     });
+    rollBtn.el.classList.add("ssp-roll-pulse");
     rollWrap.appendChild(rollBtn.el);
     document.body.appendChild(rollWrap);
     this._rollWrap = rollWrap;
@@ -411,6 +418,88 @@ const boardScreenImpl: BoardScreenState & Screen = {
           t: 0,
         };
       },
+      ceremony: {
+        focusCamera: (target: THREE.Vector3, intensity: number) => {
+          // Punch toward target; intensity scales the punch distance.
+          if (!this._cam) return;
+          const dir = this._cam.base.clone().sub(target);
+          dir.normalize();
+          this._punch = {
+            pos: this._cam.base.clone().add(dir.multiplyScalar(dir.length() * intensity)),
+            look: this._cam.look.clone().lerp(target, intensity),
+            t: 0,
+          };
+        },
+        projectToScreen,
+        flashOverlay: (color: string) => {
+          if (!flash) return;
+          flash.style.background = color;
+          try {
+            flash.animate(
+              [{ opacity: 0 }, { opacity: 0.55, offset: 0.25 }, { opacity: 0 }],
+              { duration: 480, easing: "ease-out" }
+            );
+          } catch {
+            flash.style.opacity = "0";
+          }
+        },
+        shakeScreen: (amp: number, duration: number) => {
+          // DOM-based screen shake: jitter the renderer canvas with decaying amp.
+          const canvas = world.renderer?.domElement;
+          if (!canvas) return;
+          const dur = Math.round(duration * 1000);
+          const steps = Math.max(6, Math.round(duration * 24));
+          const keyframes = [];
+          let seed = 0x5eed >>> 0;
+          for (let i = 0; i <= steps; i++) {
+            const decay = 1 - i / steps;
+            // Simple LCG for shake offsets (presentation only).
+            seed = (seed * 1664525 + 1013904223) >>> 0;
+            const sx = ((seed / 4294967296) - 0.5) * 2 * amp * decay;
+            seed = (seed * 1664525 + 1013904223) >>> 0;
+            const sy = ((seed / 4294967296) - 0.5) * 2 * amp * decay;
+            keyframes.push({ transform: `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px)` });
+          }
+          keyframes.push({ transform: "translate(0,0)" });
+          try {
+            canvas.animate(keyframes, { duration: dur, easing: "ease-out", fill: "both" });
+          } catch {
+            // WAAPI unavailable — shake is a nice-to-have.
+          }
+        },
+        sparkle: (x: number, y: number, count: number, color: string) => {
+          // Glittering sparkle burst: small 4-point stars that flash and fade.
+          for (let i = 0; i < count; i++) {
+            const el = document.createElement("div");
+            const size = 4 + ((i * 37) % 8);
+            el.style.cssText = `
+              position: fixed; left: ${x}px; top: ${y}px;
+              width: ${size}px; height: ${size}px;
+              background: ${color};
+              clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+              z-index: 96; pointer-events: none;
+              transform: translate(-50%,-50%);
+            `;
+            document.body.appendChild(el);
+            const angle = (i / count) * Math.PI * 2;
+            const dist = 30 + (i % 5) * 18;
+            const vx = Math.cos(angle) * dist;
+            const vy = Math.sin(angle) * dist - 20;
+            try {
+              el.animate(
+                [
+                  { transform: "translate(-50%,-50%) scale(0)", opacity: 0 },
+                  { transform: `translate(calc(-50% + ${vx.toFixed(0)}px), calc(-50% + ${vy.toFixed(0)}px)) scale(1)`, opacity: 1, offset: 0.4 },
+                  { transform: `translate(calc(-50% + ${(vx * 1.3).toFixed(0)}px), calc(-50% + ${(vy * 1.3 + 40).toFixed(0)}px)) scale(0.3)`, opacity: 0 },
+                ],
+                { duration: 550 + (i % 4) * 80, easing: "cubic-bezier(.2,.55,.35,1)", fill: "both" }
+              ).onfinish = () => el.remove();
+            } catch {
+              window.setTimeout(() => el.remove(), 700);
+            }
+          }
+        },
+      },
       projectToScreen,
       flashOverlay: (color: string) => {
         if (!flash) return;
@@ -426,6 +515,13 @@ const boardScreenImpl: BoardScreenState & Screen = {
       },
     });
     this._loop.start();
+
+    // ?shop=1 opens the Gumball Shop on demand for inspection — the shop
+    // stays open indefinitely (no auto-resolve) so the critic can reach it.
+    if (params.get("shop") === "1") {
+      // Small delay so the board is rendered under the shop.
+      window.setTimeout(() => openShop(0), 250);
+    }
   },
 
   exit() {

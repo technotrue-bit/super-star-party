@@ -19,6 +19,7 @@ import * as THREE from "three";
 import { match } from "../core/game";
 import { rng, ease } from "../core/rng";
 import { settings } from "../config/settings";
+import { palette } from "../config/palette";
 import { bus } from "../core/events";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
@@ -80,6 +81,38 @@ export interface DiceView {
   setFace(face: number): void;
 }
 
+
+
+export interface TurnLoop {
+  start(): void;
+  update(dt: number): void;
+  /** ROLL button / autoplay hook entry. */
+  rollPressed(): void;
+  /** True when the human is expected to press ROLL right now. */
+  isWaitingForRoll(): boolean;
+  readonly phase: LoopPhase;
+  dispose(): void;
+}
+
+/**
+ * Presentation hooks for the staged ceremonies (star buy, red-space sting,
+ * Grumpus gag). Each fires callbacks at fixed delays so the board screen can
+ * drive camera, shake, overlay flashes, sparkles — all presentation-only,
+ * zero gameplay-rng draws.
+ */
+export interface CeremonyDeps {
+  /** Camera push toward a target world position, eased over ~0.6s. */
+  focusCamera(target: THREE.Vector3, intensity: number): void;
+  /** World pos -> CSS pixel coords (confetti / sparkles at a space). */
+  projectToScreen(pos: THREE.Vector3): { x: number; y: number } | null;
+  /** Quick full-screen color flash (red sting / Grumpus lava). */
+  flashOverlay(color: string): void;
+  /** Screen shake: amp in px, decays over ~duration. */
+  shakeScreen(amp: number, duration: number): void;
+  /** Sparkle burst at a screen position (purely cosmetic). */
+  sparkle(x: number, y: number, count: number, color: string): void;
+}
+
 export interface TurnLoopDeps {
   board: BoardScene;
   /** Characters by player id (index === player id). */
@@ -91,21 +124,12 @@ export interface TurnLoopDeps {
   itemBar: HTMLElement;
   /** Punch the party camera toward a world position (roll moment). */
   punchCamera(target: THREE.Vector3): void;
+  /** Presentation ceremony hooks (camera, shake, sparkles). */
+  ceremony: CeremonyDeps;
   /** World pos -> CSS pixel coords (confetti at a space). */
   projectToScreen(pos: THREE.Vector3): { x: number; y: number } | null;
   /** Quick full-screen color flash (Grumpus lava). */
   flashOverlay(color: string): void;
-}
-
-export interface TurnLoop {
-  start(): void;
-  update(dt: number): void;
-  /** ROLL button / autoplay hook entry. */
-  rollPressed(): void;
-  /** True when the human is expected to press ROLL right now. */
-  isWaitingForRoll(): boolean;
-  readonly phase: LoopPhase;
-  dispose(): void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -133,7 +157,7 @@ setAutoplayHook(() => {
 /* ------------------------------------------------------------------ */
 
 export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
-  const { board, chars, hud, rollButton, dice, itemBar, punchCamera, projectToScreen, flashOverlay } = deps;
+  const { board, chars, hud, rollButton, dice, itemBar, punchCamera, ceremony, projectToScreen, flashOverlay } = deps;
 
   interface LoopState {
     phase: LoopPhase;
@@ -160,6 +184,15 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     // blocking UI
     shopOpen: boolean;
     starPopup: PopupHandle | null;
+    // star ceremony state machine
+    starCeremony: boolean;
+    starCeremonyT: number;
+    starCeremonyPid: number;
+    starCeremonyStepped0: boolean;
+    starCeremonyStepped1: boolean;
+    starCeremonyStepped2: boolean;
+    starCeremonyStepped3: boolean;
+    starCeremonyStepped4: boolean;
     // results
     resultSteps: Array<() => void>;
     resultTimer: number;
@@ -186,6 +219,14 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     moveFromOverride: null,
     shopOpen: false,
     starPopup: null,
+    starCeremony: false,
+    starCeremonyT: 0,
+    starCeremonyPid: 0,
+    starCeremonyStepped0: false,
+    starCeremonyStepped1: false,
+    starCeremonyStepped2: false,
+    starCeremonyStepped3: false,
+    starCeremonyStepped4: false,
     resultSteps: [],
     resultTimer: 0,
   };
@@ -369,8 +410,20 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       }
       case "red": {
         addCoins(pid, -settings.redCoin);
-        hud.showBanner("-3!", { durationMs: 1400 });
+        // Real sting: camera punch toward the victim, screen shake, red flash,
+        // punchy banner, ouch sfx. Presentation-only — the economy change
+        // (the only gameplay effect) is the single addCoins call above.
+        const rp = charPos(pid);
+        ceremony.focusCamera(rp, 0.25);
+        ceremony.shakeScreen(7, 0.35);
+        ceremony.flashOverlay("rgba(255,90,60,0.30)");
+        hud.showBanner(`-${settings.redCoin}!`, { durationMs: 1500 });
         chars[pid]?.anim.sad();
+        audio.sfx.play("coin.lose", { volume: 0.9 });
+        const rp2 = ceremony.projectToScreen(rp);
+        if (rp2) {
+          ceremony.sparkle(rp2.x, rp2.y - 20, 8, palette.lava);
+        }
         break;
       }
       case "star": {
@@ -505,12 +558,89 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   /* ---------------- space effects ---------------- */
 
+  /* ---------------- staged ceremonies (presentation only) ---------------- */
+  /*
+   * MP7-style "star moment": the board's biggest beat. Timeline (3.2s):
+   *   0.0  Fanfare stinger fires, star space lights up, camera pushes to buyer.
+   *   0.3  Space sparkles, STAR! banner slams in.
+   *   0.6  Character cheer pose + confetti burst at the space.
+   *   1.0  Second sparkle wave.
+   *   1.5  Coin counter ticks, fanfare resolves.
+   *   2.0  Star count HUD pops, confetti finale.
+   *   3.0  Resume turn flow.
+   *
+   * Determinism: ceremony draws nothing from gameplay rng. Randomness for
+   * sparkles uses a fixed-seed mulberry32 (same as resultsCeremony).
+   */
+
+  const presRng = (() => {
+    let a = 0x5eed42 >>> 0;
+    return () => {
+      a |= 0; a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  })();
+
+  const STAR_CEREMONY_DUR = 3.0;
+
   const celebrateStar = (pid: number): void => {
-    stinger("star_fanfare", 2800);
-    ui.confettiBurst(undefined, undefined, { count: 120, sound: null });
-    hud.showBanner("STAR!", { durationMs: 1900 });
-    chars[pid]?.anim.cheer();
-    refreshHud();
+    S.starCeremony = true;
+    S.starCeremonyT = 0;
+    S.starCeremonyPid = pid;
+    stinger("star_fanfare", 4500);
+    // Camera pushes toward the buyer's world position.
+    const target = charPos(pid);
+    ceremony.focusCamera(target, 0.4);
+  };
+
+  /** Star ceremony update driven from the main update() while starCeremony is set. */
+  const updateStarCeremony = (dt: number): void => {
+    S.starCeremonyT += dt;
+    const t = S.starCeremonyT;
+    const pid = S.starCeremonyPid;
+    const pos = board.spaceWorldPos(match.players[pid]?.space ?? 0);
+
+    if (t >= 0.05 && !S.starCeremonyStepped0) {
+      S.starCeremonyStepped0 = true;
+      audio.sfx.play("star.get", { volume: 1.0 });
+    }
+    if (t >= 0.3 && !S.starCeremonyStepped1) {
+      S.starCeremonyStepped1 = true;
+      const sc = ceremony.projectToScreen(pos);
+      if (sc) {
+        ceremony.sparkle(sc.x, sc.y, 30, palette.sun);
+        ui.confettiBurst(sc.x, sc.y, { count: 80, sound: null });
+      }
+      // HUD star count ticks 0 -> 1 with a gold banner.
+      refreshHud();
+      hud.showBanner("★ STAR! ★", { durationMs: 1600 });
+    }
+    if (t >= 0.6 && !S.starCeremonyStepped2) {
+      S.starCeremonyStepped2 = true;
+      chars[pid]?.anim.cheer();
+      const sc = ceremony.projectToScreen(charPos(pid));
+      if (sc) ceremony.sparkle(sc.x, sc.y - 20, 24, palette.sun);
+      audio.sfx.play("crowd.cheer", { volume: 0.6 });
+    }
+    if (t >= 1.0 && !S.starCeremonyStepped3) {
+      S.starCeremonyStepped3 = true;
+      const sc = ceremony.projectToScreen(pos);
+      if (sc) ceremony.sparkle(sc.x, sc.y, 20, palette.candy);
+    }
+    if (t >= 1.8 && !S.starCeremonyStepped4) {
+      S.starCeremonyStepped4 = true;
+      const sc = ceremony.projectToScreen(charPos(pid));
+      if (sc) {
+        ceremony.sparkle(sc.x, sc.y, 40, palette.sun);
+        ui.confettiBurst(sc.x, sc.y, { count: 100, sound: null });
+      }
+    }
+    if (t >= STAR_CEREMONY_DUR) {
+      S.starCeremony = false;
+      finishEffect();
+    }
   };
 
   const starSpace = (pid: number): void => {
@@ -525,7 +655,6 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       bus.emit("star:buy", { player: pid, star: player.stars, total: player.coins });
       audio.sfx.play("star.get");
       celebrateStar(pid);
-      finishEffect();
       return;
     }
     if (player.coins < settings.starCost) {
@@ -568,16 +697,17 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const doStarBuy = (pid: number): void => {
     if (tryBuyStar(pid)) celebrateStar(pid);
     else ui.toast("Not enough coins!", { durationMs: 1600 });
-    finishEffect();
   };
 
   const shopSpace = (pid: number): void => {
     S.shopOpen = true;
     rollButton.setEnabled(false);
-    // Autoplay runs must never stall on the modal shop.
-    const shopPromise: Promise<{ bought: string[] }> = isAutoplay()
-      ? new Promise((res) => window.setTimeout(() => res({ bought: [] }), 900))
-      : openShop(pid);
+    // Autoplay runs must never stall on the modal shop. The real shop opens
+    // (so the economy moment is live) but auto-resolves after a real beat so
+    // the flow keeps moving.
+    const shopPromise: Promise<{ bought: string[] }> = openShop(pid, {
+      autoCloseMs: isAutoplay() ? 1200 : undefined,
+    });
     shopPromise
       .then((res) => {
         if (S.disposed) return;
@@ -609,8 +739,24 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
     stinger(kind === "green" ? "happening" : "grumpus", 2800);
     if (kind === "grumpus") {
-      flashOverlay("#FF5A3C"); // lava flash
+      // Grumpus gag: dramatic beat. Screen wobble, camera push toward the
+      // victim, a bigger lava flash, and a telegraph sparkle at the swapped
+      // leader's position so the swap/gag reads clearly.
+      ceremony.shakeScreen(5, 0.5);
+      ceremony.focusCamera(charPos(pid), 0.2);
+      ceremony.flashOverlay("rgba(255,90,60,0.45)");
       chars[pid]?.anim.sad();
+      // Telegraph: if a swap/shove is coming, sparkle the destination.
+      if (outcome.moveTo !== undefined || outcome.moveBy !== undefined || outcome.moveOtherTo !== undefined) {
+        const dest = outcome.moveTo !== undefined
+          ? outcome.moveTo
+          : outcome.moveBy !== undefined
+            ? wrap(player.space + outcome.moveBy)
+            : myOld;
+        const destPos = board.spaceWorldPos(dest);
+        const sc = ceremony.projectToScreen(destPos);
+        if (sc) ceremony.sparkle(sc.x, sc.y, 14, palette.lava);
+      }
     }
     hud.showBanner(outcome.banner, { durationMs: 1900 });
     if (outcome.message && outcome.message !== outcome.banner) {
@@ -736,6 +882,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   const update = (dt: number): void => {
     if (S.disposed) return;
+
+    // Star ceremony runs INSTEAD of the pause chain — it's a staged presentation
+    // beat. It draws no gameplay rng, so the seeded simulation stays identical.
+    if (S.starCeremony) {
+      updateStarCeremony(dt);
+      return;
+    }
 
     if (S.pauseT > 0) {
       S.pauseT -= dt;
