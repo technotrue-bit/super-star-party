@@ -34,7 +34,7 @@ const CHARGE = 0.12; // tap -> fire charge-up (fixed, feels fair)
 const AMINO = 16; // coins per player
 const BASKET_R = 0.6; // basket radius (width ~1.2)
 const CATCH_R = BASKET_R * 1.4; // generous catch radius
-const PERFECT_R = 0.36; // perfect-center radius (30% of basket width)
+const PERFECT_R = 0.10; // perfect-center radius — small target, ~12% of CPU aim error
 const BASKET_SPAWN_X = 9.8; // baskets enter on the right...
 const BASKET_DESPAWN_X = -9.8; // ...and exit on the left
 const TIME_CAP = 28.5; // round cap — the framework force-finishes at 30s, so end before that
@@ -42,7 +42,8 @@ const BASKET_COLORS = [palette.candy, palette.berry, palette.mint, palette.bubbl
 
 // CPU fallibility: fire probability, aim/timing error ranges, decision interval
 const CPU_FIRE_P = 0.7; // probability of firing at a basket opportunity
-const CPU_AIM_ERR = 0.45; // aim error amplitude in world units (±)
+const CPU_AIM_ERR = 0.70; // aim error amplitude in world units (±) — still inside catch radius
+const CPU_LAND_ERR = 0.90 // landing error amplitude — applied after fire-time re-check, creates real misses
 const CPU_TIMING_MIN = 0.05; // timing error range in seconds (early/late)
 const CPU_TIMING_MAX = 0.25;
 const CPU_THINK_INTERVAL = 0.25; // fixed decision interval in seconds (frame-independent)
@@ -92,6 +93,7 @@ interface PlayerSt {
   charging: boolean;
   chargeT: number;
   aimError: number; // CPU aim error for the in-flight shot (human: 0)
+  landError: number; // CPU landing error — applied after fire-time re-check (human: 0)
   aimSlop: number; // CPU timing slop: widens the fire window this shot
   cpuNextThink: number; // next ctx.time at which CPU makes a decision (frame-independent)
   recoil: number; // 1 -> 0 cannon kick
@@ -580,7 +582,7 @@ function fireCoin(st: State, pid: number): void {
     tail.push(t);
   }
   st.root.add(group);
-  st.coins.push({ group, tail, lane, x: x0, y: MUZZLE_Y, z: z0, vx, vy: VY, vz, landX: P.aimError, resolved: false });
+  st.coins.push({ group, tail, lane, x: x0, y: MUZZLE_Y, z: z0, vx, vy: VY, vz, landX: P.aimError + P.landError, resolved: false });
   P.recoil = 1;
   P.poseT = 0.45;
   const ch = st.ctx.characters[P.id];
@@ -711,10 +713,12 @@ function simulateStep(st: State, step: number): void {
         if (d < best) best = d;
       }
       if (best <= 0.84 + slop) {
-        // fallible CPU: fire with p=CPU_FIRE_P, with real aim error (±0.45u)
+        // fallible CPU: fire with p=CPU_FIRE_P, with real aim error (±0.70u)
+        // plus a separate landing error drawn at the same fixed sim step
         const err = (ctx.rng() * 2 - 1) * CPU_AIM_ERR;
         if (ctx.rng() < CPU_FIRE_P) {
           P.aimError = err;
+          P.landError = (ctx.rng() * 2 - 1) * CPU_LAND_ERR;
           P.aimSlop = slop;
           P.charging = true;
           P.chargeT = CHARGE;
@@ -795,6 +799,7 @@ const coinCannon: Minigame = {
         charging: false,
         chargeT: 0,
         aimError: 0,
+        landError: 0,
         aimSlop: 0,
         cpuNextThink: 0.4 + lane * CPU_THINK_INTERVAL + ctx.rng() * CPU_THINK_INTERVAL,
         recoil: 0,
