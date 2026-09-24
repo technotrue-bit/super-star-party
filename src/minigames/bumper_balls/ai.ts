@@ -2,16 +2,19 @@
  * Bumper Balls — CPU brains.
  *
  * Deterministic: every decision consumes ctx.rng() (the framework's seeded
- * stream) at strategy-pick time only. Per-frame steering is pure math over
- * live positions — no per-frame randomness, so seeded replays are stable.
+ * stream) at strategy-pick time only. Per-step steering is pure math over
+ * live positions — no per-step randomness, so seeded replays are stable.
+ * Re-pick timing is an INTEGER fixed-step countdown (see game.ts), so the
+ * step at which a re-pick fires — and therefore the rng draw order — is a
+ * pure function of the seeded rng + step index, identical across runs.
  */
 import type { MinigameContext } from "../framework";
 
 export type CpuStrategy = "chase" | "center" | "flee";
 
 export interface CpuBrain {
-  /** Seconds until the next strategy re-pick. */
-  pickT: number;
+  /** Fixed 1/60s steps until the next strategy re-pick. */
+  pickIn: number;
   strategy: CpuStrategy;
   /** Fraction of the human top speed (0.65–0.95). */
   speedMul: number;
@@ -29,20 +32,22 @@ export interface CpuRival {
 const CHASE_P = 0.4;
 const CENTER_P = 0.75;
 
-/** Fresh brain for a CPU player (picks on the first frame of play). */
+/** Fresh brain for a CPU player (picks on the first step of play). */
 export function freshBrain(): CpuBrain {
-  return { pickT: 0, strategy: "chase", speedMul: 0.85, flavor: 0.5 };
+  return { pickIn: 0, strategy: "chase", speedMul: 0.85, flavor: 0.5 };
 }
 
 /**
  * Full strategy re-pick (4 rng draws, fixed order):
  * strategy roll, speed roll, next-pick timer, flavor roll.
+ * The timer is stored in whole fixed steps (1/60s) so the re-pick fires at
+ * a deterministic step index regardless of frame timing.
  */
 export function repick(brain: CpuBrain, ctx: Pick<MinigameContext, "rng">): void {
   const roll = ctx.rng();
   brain.strategy = roll < CHASE_P ? "chase" : roll < CENTER_P ? "center" : "flee";
   brain.speedMul = 0.65 + ctx.rng() * 0.3;
-  brain.pickT = 0.6 + ctx.rng() * 0.6;
+  brain.pickIn = Math.round((0.6 + ctx.rng() * 0.6) * 60);
   brain.flavor = ctx.rng();
 }
 
@@ -61,8 +66,17 @@ export function cpuDesiredDir(
 
   switch (brain.strategy) {
     case "chase": {
-      // Nearest alive rival — recomputed every frame (never psychic: it is
-      // the closest body, not the one about to be hit).
+      // Ring-gated chase: when the ring is still wide (> ~2.5u), CPUs drift
+      // slowly toward center — they don't chase or bump (which would eject
+      // players at wide radii), but they also don't stand still and block
+      // the human's path. Only when the ring closes below ~2.5u do CPUs
+      // start hunting.
+      const d0 = Math.hypot(pos.x, pos.z);
+      if (ringR > 2.5) {
+        if (d0 > 0.3) return norm(-pos.x / d0, -pos.z / d0);
+        return null;
+      }
+      // Ring is close — hunt the nearest rival
       let best: CpuRival | null = null;
       let bestD = Infinity;
       for (const o of rivals) {

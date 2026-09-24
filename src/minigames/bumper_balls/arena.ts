@@ -79,12 +79,25 @@ export function buildArena(scene: THREE.Scene, spawnPoints: { x: number; z: numb
   base.position.y = 0.05;
   group.add(base);
 
-  // ---- the shrinking ring (sun torus; pulses, turns lava in danger) ----
+  // ---- the shrinking ring (sun torus; pulses, turns lava in danger,
+  // thickens/brightens when a player is pinned against it) ----
   const ringMat = toon(palette.sun);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.17, 12, 64), ringMat);
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.1;
   group.add(ring);
+
+  // Bright overlay ring that appears when a player is pinned against the rim
+  const pinMat = new THREE.MeshBasicMaterial({
+    color: hex(palette.lava),
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
+  const pinRing = new THREE.Mesh(new THREE.TorusGeometry(1, 0.08, 8, 64), pinMat);
+  pinRing.rotation.x = -Math.PI / 2;
+  pinRing.position.y = 0.16;
+  group.add(pinRing);
 
   // ---- danger glow ring painted on the floor at the ring edge ----
   const dangerMat = new THREE.MeshBasicMaterial({
@@ -103,6 +116,7 @@ export function buildArena(scene: THREE.Scene, spawnPoints: { x: number; z: numb
   // Palette refs for color lerps (avoid re-parse each frame).
   const sunC = new THREE.Color(hex(palette.sun));
   const lavaC = new THREE.Color(hex(palette.lava));
+  const sunDeepC = new THREE.Color(hex(palette.sunDeep));
   const tmp = new THREE.Color();
   let lastDangerGeo: THREE.RingGeometry | null = null;
 
@@ -112,9 +126,19 @@ export function buildArena(scene: THREE.Scene, spawnPoints: { x: number; z: numb
       // (progress derived from ARENA_R so it tracks any ring schedule.)
       const progress = Math.min(1, Math.max(0, 1 - ringR / ARENA_R));
       const pulse = 1 + 0.13 * Math.sin(t * 6.5) * (0.35 + 0.65 * progress);
-      ring.scale.set(ringR, pulse, ringR);
-      tmp.copy(sunC).lerp(lavaC, Math.min(1, danger));
+      // Thicken the rim as danger rises (visual "pin" signal)
+      const rimThick = 0.17 + danger * 0.12;
+      ring.scale.set(ringR, pulse * rimThick / 0.17, ringR);
+      // Hot color: lerp sun -> lava, then push toward sunDeep at high danger
+      const hotLerp = Math.min(1, danger * 1.15);
+      tmp.copy(sunC).lerp(lavaC, hotLerp);
+      if (danger > 0.6) tmp.lerp(sunDeepC, (danger - 0.6) * 0.8);
       ringMat.color.copy(tmp);
+
+      // Pin overlay: bright red rim when a player is pinned against it
+      const pinPulse = 0.5 + 0.5 * Math.sin(t * 14);
+      pinRing.scale.set(ringR, pulse, ringR);
+      pinMat.opacity = danger > 0.25 ? (danger - 0.25) * 0.55 * pinPulse : 0;
 
       // Danger glow: rebuild the annulus geometry for a constant 0.3u width.
       if (lastDangerGeo) lastDangerGeo.dispose();
