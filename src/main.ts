@@ -88,6 +88,7 @@ function boot(): void {
     import("./screens/minigameScreen").then((m) => screens.register(m.minigameScreen)),
     import("./screens/characterSelect").then((m) => screens.register(m.characterSelect)),
     import("./screens/howToPlay").then((m) => screens.register(m.howToPlay)),
+    import("./screens/matchFinale").then((m) => screens.register(m.matchFinale)),
   ];
   void Promise.all(screenImports).then(() => {
     screens.goto(screen);
@@ -101,6 +102,14 @@ function boot(): void {
   });
 
   installDebugAPI();
+
+  // Debug-only URL hook: ?quickend=1 jumps straight to the finale screen.
+  if (new URLSearchParams(window.location.search).get("quickend") === "1") {
+    setTimeout(() => {
+      const ssp = (window as unknown as { __SSP__: { endMatch(): void } }).__SSP__;
+      if (ssp) ssp.endMatch();
+    }, 600);
+  }
 
   bus.on("screen:change", ({ to }) => {
     console.log(`[SSP] screen -> ${to}`);

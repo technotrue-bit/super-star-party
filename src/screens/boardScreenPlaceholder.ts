@@ -20,11 +20,15 @@ import { roster } from "../characters/roster";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
 import { setAutoplay } from "../core/debug";
+import { isAutoplay } from "../core/debug";
 import { buildBoardScene, boardBounds, type BoardScene } from "../board/boardScene";
 import { fizzyFairground } from "../board/boardData";
 import { createCharacter, type Character } from "../characters/characterFactory";
 import { createTurnLoop, PLAYER_OFFSETS, type DiceView, type TurnLoop } from "../game/turnLoop";
+import { createPauseOverlay, makePauseButton } from "./pauseMenu";
+import type { PauseOverlayHandle } from "./pauseMenu";
 import type { Screen } from "./screenManager";
+import { screens } from "./screenManager";
 
 /* ------------------------------------------------------------------ */
 /*  Scoped styles (injected once; every color from the palette)        */
@@ -56,6 +60,9 @@ function injectBoardStyles(): void {
 }
 .ssp-die--slam { animation:sspDieSlam .34s cubic-bezier(.2,1.6,.4,1); }
 @keyframes sspDieSlam { 0% { transform:translateX(-50%) scale(1.45) rotate(8deg); } 60% { transform:translateX(-50%) scale(0.94); } 100% { transform:translateX(-50%) scale(1); } }
+.ssp-pause-fab { position:fixed; top:14px; right:14px; z-index:65; width:54px; height:54px; border-radius:50%; font-size:24px; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg, rgba(255,255,255,.4) 0%, rgba(255,255,255,0) 40%), linear-gradient(180deg, ${palette.cream} 0%, ${palette.creamShadow} 100%); border:4px solid ${palette.ink}; color:${palette.ink}; box-shadow:0 5px 0 ${palette.ink}; cursor:pointer; transition:transform .1s cubic-bezier(.34,1.56,.64,1), box-shadow .1s ease-out; }
+.ssp-pause-fab:hover { transform:scale(1.08); }
+.ssp-pause-fab:active { transform:scale(0.94) translateY(3px); box-shadow:0 2px 0 ${palette.ink}; }
 .ssp-flash { position:fixed; inset:0; pointer-events:none; z-index:85; opacity:0; }
 .ssp-podium { display:flex; flex-direction:column; gap:8px; max-height:44vh; overflow-y:auto; text-align:left; font-size:16px; }
 .ssp-podium__row { background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:14px; padding:8px 12px; box-shadow:0 3px 0 ${palette.ink}; }
@@ -139,6 +146,13 @@ interface BoardScreenState {
   _punch?: Punch | null;
   _t?: number;
   _onResize?: () => void;
+  _pauseBtn?: { el: HTMLButtonElement; destroy: () => void };
+  _pause?: PauseOverlayHandle;
+  _onPauseKey?: (e: KeyboardEvent) => void;
+  _unfreezeAutoplay?: boolean;
+  _finaleShown?: boolean;
+  _openPause: () => void;
+  _closePause: () => void;
 }
 
 function projectToScreen(pos: THREE.Vector3): { x: number; y: number } | null {
@@ -159,6 +173,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     ui.clearScreen();
     this._t = 0;
     this._punch = null;
+    this._finaleShown = false; // a fresh board entry can reach the finale again (rematch)
 
     // ---- match: start a default one when nothing is running (URL-direct) ----
     if (match.players.length === 0) {
@@ -223,6 +238,38 @@ const boardScreenImpl: BoardScreenState & Screen = {
     document.body.appendChild(rollWrap);
     this._rollWrap = rollWrap;
     this._rollBtn = rollBtn;
+
+    // ---- pause button (top-right corner, MP7-style) ----
+    const pauseBtn = makePauseButton(() => {
+      if (this._pause && !this._pause.isOpen()) this._openPause();
+    });
+    document.body.appendChild(pauseBtn.el);
+    this._pauseBtn = pauseBtn;
+
+    // ---- pause overlay (lives over the board, freezes on open) ----
+    this._pause = createPauseOverlay({
+      onResume: () => this._closePause(),
+      onQuit: () => {
+        this._pause?.close();
+        this._unfreezeAutoplay = false;
+        this.exit();
+        screens.goto("title");
+      },
+    });
+
+    // ---- keyboard: Escape and P toggle the pause overlay ----
+    this._onPauseKey = (e: KeyboardEvent) => {
+      if (!this._pause) return;
+      if (e.key === "Escape" || e.key === "p" || e.key === "P") {
+        e.preventDefault();
+        if (this._pause.isOpen()) {
+          this._closePause();
+        } else {
+          this._openPause();
+        }
+      }
+    };
+    window.addEventListener("keydown", this._onPauseKey);
 
     // ---- item bar (pre-roll items for the human) ----
     const itemBar = document.createElement("div");
@@ -359,11 +406,28 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._flash = undefined;
     this._cam = undefined;
     this._punch = null;
+    if (this._onPauseKey) {
+      window.removeEventListener("keydown", this._onPauseKey);
+      this._onPauseKey = undefined;
+    }
+    this._pause?.close();
+    this._pause = undefined;
+    this._pauseBtn?.destroy();
+    this._pauseBtn = undefined;
     ui.clearScreen();
     audio.music.stop(0.3);
   },
 
   update(dt: number) {
+    // ---- freeze guard: while the pause overlay is open, NOTHING advances ----
+    // No board idle animation, no character animation, no turn-loop phase
+    // machine, no party camera breathing. The last rendered frame just persists
+    // behind the dimmed overlay. We do NOT touch the turn loop's own timing
+    // here — seeded-determinism runs that never open the overlay are unaffected.
+    if (this._pause?.isOpen()) {
+      return;
+    }
+
     this._t = (this._t ?? 0) + dt;
     const t = this._t;
 
@@ -404,9 +468,33 @@ const boardScreenImpl: BoardScreenState & Screen = {
     }
 
     this._loop?.update(dt);
+
+    // Natural end of match -> the awards finale (MP7's closing ceremony).
+    // The turn loop sets phase='ended' after the final round + bonus stars.
+    if (match.phase === "ended" && !this._finaleShown) {
+      this._finaleShown = true;
+      screens.goto("finale");
+    }
   },
 
   render() {},
+
+  _openPause() {
+    if (!this._pause || this._pause.isOpen()) return;
+    // Snapshot the autoplay state so we can freeze it. The autoplay hook
+    // fires rollPressed() directly from main.ts, bypassing this.update()'s
+    // freeze gate — so we toggle autoplay off here and restore it on close.
+    this._unfreezeAutoplay = isAutoplay();
+    if (this._unfreezeAutoplay) setAutoplay(false);
+    this._pause.open();
+  },
+
+  _closePause() {
+    if (!this._pause || !this._pause.isOpen()) return;
+    this._pause.close();
+    if (this._unfreezeAutoplay) setAutoplay(true);
+    this._unfreezeAutoplay = false;
+  },
 };
 
 export const boardScreenPlaceholder = boardScreenImpl as Screen;

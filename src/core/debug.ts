@@ -20,6 +20,8 @@ export interface SSPDebug {
   audioLevels(): { rms: number; peak: number };
   perf(): { fps: number; ms: number };
   startMatch(kinds: string[], names?: string[]): void;
+  /** Debug-only: jump to end-of-match (set phase='ended' for finale wiring). */
+  endMatch(): void;
 }
 
 let autoplayOn = false;
@@ -107,6 +109,20 @@ export function installDebugAPI(): void {
       // replays are byte-identical; plain startMatch still reseeds randomly.
       startMatch(kinds, names ?? [], 10, match.seed);
       screens.goto("board");
+    },
+    /** Debug-only: start a match with varied data and jump to finale. */
+    endMatch() {
+      if (match.players.length === 0) {
+        startMatch(["pip", "bounce", "glimmer", "tusk"], ["Pip", "Bounce", "Glimmer", "Tusk"], 10, 12345);
+      }
+      match.players.forEach((p, i) => {
+        p.coins = 10 + i * 5;
+        p.stars = i;
+        p.minigameWins = i;
+      });
+      match.phase = "ended";
+      match.turn = match.totalTurns;
+      screens.goto("finale");
     },
   };
   (window as unknown as { __SSP__: SSPDebug }).__SSP__ = api;

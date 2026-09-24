@@ -202,6 +202,10 @@ interface RoundState {
   boingT: number;
   popT: number;
   shakeT: number;
+  shakeStrength: number; // amplitude multiplier for camera shake (decays to base)
+  rotShake: number; // rotational shake amplitude (radians, decays)
+  rotPhase: number; // phase seed for rotational shake
+  hitStopSteps: number; // integer fixed-step countdown for visual hit-stop freeze
   human: HumanInput;
   camBase: THREE.Vector3;
   raycaster: THREE.Raycaster;
@@ -837,9 +841,28 @@ function collectPile(state: RoundState, b: Body, pile: Pile): void {
     state.prng
   );
   spawnPlusOne(state, pile.x, pile.z, pile.coins, state.prng);
+
+  // ----- IMPACT: amount-scaled shake + hit-stop + character squash -----
+  // Magnitude: 1 coin = ~0.06 units, each coin adds ~0.022, capped at 0.18.
+  const k = pile.coins;
+  const amp = Math.min(0.18, 0.06 + k * 0.022);
+  state.shakeT = Math.min(0.22, 0.13 + k * 0.018); // time window grows w/ coins
+  state.shakeStrength = amp;
+  state.rotShake = Math.min(0.06, amp * 0.32); // small rotational bite
+  state.rotPhase = state.stepIndex * 1.7 + k * 0.9; // per-event unique phase
+  // Hit-stop ONLY on multi-coin piles (>=3 coins): ~60-90ms as integer steps.
+  // 60ms = 3.6 steps → 4 steps; 90ms = 5.4 steps → 5 steps. Scale with coins.
+  if (k >= 3) {
+    state.hitStopSteps = Math.min(5, 3 + (k - 3)); // 3 coins=3 steps (~50ms), 4=4 (~67ms), 5=5 (~83ms)
+  } else {
+    state.hitStopSteps = 0;
+  }
+
   const ch = ctx.characters[b.id];
+  // Existing squash already animates a firm squash-stretch; the new camera
+  // shake + hit-stop layers physical weight on top so the moment lands.
   ch?.anim.squash();
-  b.animHoldT = Math.max(b.animHoldT, 0.18);
+  b.animHoldT = Math.max(b.animHoldT, 0.2);
   removePileVisual(state, pile);
 }
 
@@ -989,12 +1012,21 @@ function updateCamera(state: RoundState, dt: number): void {
   const cam = state.ctx.camera;
   if (state.shakeT > 0) {
     state.shakeT -= dt;
-    const s = Math.max(0, state.shakeT) * 1.8;
-    cam.position.x = state.camBase.x + Math.sin(state.t * 83.7) * s * 0.35;
-    cam.position.y = state.camBase.y + Math.cos(state.t * 61.3) * s * 0.35;
+    const s = Math.max(0, state.shakeT);
+    // Decay curve: shakeStrength * (remaining time / base time)^1.5
+    const decay = Math.pow(s / 0.13, 1.5);
+    const amp = state.shakeStrength * decay;
+    // High-frequency positional shake along per-event unique axes
+    const px = Math.sin(state.t * 83.7 + state.rotPhase) * amp;
+    const py = Math.cos(state.t * 61.3 + state.rotPhase) * amp;
+    cam.position.x = state.camBase.x + px;
+    cam.position.y = state.camBase.y + py;
     cam.position.z = state.camBase.z;
+    // Rotational bite: tiny z-axis roll for "thud" feel
+    cam.rotation.z = state.rotShake * decay * Math.sin(state.t * 47.1 + state.rotPhase);
   } else {
     cam.position.copy(state.camBase);
+    cam.rotation.z = 0;
   }
   cam.lookAt(0, 0, 0);
 }
@@ -1006,12 +1038,15 @@ interface CGDebug {
   t: number;
   chips: number[];
   ranking: number[] | null;
+  shakeT: number;
+  shakeStrength: number;
+  hitStopSteps: number;
 }
 
 function cgDebug(): CGDebug {
   const w = window as unknown as { __CG__?: CGDebug };
   if (!w.__CG__) {
-    w.__CG__ = { stepIndex: 0, t: 0, chips: [0, 0, 0, 0], ranking: null };
+    w.__CG__ = { stepIndex: 0, t: 0, chips: [0, 0, 0, 0], ranking: null, shakeT: 0, shakeStrength: 0, hitStopSteps: 0 };
   }
   return w.__CG__;
 }
@@ -1021,6 +1056,9 @@ function publishDebug(state: RoundState): void {
   d.stepIndex = state.stepIndex;
   d.t = +state.t.toFixed(4);
   d.chips = state.bodies.map((b) => b.coins);
+  d.shakeT = +state.shakeT.toFixed(4);
+  d.shakeStrength = +state.shakeStrength.toFixed(4);
+  d.hitStopSteps = state.hitStopSteps;
   if (state.ended && !d.ranking) {
     const ranking = [...state.bodies]
       .sort((a, b) => b.coins - a.coins || a.id - b.id)
@@ -1061,6 +1099,10 @@ export const coinGrabMinigame: Minigame = {
       boingT: 0,
       popT: 0,
       shakeT: 0,
+      shakeStrength: 0,
+      rotShake: 0,
+      rotPhase: 0,
+      hitStopSteps: 0,
       human: { held: false, tx: 0.5, ty: 0.5, idleT: 0, keyDir: null, keyIdleT: 0, lastHopT: -10 },
       camBase,
       raycaster: new THREE.Raycaster(),
@@ -1183,10 +1225,15 @@ export const coinGrabMinigame: Minigame = {
     state.t = state.stepIndex * FIXED_DT;
     state.field?.update(state.t);
     updateHud(state);
-    updateCamera(state, dt);
-    updateParticles(state, dt);
-    updatePlusOnes(state, dt);
-    updateRadiusIndicators(state, dt);
+    // Hit-stop: presentation-only visual freeze — non-gameplay visuals get a
+    // micro-SLOW (dt scaled down) so the frozen frames don't jitter, while the
+    // fixed step counter keeps advancing on schedule (twins stay byte-identical).
+    const vDt = state.hitStopSteps > 0 ? dt * 0.18 : dt;
+    if (state.hitStopSteps > 0) state.hitStopSteps--;
+    updateCamera(state, vDt);
+    updateParticles(state, vDt);
+    updatePlusOnes(state, vDt);
+    updateRadiusIndicators(state, vDt);
     publishDebug(state);
   },
 
