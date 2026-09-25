@@ -166,10 +166,11 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
   // Full-screen red flash rendered via the WebGL canvas so that
   // page_screenshot / vision analysis can see it (DOM overlays over the
   // canvas are not always captured by Playwright).
-  const FLASH_DUR = 0.38;
+  const FLASH_DUR = 0.42; /* a sting, not a red screen: snap to peak then fade */
   const FLASH_DIST = 20;
   let flashActive = false;
   let flashTimer = 0;
+  let flashStartReal = 0;
   let flashBaseOpacity = 0;
   const flashMat = new THREE.MeshBasicMaterial({
     color: new THREE.Color(palette.lava),
@@ -204,7 +205,7 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
     (globalThis as any).__DIE = group;
 
     // --- Full-screen flash (always positioned even when die is hidden, so red-space sting renders after die is parked) ---
-  if (camera && (camera as any).isPerspectiveCamera) {
+    if (camera && (camera as any).isPerspectiveCamera) {
     const cam = camera as THREE.PerspectiveCamera;
     camera.getWorldDirection(_camDir);
     flashMesh.position.copy(camera.position as THREE.Vector3).add(_camDir.multiplyScalar(FLASH_DIST));
@@ -214,11 +215,11 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
     const w = h * (cam.aspect || 1);
     flashMesh.scale.set(w, h, 1);
     if (flashActive) { // update flash opacity
-      flashTimer += dt;
-      const t = Math.min(1, flashTimer / FLASH_DUR);
+      const elapsed = (performance.now() - flashStartReal) / 1000;
+      const t = Math.min(1, elapsed / FLASH_DUR);
       const k = 1 - t;
       flashMat.opacity = flashBaseOpacity * k;
-      if (flashTimer >= FLASH_DUR) {
+      if (elapsed >= FLASH_DUR) {
         flashActive = false;
         flashMat.opacity = 0;
       }
@@ -293,6 +294,7 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
   };
 
   const flash = (color: string): void => {
+    // full-screen flash — opacity + colour set below
     const m = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
     if (!m) {
       flashMat.color.setHex(0xff5a3c);
@@ -304,9 +306,10 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
         parseInt(m[3], 10) / 255
       );
       const a = m[4] ? parseFloat(m[4]) : 1;
-      flashBaseOpacity = a * 0.55;
+      flashBaseOpacity = a * 1.6;
     }
     flashMat.opacity = flashBaseOpacity;
+    flashStartReal = performance.now();
     flashTimer = 0;
     flashActive = true;
   };

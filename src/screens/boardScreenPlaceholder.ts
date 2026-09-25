@@ -365,6 +365,29 @@ const boardScreenImpl: BoardScreenState & Screen = {
     document.body.appendChild(flash);
     this._flash = flash;
 
+    /* A red-space STING, not a red screen: snap to peak, then fade over ~0.42s.
+       Wall-clock timed (game dt is useless here: at speed=2 it expires in ~4 frames), and
+       mirrored to __SSP_FLASH so a probe can verify the timeline without racing
+       Playwright's screenshot stall, which cannot catch a sub-500ms flash. */
+    const STING_PEAK = 0.62;
+    const STING_DUR = 420;
+    const stingFlash = (color: string) => {
+      if (!flash) return;
+      flash.style.background = color;
+      flash.style.transition = "none";
+      flash.style.opacity = String(STING_PEAK);
+      (globalThis as any).__SSP_FLASH = { at: performance.now(), peak: STING_PEAK, dur: STING_DUR };
+      requestAnimationFrame(() => {
+        flash.style.transition = `opacity ${STING_DUR}ms ease-out`;
+        flash.style.opacity = "0";
+      });
+      window.setTimeout(() => {
+        flash.style.opacity = "0";
+        flash.style.background = "";
+        (globalThis as any).__SSP_FLASH = null;
+      }, STING_DUR + 220);
+    };
+
     // ---- camera: fit for the current aspect, then drive the loop ----
     this._cam = computeCameraFit();
     const cam = world.camera!;
@@ -461,12 +484,9 @@ const boardScreenImpl: BoardScreenState & Screen = {
         flashOverlay: (color: string) => {
           this._die3d?.flash(color);
           if (!flash) return;
-          flash.style.background = color;
-          flash.style.opacity = "0.8";
           flash.style.zIndex = "9999999";
           flash.style.setProperty("z-index", "9999999", "important");
-          window.setTimeout(() => { flash.style.opacity = "0"; }, 380);
-          window.setTimeout(() => { flash.style.background = ""; }, 380);
+          stingFlash(color);
         },
         shakeScreen: (amp: number, duration: number) => {
           // DOM-based screen shake: jitter the renderer canvas with decaying amp.
@@ -532,15 +552,19 @@ const boardScreenImpl: BoardScreenState & Screen = {
         // DOM flash as visual backup (3D WebGL flash is the census path)
         // Inline style for immediate render; WAAPI drives the fade-out.
         flash.style.background = color;
-        flash.style.opacity = "0.55";
+        flash.style.opacity = "0.62";
         flash.animate(
           [
-            { opacity: "0.55", backgroundColor: color },
+            { opacity: "0.62", backgroundColor: color },
             { opacity: "0", backgroundColor: "transparent" },
           ],
-          { duration: 380, easing: "ease-out", fill: "forwards" }
+          { duration: 420, easing: "ease-out", fill: "forwards" }
         );
-        window.setTimeout(() => { flash.style.background = ""; }, 380);
+        (globalThis as any).__SSP_FLASH = { at: performance.now(), peak: 0.62, dur: 420 };
+        window.setTimeout(() => {
+          flash.style.background = "";
+          (globalThis as any).__SSP_FLASH = null;
+        }, 640);
       },
     });
     this._loop.start();
