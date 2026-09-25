@@ -28,7 +28,7 @@ import { world } from "../main";
 import { palette, hex } from "../config/palette";
 import { settings } from "../config/settings";
 import { match } from "../core/game";
-import { rng } from "../core/rng";
+import { rng, mulberry32 } from "../core/rng";
 import { bus } from "../core/events";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
@@ -73,6 +73,60 @@ function injectMinigameStyles(): void {
 }
 
 /* ------------------------------------------------------------------ */
+/*  VS splash styles (injected once)                                   */
+/* ------------------------------------------------------------------ */
+
+let vsStylesInjected = false;
+
+function injectVsSplashStyles(): void {
+  if (vsStylesInjected) return;
+  vsStylesInjected = true;
+  if (document.getElementById("ssp-vs-splash-styles")) return;
+  const style = document.createElement("style");
+  style.id = "ssp-vs-splash-styles";
+  style.textContent = `
+    .ssp-vs-root { position:fixed; inset:0; z-index:88; pointer-events:none; overflow:hidden; }
+    .ssp-vs-rect { position:absolute; bottom:0; left:0; width:100%; height:100%; }
+    .ssp-vs-rect--a { background:linear-gradient(180deg, transparent 0%, ${palette.berry}22 100%); }
+    .ssp-vs-rect--b { background:linear-gradient(180deg, transparent 0%, ${palette.sun}18 100%); }
+    .ssp-vs-title {
+      position:absolute; left:50%; top:22%; transform:translateX(-50%);
+      font-size:clamp(34px, 9vw, 72px); font-weight:700; color:${palette.white};
+      text-align:center; white-space:nowrap; line-height:1.05;
+      text-shadow:0 3px 0 ${palette.ink}, 3px 0 0 ${palette.ink}, -3px 0 0 ${palette.ink}, 0 -3px 0 ${palette.ink},
+        2px 2px 0 ${palette.ink}, -2px 2px 0 ${palette.ink}, 2px -2px 0 ${palette.ink}, -2px -2px 0 ${palette.ink},
+        0 6px 0 ${palette.ink};
+      letter-spacing:1px;
+    }
+    .ssp-vs-vs {
+      position:absolute; left:50%; top:52%; transform:translateX(-50%) translateY(-50%);
+      font-size:clamp(40px, 12vw, 96px); font-weight:700; color:${palette.sun};
+      text-shadow:0 3px 0 ${palette.ink}, 3px 0 0 ${palette.ink}, -3px 0 0 ${palette.ink}, 0 -3px 0 ${palette.ink},
+        2px 2px 0 ${palette.ink}, -2px 2px 0 ${palette.ink}, 2px -2px 0 ${palette.ink}, -2px -2px 0 ${palette.ink},
+        0 7px 0 ${palette.ink};
+      letter-spacing:2px;
+    }
+    .ssp-vs-player {
+      position:absolute; width:clamp(44px, 13vw, 80px); height:clamp(44px, 13vw, 80px);
+      border-radius:50%; border:3px solid ${palette.ink};
+      display:flex; align-items:center; justify-content:center;
+      font-weight:700; font-size:clamp(20px, 5vw, 36px); color:${palette.ink};
+      box-shadow:0 3px 0 ${palette.ink};
+      will-change: transform, opacity;
+    }
+    .ssp-vs-player--highlight { animation: sspVsPulse 0.9s ease-in-out infinite alternate; }
+    @keyframes sspVsPulse { 0% { box-shadow:0 3px 0 ${palette.ink}, 0 0 0 0 rgba(255,210,63,0.7); } 100% { box-shadow:0 3px 0 ${palette.ink}, 0 0 0 8px rgba(255,210,63,0); } }
+    .ssp-vs-badge {
+      position:absolute; bottom:-10px; left:50%; transform:translateX(-50%);
+      background:${palette.cream}; border:2px solid ${palette.ink}; border-radius:8px;
+      padding:1px 6px; font-size:clamp(9px, 2vw, 13px); font-weight:700; color:${palette.ink};
+      white-space:nowrap; line-height:1.2;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -90,6 +144,128 @@ function cleanRanking(ranking: number[]): number[] {
   return out;
 }
 
+/* ------------------------------------------------------------------ */
+/*  VS splash — presentation-only layer (deterministic, pre-countdown) */
+/* ------------------------------------------------------------------ */
+
+const VS_TOTAL = 1.7; // total splash duration (s) — fits the 1.4-1.9s target
+const VS_STAGGER = 0.18; // stagger between element pop-ins (s)
+const VS_SKIP_DELAY = 0.6; // earliest a tap can skip the splash (s)
+
+/**
+ * Build the MP7-style VS splash overlay (game name + VS + 4 player pips).
+ * Timing budget: VS_TOTAL seconds. Runs BEFORE the countdown timer starts,
+ * so it adds no time to the playable budget. All randomness comes from a
+ * dedicated seeded presentation stream (never ctx.rng / gameplay rng).
+ */
+function buildVsSplash(self: MgScreenState, mgName: string, themeColor: string): void {
+  injectVsSplashStyles();
+  const players = self._ctx?.players ?? match.players.map((p) => ({
+    id: p.id, kind: p.kind, name: p.name, color: characterColor(p.kind),
+  }));
+  const seedFn = mulberry32(0x5eed ^ ((match.seed * 2654435761) >>> 0));
+
+  // Root container
+  const root = document.createElement("div");
+  root.className = "ssp-vs-root";
+  root.setAttribute("data-vs-name", mgName);
+  document.body.appendChild(root);
+
+  // Background accent rects (two soft color bands, animated via CSS)
+  const rectA = document.createElement("div");
+  rectA.className = "ssp-vs-rect ssp-vs-rect--a";
+  root.appendChild(rectA);
+  const rectB = document.createElement("div");
+  rectB.className = "ssp-vs-rect ssp-vs-rect--b";
+  root.appendChild(rectB);
+
+  // Game name title — palette-colored per theme
+  const titleEl = document.createElement("div");
+  titleEl.className = "ssp-vs-title";
+  titleEl.style.color = themeColor || palette.white;
+  titleEl.textContent = mgName;
+  root.appendChild(titleEl);
+
+  // VS card
+  const vsEl = document.createElement("div");
+  vsEl.className = "ssp-vs-vs";
+  vsEl.textContent = "VS";
+  root.appendChild(vsEl);
+
+  // Player pips — 4-PLAYER free-for-all layout
+  const positions = [
+    { x: 20, y: 70 }, { x: 55, y: 70 }, { x: 20, y: 82 }, { x: 55, y: 82 },
+  ];
+  const pipEls: HTMLDivElement[] = [];
+  for (let i = 0; i < 4; i++) {
+    const p = players[i];
+    if (!p) continue;
+    const el = document.createElement("div");
+    el.className = "ssp-vs-player";
+    const bg = p.color || palette.white;
+    el.style.background = `radial-gradient(circle at 32% 28%, rgba(255,255,255,.55) 0%, rgba(255,255,255,0) 50%), linear-gradient(180deg, ${bg} 0%, ${bg} 100%)`;
+    el.style.left = `${positions[i].x}vw`;
+    el.style.top = `${positions[i].y}vh`;
+    el.textContent = (p.name || "?")[0]?.toUpperCase() ?? "?";
+    const badge = document.createElement("div");
+    badge.className = "ssp-vs-badge";
+    badge.textContent = p.name || "?";
+    el.appendChild(badge);
+    root.appendChild(el);
+    pipEls.push(el);
+  }
+
+  // Staggered pop-in animation (seeded so placement is deterministic)
+  const popIn = (el: HTMLElement, delay: number, startScale = 0.2, startOpacity = 0, startY = 20) => {
+    el.style.opacity = String(startOpacity);
+    el.style.transform = el.style.transform.replace(/scale\([^)]*\)/, "").trim() +
+      ` scale(${startScale}) translateY(${startY}px)`;
+    try {
+      el.animate(
+        [
+          { opacity: startOpacity, transform: `scale(${startScale}) translateY(${startY}px)` },
+          { opacity: 1, transform: "scale(1.08) translateY(-3px)", offset: 0.7 },
+          { opacity: 1, transform: "scale(1) translateY(0)" },
+        ],
+        { duration: 380, delay: delay * 1000, easing: "cubic-bezier(.34,1.56,.64,1)", fill: "both" }
+      );
+    } catch {
+      el.style.opacity = "1";
+    }
+  };
+
+  // Title pops first, then VS, then staggered player pips
+  popIn(titleEl, VS_STAGGER * 0, 0.3, 0, 30);
+  popIn(vsEl, VS_STAGGER * 1.5, 0.1, 0, 0);
+  // VS pulse emphasis
+  try {
+    vsEl.animate(
+      [{ transform: "translateX(-50%) translateY(-50%) scale(1)" },
+       { transform: "translateX(-50%) translateY(-50%) scale(1.18)", offset: 0.4 },
+       { transform: "translateX(-50%) translateY(-50%) scale(1)" }],
+      { duration: 520, delay: VS_STAGGER * 1500, easing: "ease-out", fill: "both" }
+    );
+  } catch { /* */ }
+  for (let i = 0; i < pipEls.length; i++) {
+    const delay = VS_STAGGER * (2.5 + i * 0.6 + seedFn() * 0.3);
+    popIn(pipEls[i], delay, 0.2, 0, 18);
+  }
+
+  // Highlight ring on the human pip (player 0)
+  if (pipEls[0]) {
+    setTimeout(() => pipEls[0].classList.add("ssp-vs-player--highlight"), VS_STAGGER * 2500);
+  }
+
+  // Store cleanup handle
+  self._vsTimer = window.setTimeout(() => {
+    self._vsTimer = undefined;
+    if (root.isConnected) root.remove();
+  }, (VS_TOTAL + 0.3) * 1000);
+
+  // Stash for skip handler
+  (self as unknown as { _vsRoot?: HTMLDivElement })._vsRoot = root;
+}
+
 /** Dispose every mesh geometry/material under a root (idempotent). */
 function disposeObj(root: THREE.Object3D): void {
   root.traverse((obj) => {
@@ -105,7 +281,7 @@ function disposeObj(root: THREE.Object3D): void {
 /*  Screen state                                                       */
 /* ------------------------------------------------------------------ */
 
-type MgPhase = "countdown" | "play" | "results";
+type MgPhase = "vs-splash" | "countdown" | "play" | "results";
 
 interface MgScreenState {
   _active?: boolean;
@@ -131,6 +307,12 @@ interface MgScreenState {
   _onPointerMove?: (e: PointerEvent) => void;
   _onPointerUp?: (e: PointerEvent) => void;
   _onKeyDown?: (e: KeyboardEvent) => void;
+  _vsT?: number;
+  _vsSkip?: boolean;
+  _vsSeed?: () => number;
+  _vsTimer?: number;
+  _vsPointerX?: number;
+  _vsPointerY?: number;
 }
 
 const COUNT_TICKS = ["3", "2", "1"];
@@ -223,6 +405,9 @@ const minigameScreenImpl: MgScreenState & Screen = {
       if (this._phase === "play") {
         const [x, y] = px(e);
         this._ctx?.input.pointer(x, y, true);
+      } else if (this._phase === "vs-splash") {
+        // Skip the splash after the grace period — real-player courtesy only
+        this._vsSkip = true;
       }
     };
     this._onPointerMove = (e) => {
@@ -256,14 +441,12 @@ const minigameScreenImpl: MgScreenState & Screen = {
     window.addEventListener("pointerup", this._onPointerUp);
     window.addEventListener("keydown", this._onKeyDown);
 
-    // ---- resolve the minigame module, then run the round ----
+    // ---- VS splash: play intro sting + build overlay BEFORE countdown ----
     audio.music.play("minigame_intro", { intensity: 0.8 });
     const startRound = async (): Promise<void> => {
       const mg = await loadMinigame(entry.id);
       if (!this._active) return; // exited while loading
       if (!mg) {
-        // Unregistered id — can't play anything: back to the board (the
-        // turn loop's resume path continues the match).
         screens.goto("board");
         return;
       }
@@ -294,7 +477,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
         finish: (ranking) => {
           if (self._finished || self._phase !== "play") return;
           const cleaned = cleanRanking(ranking);
-          if (cleaned.length === 0) return; // junk ranking — keep playing
+          if (cleaned.length === 0) return;
           self._finished = true;
           self._ranking = cleaned;
         },
@@ -305,8 +488,16 @@ const minigameScreenImpl: MgScreenState & Screen = {
       };
       this._ctx = ctx;
 
-      mg.setup(ctx); // build the arena (countdown overlays it)
-      this._phase = "countdown";
+      mg.setup(ctx); // build the arena (splash + countdown overlay it)
+
+      // Determine theme color from the human's character for the title accent
+      const themeColor = characterColor(match.players[0]?.kind ?? "pip");
+
+      // Build the VS splash overlay — runs for ~1.7s BEFORE the countdown
+      this._vsT = 0;
+      this._vsSkip = false;
+      buildVsSplash(self, mg.name, themeColor);
+      this._phase = "vs-splash";
       this._countdownT = 0;
       this._tick = -1;
     };
@@ -317,6 +508,25 @@ const minigameScreenImpl: MgScreenState & Screen = {
     for (const ch of this._chars ?? []) ch.update(dt);
 
     switch (this._phase) {
+      case "vs-splash": {
+        this._vsT = (this._vsT ?? 0) + dt;
+        // End the splash on timer expiry, skip flag, or after grace delay
+        const elapsed = this._vsT ?? 0;
+        const canSkip = elapsed >= VS_SKIP_DELAY;
+        if (elapsed >= VS_TOTAL || (canSkip && (this._vsSkip))) {
+          // Tear down splash, advance to countdown
+          const vsRoot = (this as unknown as { _vsRoot?: HTMLDivElement })._vsRoot;
+          if (vsRoot?.isConnected) vsRoot.remove();
+          (this as unknown as { _vsRoot?: HTMLDivElement })._vsRoot = undefined;
+          this._vsTimer = undefined;
+          this._phase = "countdown";
+          this._countdownT = 0;
+          this._tick = -1;
+          // Clear the splash banner from the UI queue
+          ui.clearFeedback();
+        }
+        break;
+      }
       case "countdown": {
         // 4 equal beats: 3, 2, 1, GO — then play.
         this._countdownT = (this._countdownT ?? 0) + dt;
@@ -443,7 +653,13 @@ const minigameScreenImpl: MgScreenState & Screen = {
       flash.style.opacity = "0";
       this._flashEl = undefined;
     }
-    audio.music.play(rng.pick(["minigame_a", "minigame_b"]), { intensity: 1 });
+    // MP7-style: vary minigame music by genre. Action genres (survival,
+    // race, timing, target, collect) get the high-energy minigame_a; puzzle
+    // / memory / rhythm genres get the quirky comedic minigame_b.
+    const actionGenres = new Set(["survival", "race", "timing", "target", "collect"]);
+    const mgGenre = this._minigame?.genre ?? "race";
+    const track = actionGenres.has(mgGenre) ? "minigame_a" : "minigame_b";
+    audio.music.play(track, { intensity: 1 });
     const mg = this._minigame;
     if (mg) bus.emit("minigame:start", { id: mg.id, name: mg.name });
   },
@@ -454,6 +670,14 @@ const minigameScreenImpl: MgScreenState & Screen = {
     this._ceremony?.destroy();
     this._ceremony = null;
     this._ceremonyDone = false;
+    // VS splash cleanup: remove DOM, clear timer
+    if (this._vsTimer) {
+      window.clearTimeout(this._vsTimer);
+      this._vsTimer = undefined;
+    }
+    const vsRoot = (this as unknown as { _vsRoot?: HTMLDivElement })._vsRoot;
+    if (vsRoot?.isConnected) vsRoot.remove();
+    (this as unknown as { _vsRoot?: HTMLDivElement })._vsRoot = undefined;
     this._minigame?.teardown();
     this._minigame = undefined;
     this._ctx = undefined;
