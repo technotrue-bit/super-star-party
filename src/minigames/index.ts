@@ -24,4 +24,6 @@ export const MINIGAME_MODULES: Array<() => Promise<Minigame>> = [
   () => import("./balloon_pop/index").then((m) => m.loadBalloonPop()),
   () => import("./coin_grab/index").then((m) => m.loadCoinGrab()),
   () => import("./pipe_puzzle/index").then((m) => m.loadPipePuzzle()),
+  // ---- Wave 4 batch 1 (1-vs-3) ----
+  () => import("./push_of_war/index").then((m) => m.loadPushOfWar()),
 ];
