@@ -39,7 +39,12 @@ const solo = results.filter((r) => r && r.endPath === "solo-win").length;
 const trio = results.filter((r) => r && r.endPath === "trio-win").length;
 const to = results.filter((r) => r && r.endPath === "timeout").length;
 const steps = results.filter((r) => r && r.stepIndex).map((r) => r.stepIndex).sort((x, y) => x - y);
+const crossings = results.filter((r) => r && r.stepIndex && r.stepIndex < 481).length;
+const buzzer = results.filter((r) => r && r.stepIndex >= 481);
+const margins = buzzer.map((r) => Math.abs(r.crate ?? 0)).sort((a, b) => a - b);
 const secs = steps.map((s) => (s / 60).toFixed(1));
+console.log(`MARGINS ${margins.map((m) => m.toFixed(3)).join(" ")}`);
+console.log(`CROSSINGS ${crossings}/${results.length} | buzzerMargins min/med/max=${margins[0]?.toFixed(3) ?? "-"}/${margins[Math.floor(margins.length/2)]?.toFixed(3) ?? "-"}/${margins[margins.length-1]?.toFixed(3) ?? "-"}`);
 console.log(`SUMMARY n=${results.length} soloWins=${solo} (${Math.round((100 * solo) / Math.max(1, results.length))}%) trioWins=${trio} timeouts=${to} steps[min/med/max]=${steps[0] ?? "-"}/${steps[Math.floor(steps.length / 2)] ?? "-"}/${steps[steps.length - 1] ?? "-"} secs=${secs[0] ?? "-"}..${secs[secs.length - 1] ?? "-"}`);
 
 const twinA = await run(seeds[0]);

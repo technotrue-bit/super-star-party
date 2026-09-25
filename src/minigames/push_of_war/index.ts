@@ -21,27 +21,48 @@ import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
 import { isAutoplay } from "../../core/debug";
 import { celGradient } from "../../characters/cel";
+import { audio } from "../../audio/audioEngine";
 
 const FIXED_DT = 1 / 60;
 const MAX_STEPS_PER_FRAME = 5;
 
 const MATCH_DURATION = 8;
-const SOLO_PUSH_PER_TAP = 0.94;
+const SOLO_PUSH_PER_TAP = 0.705; /* re-centred for the 2.2x surge: at 0.94 the solo's mean ran ahead of the trio's and it won 16/16 */
 // A human tap is worth more than a CPU teammate's mash so that real mashing matters
 // (a keen phone masher lands ~6-9 taps/s; an idle CPU teammate averages 0.185/step).
 const HUMAN_TAP_PUSH = 2.2;
 const TRIO_PUSH_PER_TAP = 0.44;
 const CPU_SOLO_MASH_P = 0.46;
 const CPU_TRIO_MASH_P = 0.42;
-const VELOCITY_GAIN = 0.00035;
-const FRICTION = 0.95;
+/* TENSION RETUNE
+ * The original VELOCITY_GAIN = 0.00035 peaked at ~0.24 offset — a quarter
+ * of the ±0.5 goal. That made every match a tiny buzzer-margin photo-finish
+ * with no visual drama. Scaling travel up multiplies every match's final
+ * offset while preserving the sign distribution (outcome = sign of drift),
+ * so the 38/44/19 balance stays intact while the crate actually reaches
+ * and crosses the goal line.
+ */
+const VELOCITY_GAIN = 0.00125; /* ~4× — crate reaches/crosses the goal line */
+const FRICTION = 0.948; /* marginally less damping: surges carry momentum */
 const WIN_THRESHOLD = 0.5;
 const CRANE_RANGE = 1.5;
-const SURGE_TAPS = 30;
-const SURGE_STEPS = 20;
-const SURGE_MULT = 2.0;
+/* Surges tuned to feel like real events — more frequent + longer */
+const SURGE_TAPS = 28; /* charges faster → surge bursts arrive ~1.3s apart */
+const SURGE_STEPS = 30; /* ~0.43s — long enough to read "POWER SURGE!" + feel it */
+const SURGE_MULT = 2.6; /* stronger burst → the push-of-war climax */
 const MAX_DUST_PARTICLES = 48;
 const MAX_CONFETTI_PARTICLES = 64;
+
+/* Audio escalation — music intensity + crowd reacts to the fight */
+const BASE_INTENSITY = 0.6; /* calm build during normal play */
+const SURGE_INTENSITY = 1.0; /* full layer stack when surging */
+const CROWD_PUSH_THRESHOLD = 1.5; /* pushes/step avg to trigger crowd swell */
+const CROWD_COOLDOWN = 0.35; /* min seconds between crowd SFX */
+
+/* Finish staging */
+const POST_GAME_TIME = 0.6; /* camera push-in duration (s) */
+const CAMERA_PUSH_X = 3.2; /* lateral push toward winning side */
+const VIGNETTE_DARKNESS = 0.42;
 
 type Side = "solo" | "trio";
 
@@ -82,6 +103,17 @@ interface PushOfWarState {
   confettiPool: THREE.Sprite[];
   prng: () => number;
   camBase: THREE.Vector3;
+  /* Tension retune + staging state */
+  maxAbsCrate: number;
+  postGameT: number;
+  camPushDir: number;
+  lastIntensity: number;
+  recentPushes: number;
+  lastCrowdT: number;
+  audioLog: { step: number; t: number; event: string; value: number }[];
+  soloAuraRing: THREE.Mesh;
+  soloTAG: THREE.Sprite;
+  vignetteEl: HTMLDivElement;
 }
 
 function toon(color: number): THREE.MeshToonMaterial {
@@ -213,6 +245,58 @@ function makeConfettiSprite(): THREE.Sprite {
   return sprite;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Solo identity marking (1-vs-3)                                    */
+/* ------------------------------------------------------------------ */
+
+/** Golden ground ring at the solo champion's feet — pulses with their push. */
+function makeSoloAuraRing(): THREE.Mesh {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.85, 1.15, 32),
+    new THREE.MeshBasicMaterial({
+      color: hex(palette.sun),
+      opacity: 0.85,
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.02;
+  ring.userData = { phase: 0 };
+  return ring;
+}
+
+/** Floating "SOLO" tag above the solo champion. */
+function makeSoloTag(text: string, color: string): THREE.Sprite {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128; canvas.height = 64;
+  const c = canvas.getContext("2d")!;
+  c.font = "700 40px Fredoka, sans-serif";
+  c.textAlign = "center"; c.textBaseline = "middle";
+  c.strokeStyle = palette.ink; c.lineWidth = 5;
+  c.strokeText(text, 64, 32);
+  c.fillStyle = color; c.fillText(text, 64, 32);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(1.6, 0.8, 1);
+  return sprite;
+}
+
+/** Fullscreen radial-gradient vignette that darkens corners. */
+function makeVignette(): HTMLDivElement {
+  const el = document.createElement("div");
+  el.style.cssText = `
+    position:fixed; inset:0; pointer-events:none; z-index:78;
+    background:radial-gradient(ellipse at center, transparent 30%, ${palette.ink} 90%);
+    opacity:0; transition:opacity 0.6s ease-out;
+  `;
+  document.body.appendChild(el);
+  return el;
+}
+
 function stepFixed(st: PushOfWarState): void {
   const t = st.stepIndex * FIXED_DT;
   const ctx = st.ctx;
@@ -244,11 +328,18 @@ function stepFixed(st: PushOfWarState): void {
     st.soloMeter = 0;
     st.ctx.announce("POWER SURGE!", { durationMs: 900, sound: "whoosh" });
     ctx.playSfx("whoosh", { volume: 0.5, pitch: 2 });
+    ctx.playSfx("crowd.ooh", { volume: 0.5 });
+    ctx.playSfx("pop", { volume: 0.35, pitch: 3 });
+    st.audioLog.push({ step: st.stepIndex, t: +t.toFixed(3), event: "surge-start", value: 1 });
   }
   if (st.surgeActive) {
     soloPush *= SURGE_MULT;
     st.surgeTimer--;
-    if (st.surgeTimer <= 0) st.surgeActive = false;
+    if (st.surgeTimer <= 0) {
+      st.surgeActive = false;
+      ctx.playSfx("pop", { volume: 0.3, pitch: -2 });
+      st.audioLog.push({ step: st.stepIndex, t: +t.toFixed(3), event: "surge-end", value: 0 });
+    }
   }
 
   const netForce = soloPush - trioPush;
@@ -256,6 +347,13 @@ function stepFixed(st: PushOfWarState): void {
   st.lurchVelocity *= FRICTION;
   st.cratePos += st.lurchVelocity;
   st.cratePos = Math.max(-CRANE_RANGE, Math.min(CRANE_RANGE, st.cratePos));
+
+  /* Track widest excursion for tension-curve telemetry */
+  if (Math.abs(st.cratePos) > st.maxAbsCrate) st.maxAbsCrate = Math.abs(st.cratePos);
+
+  /* Accumulate push volume for crowd-swelling (presentation only) */
+  const totalPush = soloPush + trioPush;
+  st.recentPushes += totalPush;
 
   soloPlayer.contribution += soloPush;
   if (trioPush > 0) {
@@ -273,7 +371,6 @@ function stepFixed(st: PushOfWarState): void {
     else endGame(st, "timeout");
   }
 
-  const totalPush = soloPush + trioPush;
   if (totalPush > 1.5) {
     spawnDust(st);
     if (Math.abs(st.lurchVelocity) > 0.0006) {
@@ -322,7 +419,18 @@ function endGame(st: PushOfWarState, path: "solo-win" | "trio-win" | "timeout"):
     ranking = soloContrib > trioContrib ? [st.soloId, ...trioSorted] : [...trioSorted, st.soloId];
   }
   st.ranking = ranking;
-  st.finished = true;
+  /* Don't set finished=true yet — allow the post-game camera push-in to
+   * play out in update() before ctx.finish fires (the 900ms setTimeout waits). */
+  st.ended = true;
+
+  /* Camera push-in toward the winning side */
+  st.camPushDir = path === "solo-win" ? 1 : path === "trio-win" ? -1 : 0;
+  st.postGameT = 0;
+
+  /* Music + crowd climax on the finish */
+  st.lastIntensity = SURGE_INTENSITY;
+  audio.music.intensity(SURGE_INTENSITY);
+  st.audioLog.push({ step: st.stepIndex, t: +(st.stepIndex * FIXED_DT).toFixed(3), event: "finish-climax", value: SURGE_INTENSITY });
 
   const winner = ranking[0];
   const winnerPlayer = ctx.players[winner];
@@ -432,13 +540,59 @@ function updateVisuals(st: PushOfWarState, dt: number): void {
   }
 
   const cam = st.ctx.camera;
+
+  /* Post-game camera push-in toward the winning side */
+  let pushEased = 0;
+  if (st.ended) {
+    const p = Math.min(1, st.postGameT / POST_GAME_TIME);
+    pushEased = 1 - Math.pow(1 - p, 3); // easeOutCubic
+  }
+
   if (st.shakeT > 0) {
     st.shakeT -= dt;
     const s = Math.max(0, st.shakeT) * st.shakeMag * 60;
-    cam.position.x = st.camBase.x + Math.sin(t * 83.7) * s;
-    cam.position.y = st.camBase.y + Math.cos(t * 61.3) * s;
+    cam.position.x = st.camBase.x + Math.sin(t * 83.7) * s + st.camPushDir * CAMERA_PUSH_X * pushEased;
+    cam.position.y = st.camBase.y + Math.cos(t * 61.3) * s + pushEased;
+    cam.position.z = st.camBase.z - 2.5 * pushEased;
+    cam.lookAt(st.camPushDir * 4, 0.4, 0);
   } else {
-    cam.position.x = st.camBase.x; cam.position.y = st.camBase.y;
+    cam.position.x = st.camBase.x + st.camPushDir * CAMERA_PUSH_X * pushEased;
+    cam.position.y = st.camBase.y + pushEased;
+    cam.position.z = st.camBase.z - 2.5 * pushEased;
+    if (pushEased > 0) cam.lookAt(st.camPushDir * 4, 0.4, 0);
+  }
+
+  // Solo aura ring — pulses warm during surges, steady soft-glow otherwise
+  if (st.soloAuraRing) {
+    const auraMat = st.soloAuraRing.material as THREE.MeshBasicMaterial;
+    if (st.surgeActive) {
+      auraMat.color = new THREE.Color(hex(palette.sun));
+      auraMat.opacity = 0.35 + 0.15 * Math.sin(t * 8);
+    } else if (st.ended) {
+      auraMat.color = new THREE.Color(hex(palette.candy));
+      auraMat.opacity = 0.4;
+    } else {
+      auraMat.color = new THREE.Color(hex(palette.mint));
+      auraMat.opacity = 0.22;
+    }
+    st.soloAuraRing.scale.setScalar(1 + 0.02 * Math.sin(t * 3));
+  }
+
+  // Floating SOLO tag — gentle bob + rotation
+  if (st.soloTAG) {
+    st.soloTAG.position.y = 0.95 + 0.015 * Math.sin(t * 2.5);
+    st.soloTAG.rotation.y = t * 0.4;
+    const tagMat = st.soloTAG.material as THREE.SpriteMaterial;
+    if (st.surgeActive) tagMat.color.setHex(hex(palette.sun));
+    else tagMat.color.setHex(hex(palette.candy));
+  }
+
+  // Vignette darkens during play, intensifies on surge + post-game climax
+  if (st.vignetteEl) {
+    let v = VIGNETTE_DARKNESS * 0.4;
+    if (st.surgeActive) v = VIGNETTE_DARKNESS * (0.4 + 0.35 * Math.sin(t * 8));
+    else if (st.ended) v = VIGNETTE_DARKNESS * (0.4 + 0.3 * pushEased);
+    st.vignetteEl.style.opacity = String(Math.min(0.65, v));
   }
 
   updateDust(st, dt);
@@ -455,16 +609,66 @@ function updateVisuals(st: PushOfWarState, dt: number): void {
 
 let round: PushOfWarState | null = null;
 
+/* ------------------------------------------------------------------ */
+/*  Audio escalation — music intensity + crowd reacts to the fight     */
+/* ------------------------------------------------------------------ */
+
+function updateAudio(st: PushOfWarState, dt: number): void {
+  const t = st.stepIndex * FIXED_DT;
+
+  // --- Music intensity: base build, surge spike, post-game climax ---
+  let target = BASE_INTENSITY;
+  if (st.surgeActive) {
+    target = SURGE_INTENSITY;
+  } else if (st.ended) {
+    target = SURGE_INTENSITY; // hold the climax
+  } else if (st.surgeTimer > 0 && st.surgeTimer < 10) {
+    // ramp down smoothly as surge winds down
+    target = BASE_INTENSITY + (SURGE_INTENSITY - BASE_INTENSITY) * (st.surgeTimer / 10);
+  }
+
+  // Push-rate boost: a hot tug raises the intensity toward surge peak
+  const pushRate = st.recentPushes * 60; // normalise to per-second-ish
+  st.recentPushes *= 0.85; // decay for next frame
+  if (!st.ended && pushRate > CROWD_PUSH_THRESHOLD) {
+    target = Math.min(SURGE_INTENSITY, target + 0.1 * Math.min(1, pushRate / 4));
+  }
+
+  if (Math.abs(target - st.lastIntensity) > 0.01) {
+    audio.music.intensity(target);
+    st.audioLog.push({ step: st.stepIndex, t: +t.toFixed(3), event: "intensity", value: +target.toFixed(3) });
+    st.lastIntensity = target;
+  }
+
+  // --- Crowd SFX: swells with the push rate ---
+  st.lastCrowdT += dt;
+  if (st.lastCrowdT < CROWD_COOLDOWN) return;
+
+  if (st.surgeActive && pushRate > 0.3) {
+    st.ctx.playSfx("crowd.cheer", { volume: 0.5 });
+    st.audioLog.push({ step: st.stepIndex, t: +t.toFixed(3), event: "crowd.cheer", value: +pushRate.toFixed(2) });
+    st.lastCrowdT = 0;
+  } else if (pushRate > CROWD_PUSH_THRESHOLD) {
+    st.ctx.playSfx("crowd.ooh", { volume: 0.4 });
+    st.audioLog.push({ step: st.stepIndex, t: +t.toFixed(3), event: "crowd.ooh", value: +pushRate.toFixed(2) });
+    st.lastCrowdT = 0;
+  }
+}
+
 function publishDebug(st: PushOfWarState): void {
   (window as unknown as { __POW__?: unknown }).__POW__ = {
     stepIndex: st.stepIndex,
     t: +(st.stepIndex * FIXED_DT).toFixed(3),
     crate: +st.cratePos.toFixed(4),
+    maxAbsCrate: +st.maxAbsCrate.toFixed(4),
     solo: st.soloId,
     sideSizes: [1, 3],
     contributions: st.players.map((p) => +p.contribution.toFixed(2)),
     endPath: st.endPath,
     ranking: st.ranking ? [...st.ranking] : null,
+    surge: st.surgeActive,
+    intensity: +st.lastIntensity.toFixed(3),
+    audioLog: st.audioLog,
   };
 }
 
@@ -528,6 +732,35 @@ const pushOfWar: Minigame = {
       ch.anim.idle();
     }
 
+    /* --- Solo identity: ground ring + floating SOLO tag (1-vs-3) --- */
+    const soloAuraRing = makeSoloAuraRing();
+    root.add(soloAuraRing);
+    soloAuraRing.position.set(3.9, 0.02, 0);
+    const soloTag = makeSoloTag("SOLO", ctx.players[soloIdx].color || palette.candy);
+    root.add(soloTag);
+    soloTag.position.set(3.9, 0.95, 0);
+
+    /* Vignette overlay — darkens the arena for staging */
+    const vignetteEl = makeVignette();
+    vignetteEl.style.opacity = String(VIGNETTE_DARKNESS * 0.4);
+
+    /* Re-mark the VS splash: highlight the SOLO player, not P0 */
+    setTimeout(() => {
+      const pips = document.querySelectorAll(".ssp-vs-player");
+      if (pips.length === 4) {
+        (pips[0] as HTMLElement).classList.remove("ssp-vs-player--highlight");
+        const soloPip = pips[soloIdx] as HTMLElement;
+        if (soloPip) {
+          soloPip.classList.add("ssp-vs-player--highlight");
+          const badge = soloPip.querySelector(".ssp-vs-badge");
+          if (badge) badge.textContent = "SOLO";
+        }
+      }
+    }, 0);
+
+    /* Drop music to base intensity — the screen starts at 1.0 */
+    audio.music.intensity(BASE_INTENSITY);
+
     const prngSeed = Math.floor(ctx.rng() * 100000);
     const prng = makePrng(prngSeed);
 
@@ -537,6 +770,9 @@ const pushOfWar: Minigame = {
       endPath: null, ranking: [], shakeT: 0, shakeMag: 0, lurchVelocity: 0,
       humanTaps: 0, humanCpu, crate, rope, indicator, dustPool, confettiPool,
       prng, camBase,
+      maxAbsCrate: 0, postGameT: 0, camPushDir: 1, lastIntensity: BASE_INTENSITY,
+      recentPushes: 0, lastCrowdT: 0, audioLog: [],
+      soloAuraRing, soloTAG: soloTag, vignetteEl,
     };
     round = st;
 
@@ -551,19 +787,25 @@ const pushOfWar: Minigame = {
   update(dt: number) {
     const st = round;
     if (!st || st.finished) return;
-    const ctx = st.ctx;
 
-    st.simTime += dt;
-    let steps = 0;
-    while (st.simTime >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
-      stepFixed(st);
-      st.simTime -= FIXED_DT;
-      st.stepIndex++;
-      steps++;
-      if (st.ended) break;
+    if (!st.ended) {
+      st.simTime += dt;
+      let steps = 0;
+      while (st.simTime >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
+        stepFixed(st);
+        st.simTime -= FIXED_DT;
+        st.stepIndex++;
+        steps++;
+        if (st.ended) break;
+      }
+      if (steps >= MAX_STEPS_PER_FRAME && st.simTime >= FIXED_DT) st.simTime = 0;
+    } else {
+      /* Post-game: camera push-in toward the winning side */
+      st.postGameT += dt;
+      if (st.postGameT >= POST_GAME_TIME) st.finished = true;
     }
-    if (steps >= MAX_STEPS_PER_FRAME && st.simTime >= FIXED_DT) st.simTime = 0;
 
+    updateAudio(st, dt);
     updateVisuals(st, dt);
     publishDebug(st);
   },
@@ -580,6 +822,7 @@ const pushOfWar: Minigame = {
       }
     });
     st.root.removeFromParent();
+    if (st.vignetteEl?.parentElement) st.vignetteEl.parentElement.removeChild(st.vignetteEl);
     round = null;
     (window as unknown as { __POW__?: unknown }).__POW__ = undefined;
   },
