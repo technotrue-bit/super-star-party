@@ -81,6 +81,7 @@ export function installDebugAPI(): void {
         match: snapshot(),
         audio: {
           track: audio.music.track(),
+          duck: audio.music.duckLevel(),
           levels: audio.levels(),
           master: audio.master.gain,
         },

@@ -885,10 +885,10 @@ export const TRACKS: Record<string, TrackDef> = {
     swing: 0.5,
     loop: false,
     voices: [
-      { style: "blip", layer: "base", gain: 1.5, pattern: ["C5:4 D5:4 E5:4 -:4"] },
-      { style: "stab", layer: "base", gain: 1.7, pattern: ["-:12 {C5,E5,G5}:4"] },
-      { style: "bassSine", layer: "base", pattern: ["-:12 C2:4"] },
-      { style: "drums", layer: "base", pattern: ["Q:4 Q:4 Q:4 C:4"] },
+      { style: "blip", layer: "base", gain: 2.5, pattern: ["C5:2 D5:2 E5:2 G5:2 A5:2 G5:2 E5:2 D5:2"] },
+      { style: "stab", layer: "base", gain: 2.5, pattern: ["-:8 {C5,E5,G5}:4 C5:4"] },
+      { style: "bassSine", layer: "base", gain: 1.5, pattern: ["C2:8 G2:8"] },
+      { style: "drums", layer: "base", pattern: ["Q:2 Q:2 Q:2 Q:2 Q:2 Q:2 Q:2 Q:2"] },
     ],
   },
 

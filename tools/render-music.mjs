@@ -9,7 +9,7 @@ import path from "node:path";
 const wanted = process.argv.slice(2);
 const tracks = wanted.length
   ? wanted
-  : ["title", "board", "minigame_a", "minigame_b", "happening", "grumpus", "shop", "results", "star_fanfare", "win", "lose"];
+  : ["title", "board", "minigame_intro", "minigame_a", "minigame_b", "happening", "grumpus", "shop", "results", "star_fanfare", "win", "lose"];
 
 const outDir = "tools/music";
 fs.mkdirSync(outDir, { recursive: true });
@@ -42,7 +42,7 @@ for (const track of tracks) {
     async (name) => {
       try {
         const { audio } = await import("/src/audio/audioEngine.ts");
-        const seconds = name === "star_fanfare" || name === "win" || name === "lose" ? 8 : 24;
+        const seconds = ["title","board","minigame_a","minigame_b","results"].includes(name) ? 24 : 8;
         const blob = await audio.renderTrack(name, seconds);
         const buf = await blob.arrayBuffer();
         const bytes = new Uint8Array(buf);

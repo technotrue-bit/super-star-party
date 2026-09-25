@@ -243,12 +243,15 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const boardIntensity = (): number => (S.phase === "moving" ? 0.65 : 0.5);
 
   /** One-shot music stinger that restores the board track. */
-  const stinger = (track: string, ms: number): void => {
-    audio.music.play(track, { intensity: 0.75 });
+  const stinger = (track: string, ms: number, duckTo = 0.316): void => {
+    const stopFn = audio.music.stinger(track, { duckTo, duckAttack: 0.08, duckRelease: 0.5 });
     if (stingerTO !== null) window.clearTimeout(stingerTO);
     stingerTO = window.setTimeout(() => {
       stingerTO = null;
       if (!S.disposed && S.phase !== "results" && S.phase !== "ended") {
+        // Stop the looping stinger (non-looping ones auto-ended) and
+        // restore the board track at full level.
+        if (stopFn) stopFn();
         audio.music.play("board", { intensity: boardIntensity() });
       }
     }, ms);
@@ -411,8 +414,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       case "red": {
         addCoins(pid, -settings.redCoin);
         // Real sting: camera punch toward the victim, screen shake, red flash,
-        // punchy banner, ouch sfx. Presentation-only — the economy change
-        // (the only gameplay effect) is the single addCoins call above.
+        // punchy banner, ouch sfx, and a comedic trombone-fall stinger on the
+        // lose track (MP7-style: losing coins hard is a comedy beat).
+        // Presentation-only — the economy change (the only gameplay effect)
+        // is the single addCoins call above.
         const rp = charPos(pid);
         ceremony.focusCamera(rp, 0.25);
         ceremony.shakeScreen(7, 0.35);
@@ -420,6 +425,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         hud.showBanner(`-${settings.redCoin}!`, { durationMs: 1500 });
         chars[pid]?.anim.sad();
         audio.sfx.play("coin.lose", { volume: 0.9 });
+        audio.music.stinger("lose", { duckTo: 0.316, duckAttack: 0.04, duckRelease: 0.6 });
         const rp2 = ceremony.projectToScreen(rp);
         if (rp2) {
           ceremony.sparkle(rp2.x, rp2.y - 20, 8, palette.lava);
@@ -708,10 +714,15 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     const shopPromise: Promise<{ bought: string[] }> = openShop(pid, {
       autoCloseMs: isAutoplay() ? 1200 : undefined,
     });
+    // MP7-style: the shop has its own cheerful music-box jingle while open.
+    // It replaces the board track for the duration of the shop visit, then
+    // restores it when the popup resolves.
+    audio.music.play("shop", { intensity: 0.35 });
     shopPromise
       .then((res) => {
         if (S.disposed) return;
         S.shopOpen = false;
+        audio.music.play("board", { intensity: boardIntensity() });
         for (const key of res.bought) {
           const def = ITEM_DEFS[key];
           ui.toast(`Bought ${def?.name ?? key}!`, { durationMs: 1600 });
@@ -740,12 +751,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     stinger(kind === "green" ? "happening" : "grumpus", 2800);
     if (kind === "grumpus") {
       // Grumpus gag: dramatic beat. Screen wobble, camera push toward the
-      // victim, a bigger lava flash, and a telegraph sparkle at the swapped
-      // leader's position so the swap/gag reads clearly.
+      // victim, a bigger lava flash, grumpus laugh SFX, and a telegraph
+      // sparkle at the swapped leader's position so the swap/gag reads clearly.
       ceremony.shakeScreen(5, 0.5);
       ceremony.focusCamera(charPos(pid), 0.2);
       ceremony.flashOverlay("rgba(255,90,60,0.45)");
       chars[pid]?.anim.sad();
+      audio.sfx.play("grumpus.laugh", { volume: 0.8 });
       // Telegraph: if a swap/shove is coming, sparkle the destination.
       if (outcome.moveTo !== undefined || outcome.moveBy !== undefined || outcome.moveOtherTo !== undefined) {
         const dest = outcome.moveTo !== undefined

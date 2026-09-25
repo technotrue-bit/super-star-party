@@ -47,11 +47,16 @@ let analyser: AnalyserNode | null = null;
 let musicGain: GainNode | null = null;
 let sfxGain: GainNode | null = null;
 let crowdGain: GainNode | null = null;
+let stingerGain: GainNode | null = null;
+let duckGain: GainNode | null = null;
 
 let sequencer: Sequencer | null = null;
 let trackGain: GainNode | null = null;
 let currentTrack = "";
 let currentIntensity = 0.5;
+
+let stingerSeq: Sequencer | null = null;
+let stingerTrackGain: GainNode | null = null;
 
 interface PendingPlay {
   track: string;
@@ -128,12 +133,25 @@ function buildGraph(c: AudioContext): void {
   master = c.createGain();
   master.gain.value = settings.masterVolume;
 
-  // music bus: trackGain (per-playback) -> musicGain -> musicComp -> master
+  // music bus:
+  //   trackGain (board track) -> duckGain -> musicGain -> musicComp -> master
+  //   stingerGain (stinger track) -> musicGain (bypasses duck — plays at full level)
   musicGain = c.createGain();
   musicGain.gain.value = settings.musicVolume;
   const musicComp = makeCompressor(c, -18, 2.5, 2.5, 0.01, 0.22);
   musicGain.connect(musicComp);
   musicComp.connect(master);
+
+  // duckGain: wraps the board track so we can dip it under stingers/ceremonies.
+  duckGain = c.createGain();
+  duckGain.gain.value = 1.0;
+  duckGain.connect(musicGain);
+
+  // stingerGain: parallel path for stingers — bypasses the duck so the
+  // fanfare/ceremony cuts through at full level while the board track dips.
+  stingerGain = c.createGain();
+  stingerGain.gain.value = 0.5;
+  stingerGain.connect(musicGain);
 
   // sfx bus
   sfxGain = c.createGain();
@@ -223,7 +241,7 @@ function startTrack(track: string, opts?: { intensity?: number }): void {
   }
   trackGain = ctx.createGain();
   trackGain.gain.value = 0.3; // headroom trim: mix targets ~-14 LUFS feel
-  trackGain.connect(musicGain!);
+  trackGain.connect(duckGain!);
   const seq = new Sequencer(ctx, trackGain, def);
   seq.onEnded = () => {
     if (sequencer !== seq) return; // a newer track replaced us
@@ -345,6 +363,7 @@ export const audio = {
 
   music: {
     play(track: string, opts?: { intensity?: number }): void {
+      console.log(`[AUDIO_PLAY] ${track} t=${performance.now().toFixed(1)}`);
       if (!TRACKS[track]) {
         console.warn(`[audio] unknown track '${track}'`);
         return;
@@ -355,6 +374,119 @@ export const audio = {
         return; // starts on first unlock() gesture
       }
       startTrack(track, opts);
+    },
+
+    /**
+     * Play a one-shot stinger on the dedicated stinger bus (bypasses duck),
+     * and dip the board track's duckGain for the stinger's duration so the
+     * fanfare/ceremony cuts through cleanly. Returns a stop function.
+     *
+     * This is the ONLY path that plays non-looping ceremony tracks — it
+     * routes to stingerGain (parallel to duckGain) so the board music ducks
+     * while the stinger plays at full level, then restores both.
+     */
+    stinger(track: string, opts?: { duckTo?: number; duckAttack?: number; duckRelease?: number }): () => void {
+      console.log(`[AUDIO_STINGER] ${track} t=${performance.now().toFixed(1)}`);
+      if (!TRACKS[track]) {
+        console.warn(`[audio] unknown stinger '${track}'`);
+        return () => {};
+      }
+      if (disabled) return () => {};
+      const c = ensureContext();
+      if (!c) return () => {};
+
+      // Fade out any previous stinger
+      if (stingerSeq) {
+        stingerSeq.stop(0.08);
+        stingerSeq = null;
+        stingerTrackGain = null;
+      }
+
+      const duckTo = opts?.duckTo ?? 0.316; // dip board to ~-10 dB (spec: -6..-10)
+      const duckAttack = opts?.duckAttack ?? 0.08;
+      const duckRelease = opts?.duckRelease ?? 0.5;
+
+      // Duck the board track
+      if (duckGain) {
+        const now = c.currentTime;
+        duckGain.gain.cancelScheduledValues(now);
+        duckGain.gain.setValueAtTime(duckGain.gain.value, now);
+        duckGain.gain.linearRampToValueAtTime(duckTo, now + duckAttack);
+      }
+
+      // Start the stinger on the stinger bus
+      stingerTrackGain = c.createGain();
+      stingerTrackGain.gain.value = 0.5;
+      stingerTrackGain.connect(stingerGain!);
+      const def = TRACKS[track];
+      const seq = new Sequencer(c, stingerTrackGain, def);
+      seq.start();
+      stingerSeq = seq;
+
+      const stopFn = () => {
+        if (stingerSeq === seq) {
+          stingerSeq = null;
+          stingerTrackGain = null;
+        }
+        seq.stop(0.1);
+        // Restore board duck
+        if (duckGain) {
+          const now = c.currentTime;
+          duckGain.gain.cancelScheduledValues(now);
+          duckGain.gain.setValueAtTime(duckGain.gain.value, now);
+          duckGain.gain.linearRampToValueAtTime(1.0, now + duckRelease);
+        }
+      };
+
+      // If the track is non-looping, auto-restore when it ends
+      if (!def.loop) {
+        seq.onEnded = () => {
+          if (stingerSeq === seq) {
+            stingerSeq = null;
+            stingerTrackGain = null;
+          }
+          // Restore board duck
+          if (duckGain) {
+            const now = c.currentTime;
+            duckGain.gain.cancelScheduledValues(now);
+            duckGain.gain.setValueAtTime(duckGain.gain.value, now);
+            duckGain.gain.linearRampToValueAtTime(1.0, now + duckRelease);
+          }
+        };
+      }
+      return stopFn;
+    },
+
+    /** Immediately restore duck (e.g. when the ceremony is skipped). */
+    restoreDuck(release = 0.4): void {
+      if (!duckGain || !ctx) return;
+      const now = ctx.currentTime;
+      duckGain.gain.cancelScheduledValues(now);
+      duckGain.gain.setValueAtTime(duckGain.gain.value, now);
+      duckGain.gain.linearRampToValueAtTime(1.0, now + release);
+    },
+
+    /** Sample the current duck gain (for QA/measurements). */
+    duckLevel(): number {
+      return duckGain?.gain.value ?? 1;
+    },
+
+    /**
+     * Duck the music bus by a measured amount for a measured duration.
+     * Used by SFX moments that need the music to dip (coin loss, crowd cheer,
+     * minigame wipe, etc). Auto-releases after `holdMs`.
+     */
+    duck(amount = 0.4, attackMs = 80, holdMs = 200, releaseMs = 400): void {
+      if (!duckGain || !ctx) return;
+      const now = ctx.currentTime;
+      const a = attackMs / 1000;
+      const h = holdMs / 1000;
+      const r = releaseMs / 1000;
+      duckGain.gain.cancelScheduledValues(now);
+      duckGain.gain.setValueAtTime(duckGain.gain.value, now);
+      duckGain.gain.linearRampToValueAtTime(amount, now + a);
+      duckGain.gain.setValueAtTime(amount, now + a + h);
+      duckGain.gain.linearRampToValueAtTime(1.0, now + a + h + r);
     },
 
     stop(fade = 0.4): void {
@@ -387,6 +519,7 @@ export const audio = {
 
   sfx: {
     play(name: string, opts?: SfxPlayOpts): void {
+      console.log(`[AUDIO_SFX] ${name} t=${performance.now().toFixed(1)}`);
       pruneStops();
       playSfx(name, opts, false);
     },
