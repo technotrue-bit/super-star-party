@@ -517,8 +517,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       S.rolling = true;
       pause(0.5, () => {
         S.rolling = false;
-        dice.hide();
-        startMoving([], "effect", total);
+        if (!(window as any).__SSP_HOLD_DIE) { dice.hide(); startMoving([], "effect", total); }
       });
     }
   };

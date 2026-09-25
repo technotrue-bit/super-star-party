@@ -25,6 +25,7 @@ import { buildBoardScene, boardBounds, type BoardScene } from "../board/boardSce
 import { fizzyFairground } from "../board/boardData";
 import { createCharacter, type Character } from "../characters/characterFactory";
 import { createTurnLoop, PLAYER_OFFSETS, type DiceView, type TurnLoop } from "../game/turnLoop";
+import { createDie3d, type Die3DHandle } from "../ui/die3d";
 import { createPauseOverlay, makePauseButton } from "./pauseMenu";
 import type { PauseOverlayHandle } from "./pauseMenu";
 import type { Screen } from "./screenManager";
@@ -68,7 +69,7 @@ function injectBoardStyles(): void {
 .ssp-pause-fab { position:fixed; top:14px; right:14px; z-index:65; width:54px; height:54px; border-radius:50%; font-size:24px; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg, rgba(255,255,255,.4) 0%, rgba(255,255,255,0) 40%), linear-gradient(180deg, ${palette.cream} 0%, ${palette.creamShadow} 100%); border:4px solid ${palette.ink}; color:${palette.ink}; box-shadow:0 5px 0 ${palette.ink}; cursor:pointer; transition:transform .1s cubic-bezier(.34,1.56,.64,1), box-shadow .1s ease-out; }
 .ssp-pause-fab:hover { transform:scale(1.08); }
 .ssp-pause-fab:active { transform:scale(0.94) translateY(3px); box-shadow:0 2px 0 ${palette.ink}; }
-.ssp-flash { position:fixed; inset:0; pointer-events:none; z-index:85; opacity:0; }
+.ssp-flash { position:fixed; inset:0; pointer-events:none; z-index:99999; opacity:0; }
 .ssp-podium { display:flex; flex-direction:column; gap:8px; max-height:44vh; overflow-y:auto; text-align:left; font-size:16px; }
 .ssp-podium__row { background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:14px; padding:8px 12px; box-shadow:0 3px 0 ${palette.ink}; }
 .ssp-podium__row--win { background:${palette.sun}; font-weight:700; }
@@ -145,6 +146,7 @@ interface BoardScreenState {
   _rollBtn?: ReturnType<typeof ui.button>;
   _itemBar?: HTMLDivElement;
   _die?: HTMLDivElement;
+  _die3d?: Die3DHandle;
   _dieFace?: HTMLDivElement;
   _flash?: HTMLDivElement;
   _cam?: CamFit;
@@ -217,6 +219,15 @@ const boardScreenImpl: BoardScreenState & Screen = {
     // ---- board ----
     const board = buildBoardScene(fizzyFairground);
     this._board = board;
+
+    // 3D pipped die — arcs, tumbles, lands on the sim's face.
+    // Falls back to the DOM die if the 3D die throws.
+    try {
+      this._die3d = createDie3d(world.scene!, world.camera!, board);
+    } catch (e) {
+      console.error("[SSP] 3D die failed, falling back to DOM die:", e);
+      this._die3d = undefined;
+    }
 
     // North-side party camera in landscape: the disk icons (designed to read
     // upright from the south) get a 180deg in-plane flip so they stay upright.
@@ -421,7 +432,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
       chars: this._chars,
       hud: queuedHud,
       rollButton: rollBtn,
-      dice: diceView,
+      dice: this._die3d ?? diceView,
       itemBar,
       punchCamera: (target: THREE.Vector3) => {
         if (!this._cam) return;
@@ -448,16 +459,14 @@ const boardScreenImpl: BoardScreenState & Screen = {
         },
         projectToScreen,
         flashOverlay: (color: string) => {
+          this._die3d?.flash(color);
           if (!flash) return;
           flash.style.background = color;
-          try {
-            flash.animate(
-              [{ opacity: 0 }, { opacity: 0.55, offset: 0.25 }, { opacity: 0 }],
-              { duration: 480, easing: "ease-out" }
-            );
-          } catch {
-            flash.style.opacity = "0";
-          }
+          flash.style.opacity = "0.8";
+          flash.style.zIndex = "9999999";
+          flash.style.setProperty("z-index", "9999999", "important");
+          window.setTimeout(() => { flash.style.opacity = "0"; }, 380);
+          window.setTimeout(() => { flash.style.background = ""; }, 380);
         },
         shakeScreen: (amp: number, duration: number) => {
           // DOM-based screen shake: jitter the renderer canvas with decaying amp.
@@ -518,16 +527,20 @@ const boardScreenImpl: BoardScreenState & Screen = {
       },
       projectToScreen,
       flashOverlay: (color: string) => {
+        this._die3d?.flash(color);
         if (!flash) return;
+        // DOM flash as visual backup (3D WebGL flash is the census path)
+        // Inline style for immediate render; WAAPI drives the fade-out.
         flash.style.background = color;
-        try {
-          flash.animate(
-            [{ opacity: 0 }, { opacity: 0.55, offset: 0.25 }, { opacity: 0 }],
-            { duration: 480, easing: "ease-out" }
-          );
-        } catch {
-          flash.style.opacity = "0";
-        }
+        flash.style.opacity = "0.55";
+        flash.animate(
+          [
+            { opacity: "0.55", backgroundColor: color },
+            { opacity: "0", backgroundColor: "transparent" },
+          ],
+          { duration: 380, easing: "ease-out", fill: "forwards" }
+        );
+        window.setTimeout(() => { flash.style.background = ""; }, 380);
       },
     });
     this._loop.start();
@@ -557,6 +570,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._chars = undefined;
     this._board?.dispose();
     this._board = undefined;
+    this._die3d?.dispose();
+    this._die3d = undefined;
     this._hud?.destroy();
     this._hud = undefined;
     this._rollBtn?.destroy();
@@ -634,6 +649,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     }
 
     this._loop?.update(dt);
+    this._die3d?.update(dt);
 
     // Natural end of match -> the awards finale (MP7's closing ceremony).
     // The turn loop sets phase='ended' after the final round + bonus stars.

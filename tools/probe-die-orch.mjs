@@ -23,7 +23,7 @@ await p.evaluate(() => window.__SSP__.rollDice(6));
 
 let shots = 0;
 const seen = [];
-for (let i = 0; i < 90 && shots < 5; i++) {
+for (let i = 0; i < 120 && shots < 8; i++) {
   await p.waitForTimeout(120);
   const s = await p.evaluate(() => ({
     phase: window.__SSP__.state().match?.phase ?? null,
@@ -34,7 +34,7 @@ for (let i = 0; i < 90 && shots < 5; i++) {
   seen.push(`${s.phase}|${dieStr}`);
   if (!/hidden/.test(dieStr) || s.phase === "moving" || /tumble|landing|resting/i.test(dieStr)) {
     shots++;
-    const f = `tools/critic/frames/dice/orch/roll-${shots}.png`;
+    const f = `tools/critic/frames/dice/orch/orch-${shots}.png`;
     await p.screenshot({ path: f });
     console.log(`SHOT ${shots} ${f} phase=${s.phase} die=${dieStr}`);
   }
