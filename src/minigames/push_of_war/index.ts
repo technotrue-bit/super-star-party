@@ -61,7 +61,7 @@ const CROWD_COOLDOWN = 0.35; /* min seconds between crowd SFX */
 
 /* Finish staging */
 const POST_GAME_TIME = 0.6; /* camera push-in duration (s) */
-const CAMERA_PUSH_X = 3.2; /* lateral push toward winning side */
+const CAMERA_PUSH_X = 2.6; /* lateral push toward winning side */
 const VIGNETTE_DARKNESS = 0.42;
 
 type Side = "solo" | "trio";
@@ -121,30 +121,31 @@ function toon(color: number): THREE.MeshToonMaterial {
 }
 
 function makeArena(root: THREE.Group): void {
-  const stage = new THREE.Mesh(new THREE.BoxGeometry(8.8, 0.3, 7), toon(hex(palette.wood)));
+  const stage = new THREE.Mesh(new THREE.BoxGeometry(5.8, 0.3, 6.6), toon(hex(palette.wood)));
   stage.position.y = -0.15;
   root.add(stage);
   for (let i = 0; i < 5; i++) {
-    const x = -3.2 + i * 1.6;
+    const x = -2.0 + i * 1.0;
     const stripe = new THREE.Mesh(
-      new THREE.BoxGeometry(1.5, 0.01, 7),
+      new THREE.BoxGeometry(0.9, 0.01, 6.6),
       toon(i < 2 ? hex(palette.woodDark) : hex(palette.wood))
     );
     stripe.position.set(x, 0.01, 0);
     root.add(stripe);
   }
-  const center = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 7), toon(hex(palette.cream)));
+  const center = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 6.6), toon(hex(palette.cream)));
   center.position.y = 0.02;
   root.add(center);
-  for (const x of [-3.3, 3.3]) {
-    const goal = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.6, 7.2), toon(hex(palette.lava)));
+  for (const x of [-2.35, 2.35]) {
+    const goal = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.6, 6.8), toon(hex(palette.lava)));
     goal.position.set(x, 0.3, 0);
     root.add(goal);
   }
-  const border = new THREE.Mesh(new THREE.BoxGeometry(9.1, 0.06, 7.4), toon(hex(palette.ink)));
+  const border = new THREE.Mesh(new THREE.BoxGeometry(6.1, 0.06, 7.0), toon(hex(palette.ink)));
   border.position.y = -0.32;
   root.add(border);
-  const rope = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.08, 0.18), toon(hex(palette.cream)));
+  const rope = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.08, 0.18), toon(hex(palette.cream)));
+  rope.name = "pow-rope"; /* looked up by NAME, never by a magic geometry size */
   rope.position.set(0, 0.12, 0);
   root.add(rope);
 }
@@ -153,10 +154,9 @@ function findRope(root: THREE.Group): THREE.Mesh {
   let rope: THREE.Mesh | undefined;
   root.children.forEach((c) => {
     if (rope || !(c instanceof THREE.Mesh)) return;
-    if (!(c.geometry instanceof THREE.BoxGeometry)) return;
-    if (Math.abs(c.geometry.parameters.width - 6.2) < 0.1) rope = c;
+    if (c.name === "pow-rope") rope = c;
   });
-  if (!rope) throw new Error("push_of_war: rope mesh not found");
+  if (!rope) throw new Error("push_of_war: rope mesh not found (nothing named 'pow-rope')");
   return rope;
 }
 
@@ -192,10 +192,10 @@ function makeIndicator(root: THREE.Group): THREE.Mesh {
   tick.position.set(0, 3.2, -2.85);
   root.add(tick);
   const soloTex = makeLabelMesh("SOLO", palette.candy);
-  soloTex.position.set(3.2, 3.2, -2.8);
+  soloTex.position.set(2.3, 3.1, -2.8);
   root.add(soloTex);
   const trioTex = makeLabelMesh("TRIO", palette.bubble);
-  trioTex.position.set(-3.2, 3.2, -2.8);
+  trioTex.position.set(-2.3, 3.1, -2.8);
   root.add(trioTex);
   return fill;
 }
@@ -507,9 +507,9 @@ function updateVisuals(st: PushOfWarState, dt: number): void {
 
   // The race is decided by a narrow lead, so the crate's on-screen travel is EASED
   // (|pos|^0.45): a small but real advantage still reads as visible movement, while a
-  // blowout (|pos| = 0.5) lands the crate exactly on the goal line (4.5 * 0.5^0.45 = 3.3).
+  // blowout (|pos| = 0.5) lands the crate exactly on the goal line (3.2 * 0.5^0.45 = 2.34).
   const eased = Math.sign(st.cratePos) * Math.pow(Math.abs(st.cratePos), 0.45);
-  const crateX = eased * 4.5;
+  const crateX = eased * 3.2;
   st.crate.position.x = crateX;
 
   const v = Math.abs(st.lurchVelocity);
@@ -554,12 +554,16 @@ function updateVisuals(st: PushOfWarState, dt: number): void {
     cam.position.x = st.camBase.x + Math.sin(t * 83.7) * s + st.camPushDir * CAMERA_PUSH_X * pushEased;
     cam.position.y = st.camBase.y + Math.cos(t * 61.3) * s + pushEased;
     cam.position.z = st.camBase.z - 2.5 * pushEased;
-    cam.lookAt(st.camPushDir * 4, 0.4, 0);
+    /* Always re-aim. The VS-splash intro leaves the camera yawed toward the highlighted
+       player; without this the whole match ran off-axis and the TRIO sat outside the
+       portrait frame (measured: trio projected to x=-148, solo to x=139, both left of the
+       195 centre). Mid-match aim is the court centre, swinging to the winner when pushed. */
+    cam.lookAt(st.camPushDir * 4 * pushEased, 0.5 - 0.1 * pushEased, 0.5 - 0.5 * pushEased);
   } else {
     cam.position.x = st.camBase.x + st.camPushDir * CAMERA_PUSH_X * pushEased;
     cam.position.y = st.camBase.y + pushEased;
     cam.position.z = st.camBase.z - 2.5 * pushEased;
-    if (pushEased > 0) cam.lookAt(st.camPushDir * 4, 0.4, 0);
+    cam.lookAt(st.camPushDir * 4 * pushEased, 0.5 - 0.1 * pushEased, 0.5 - 0.5 * pushEased);
   }
 
   // Solo aura ring — pulses warm during surges, steady soft-glow otherwise
@@ -692,11 +696,11 @@ const pushOfWar: Minigame = {
     ctx.scene.add(root);
 
     const cam = ctx.camera;
-    cam.fov = 55;
+    cam.fov = 60;
     cam.updateProjectionMatrix();
-    const camBase = new THREE.Vector3(0, 14, 12);
+    const camBase = new THREE.Vector3(0, 11.5, 9.4);
     cam.position.copy(camBase);
-    cam.lookAt(0, 0.4, 0);
+    cam.lookAt(0, 0.5, 0.5);
 
     makeArena(root);
     const crate = makeCrate(root);
@@ -723,10 +727,10 @@ const pushOfWar: Minigame = {
       if (!ch) continue;
       if (p.side === "trio") {
         const trioIdx = trioIds.indexOf(p.id);
-        ch.group.position.set(-3.9, 0, -2.2 + trioIdx * 2.2);
+        ch.group.position.set(-2.55, 0, -1.55 + trioIdx * 1.55);
         ch.setFacing(0);
       } else {
-        ch.group.position.set(3.9, 0, 0);
+        ch.group.position.set(2.55, 0, 0);
         ch.setFacing(Math.PI);
       }
       ch.anim.idle();
@@ -735,10 +739,10 @@ const pushOfWar: Minigame = {
     /* --- Solo identity: ground ring + floating SOLO tag (1-vs-3) --- */
     const soloAuraRing = makeSoloAuraRing();
     root.add(soloAuraRing);
-    soloAuraRing.position.set(3.9, 0.02, 0);
+    soloAuraRing.position.set(2.55, 0.02, 0);
     const soloTag = makeSoloTag("SOLO", ctx.players[soloIdx].color || palette.candy);
     root.add(soloTag);
-    soloTag.position.set(3.9, 0.95, 0);
+    soloTag.position.set(2.55, 0.95, 0);
 
     /* Vignette overlay — darkens the arena for staging */
     const vignetteEl = makeVignette();
@@ -787,6 +791,42 @@ const pushOfWar: Minigame = {
   update(dt: number) {
     const st = round;
     if (!st || st.finished) return;
+
+    /* ORCH DEBUG (write-only, no rng, no gameplay effect): where are the 4 avatars really? */
+    {
+      const dbg: any = { chars: [] as any[] };
+      for (const p of st.players) {
+        const ch = st.ctx.characters[p.id];
+        dbg.chars.push(ch ? {
+          id: p.id, side: p.side,
+          pos: [+ch.group.position.x.toFixed(2), +ch.group.position.y.toFixed(2), +ch.group.position.z.toFixed(2)],
+          vis: ch.group.visible, scale: +ch.group.scale.x.toFixed(2),
+          inScene: !!ch.group.parent, parentType: ch.group.parent?.type ?? null,
+          meshes: (() => { let n = 0, hid = 0, op = 1; ch.group.traverse((o: any) => { if (o.isMesh) { n++; if (!o.visible) hid++; if (o.material && typeof o.material.opacity === "number") op = Math.min(op, o.material.opacity); } }); return `${n}/${hid}${op < 1 ? " op" + op.toFixed(2) : ""}${(ch.group as any).frustumCulled === false ? " noCull" : ""}`; })(),
+          world: (() => { const v = new THREE.Vector3(); ch.group.getWorldPosition(v); return [+v.x.toFixed(2), +v.y.toFixed(2), +v.z.toFixed(2)]; })(),
+          screen: (() => {
+            const cam = st.ctx.camera;
+            cam.updateMatrixWorld();
+            cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
+            const v = new THREE.Vector3();
+            ch.group.getWorldPosition(v);
+            v.project(cam);
+            const w = window.innerWidth || 390, hgt = window.innerHeight || 844;
+            return { x: Math.round((v.x * 0.5 + 0.5) * w), y: Math.round((-v.y * 0.5 + 0.5) * hgt), ndcZ: +v.z.toFixed(2), fov: +cam.fov.toFixed(0) };
+          })(),
+        } : { id: p.id, missing: true });
+      }
+      {
+        const cam = st.ctx.camera;
+        const dir = new THREE.Vector3();
+        cam.getWorldDirection(dir);
+        dbg.cam = { pos: [+cam.position.x.toFixed(2), +cam.position.y.toFixed(2), +cam.position.z.toFixed(2)],
+                    dir: [+dir.x.toFixed(2), +dir.y.toFixed(2), +dir.z.toFixed(2)],
+                    fov: +cam.fov.toFixed(0), aspect: +cam.aspect.toFixed(3),
+                    postT: +st.postGameT.toFixed(2), pushDir: st.camPushDir };
+      }
+      (window as any).__POW_DBG__ = dbg;
+    }
 
     if (!st.ended) {
       st.simTime += dt;
