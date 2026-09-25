@@ -468,6 +468,10 @@ const minigameScreenImpl: MgScreenState & Screen = {
           return self._playT ?? 0;
         },
         announce: (text, opts) => {
+          /* A ceremony banner must not queue behind a stale one. The win announcement was
+           * landing ~2s late (behind a lingering POWER SURGE! pop) — i.e. at the exact moment
+           * the results card appeared, which is why every critic read the finish as flat. */
+          ui.clearFeedback();
           ui.banner(text, {
             durationMs: opts?.durationMs ?? 1800,
             sound: opts?.sound === undefined ? null : opts.sound,

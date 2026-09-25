@@ -60,7 +60,7 @@ const CROWD_PUSH_THRESHOLD = 1.5; /* pushes/step avg to trigger crowd swell */
 const CROWD_COOLDOWN = 0.35; /* min seconds between crowd SFX */
 
 /* Finish staging */
-const POST_GAME_TIME = 0.6; /* camera push-in duration (s) */
+const POST_GAME_TIME = 2.0; /* win ceremony (s): must outlast the 2.2s banner so the celebration plays BEFORE the results card */
 const CAMERA_PUSH_X = 2.6; /* lateral push toward winning side */
 const VIGNETTE_DARKNESS = 0.42;
 
@@ -101,6 +101,7 @@ interface PushOfWarState {
   indicator: THREE.Mesh;
   dustPool: THREE.Sprite[];
   confettiPool: THREE.Sprite[];
+  winReason?: string;
   prng: () => number;
   camBase: THREE.Vector3;
   /* Tension retune + staging state */
@@ -434,7 +435,11 @@ function endGame(st: PushOfWarState, path: "solo-win" | "trio-win" | "timeout"):
 
   const winner = ranking[0];
   const winnerPlayer = ctx.players[winner];
-  ctx.announce(`${winnerPlayer.name} WINS PUSH OF WAR!`, { durationMs: 2200, sound: "crowd.cheer" });
+  /* The banner must say WHAT decided it, not just who won: a crate driven over a goal
+   * line, or the buzzer resolving the side closer to the goal. */
+  const crossed = Math.abs(st.cratePos) >= WIN_THRESHOLD;
+  st.winReason = path === "timeout" ? "DEAD HEAT!" : crossed ? "GOAL LINE!" : "BUZZER BEATER!";
+  ctx.announce(`${winnerPlayer.name} WINS PUSH OF WAR! ${st.winReason}`, { durationMs: 2200, sound: "crowd.cheer" });
   ctx.playSfx("fanfare.win", { volume: 0.8 });
   ctx.playSfx("crowd.cheer", { volume: 0.9 });
   ctx.characters[winner]?.anim.cheer();
@@ -443,7 +448,7 @@ function endGame(st: PushOfWarState, path: "solo-win" | "trio-win" | "timeout"):
   st.shakeT = 0.4; st.shakeMag = 0.12;
   spawnConfetti(st);
 
-  setTimeout(() => { if (st.finished && st.ranking) ctx.finish(st.ranking); }, 900);
+  setTimeout(() => { if (st.finished && st.ranking) ctx.finish(st.ranking); }, 2150);
 }
 
 function spawnDust(st: PushOfWarState): void {
@@ -673,6 +678,13 @@ function publishDebug(st: PushOfWarState): void {
     surge: st.surgeActive,
     intensity: +st.lastIntensity.toFixed(3),
     audioLog: st.audioLog,
+    /* Ceremony/escalation readable by a probe without a scene dump: the critics could only
+     * guess at the vignette and the crate glow because these were invisible from outside. */
+    winReason: st.winReason ?? null,
+    postGameT: +st.postGameT.toFixed(2),
+    ceremonyMs: POST_GAME_TIME * 1000,
+    vignette: st.vignetteEl ? +(parseFloat(st.vignetteEl.style.opacity || "0")).toFixed(3) : null,
+    crateEmissive: +(((st.crate.material as THREE.MeshToonMaterial).emissiveIntensity) ?? 0).toFixed(3),
   };
 }
 
