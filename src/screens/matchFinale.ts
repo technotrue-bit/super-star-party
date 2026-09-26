@@ -57,9 +57,10 @@ const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
 const SWOOP_T = 1.2;
 const STANDINGS_DUR = 1.2; /* the coin/star tally is a beat of its own — 0.8s read as a jump */
-const BONUS1_T = 2.8;
+const DRUMROLL_DUR = 1.2; /* candidates cycle before each award — the reveal needs a run-up */
+const BONUS1_T = 3.2;
 const BONUS1_DUR = 1.2;
-const BONUS2_T = 5.4;
+const BONUS2_T = 5.8;
 const WINNER_T = 8.2;
 const CONTROLS_T = 12.4;
 
@@ -116,6 +117,8 @@ class FinaleScreen implements Screen {
   private _highlighted = 0;
   private _rankings: FinalRankEntry[] = [];
   private _bonuses: BonusStarAward[] = [];
+  private _drumStarted: boolean[] = [false, false];
+  private _drumTimer: number | null = null;
   private _kinds: string[] = [];
   private _names: string[] = [];
   private _starDisplays: number[] = [];
@@ -380,6 +383,15 @@ class FinaleScreen implements Screen {
       }
     }
 
+    // drumroll run-up to each bonus reveal (candidates cycle before the answer)
+    for (let i = 0; i < 2; i++) {
+      const at = i === 0 ? BONUS1_T : BONUS2_T;
+      if (!this._drumStarted[i] && t >= at - DRUMROLL_DUR) {
+        this._drumStarted[i] = true;
+        this._startDrumroll();
+      }
+    }
+
     // bonus star reveals
     if (!this._bonusRevealed[0] && t >= BONUS1_T) {
       this._bonusRevealed[0] = true;
@@ -407,7 +419,33 @@ class FinaleScreen implements Screen {
   /*  Bonus star reveal                                                 */
   /* ---------------------------------------------------------------- */
 
+  /**
+   * MP7-style drumroll: the candidates cycle through the banner with a rising
+   * crowd swell and a tick per flip, so the award LANDS as a reveal instead of
+   * simply appearing. Writes into the existing banner element (no second channel).
+   */
+  private _startDrumroll(): void {
+    const el = this._bannerEl;
+    const cands = this._rankings
+      .map((r) => match.players[r.playerId]?.name)
+      .filter((n): n is string => !!n);
+    if (!el || cands.length === 0) return;
+
+    if (this._drumTimer !== null) window.clearInterval(this._drumTimer);
+    audio.sfx.play("crowd.ooh");
+    el.style.color = palette.cream;
+    el.style.transform = "translate(-50%,-50%) scale(1)";
+    let flip = 0;
+    this._drumTimer = window.setInterval(() => {
+      el.textContent = `${cands[flip % cands.length]}...?`;
+      el.style.transform = `translate(-50%,-50%) scale(${flip % 2 ? 1.07 : 0.98})`;
+      audio.sfx.play("pop", { volume: 0.22 });
+      flip++;
+    }, 130);
+  }
+
   private _revealBonus(idx: number): void {
+    if (this._drumTimer !== null) { window.clearInterval(this._drumTimer); this._drumTimer = null; }
     const award = this._bonuses[idx];
     if (!award) return;
     const player = match.players[award.playerId];
@@ -667,6 +705,7 @@ class FinaleScreen implements Screen {
     this._standingsEl = null;
     this._controlsEl = null;
 
+    if (this._drumTimer !== null) { window.clearInterval(this._drumTimer); this._drumTimer = null; }
     this._playAgainBtn?.destroy();
     this._playAgainBtn = null;
     this._titleBtn?.destroy();
