@@ -55,13 +55,13 @@ const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 /*  Timeline (seconds)                                                 */
 /* ------------------------------------------------------------------ */
 
-const SWOOP_T = 0.8;
-const STANDINGS_DUR = 0.8;
-const BONUS1_T = 1.6;
+const SWOOP_T = 1.2;
+const STANDINGS_DUR = 1.2; /* the coin/star tally is a beat of its own — 0.8s read as a jump */
+const BONUS1_T = 2.8;
 const BONUS1_DUR = 1.2;
-const BONUS2_T = 2.8;
-const WINNER_T = 4.0;
-const CONTROLS_T = 5.2;
+const BONUS2_T = 5.4;
+const WINNER_T = 8.2;
+const CONTROLS_T = 12.4;
 
 /* ------------------------------------------------------------------ */
 /*  Podium layout                                                      */
