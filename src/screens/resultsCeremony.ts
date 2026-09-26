@@ -221,7 +221,7 @@ export function startResultsCeremony(opts: {
   /* ---- DOM: coin ticker ---- */
   const tickerEl = document.createElement("div");
   tickerEl.style.cssText = `
-    position: fixed; font-size: clamp(24px, 5vw, 44px); font-weight: 700; color: ${palette.sun};
+    position: fixed; font-size: clamp(24px, 5vw, 44px); font-weight: 700; color: ${winnerColor};
     text-shadow: 0 2px 0 ${palette.ink}, 2px 0 0 ${palette.ink}, -2px 0 0 ${palette.ink}, 0 -2px 0 ${palette.ink};
     z-index: 95; pointer-events: none; opacity: 0; transition: opacity 0.2s ease-out;
   `;
@@ -238,20 +238,82 @@ export function startResultsCeremony(opts: {
     font-size: 15px; font-weight: 600; color: ${palette.ink};
     display: flex; flex-direction: column; gap: 4px; min-width: 200px;
   `;
-  const cardRows: string[] = [];
+  const cardHeader = document.createElement("div");
+  cardHeader.style.cssText = "text-align:center; font-weight:700; margin-bottom:4px;";
+  cardHeader.textContent = `${minigameName} — RESULTS`;
+  cardEl.appendChild(cardHeader);
+
+  const rowEls: HTMLDivElement[] = [];
+  let winnerRowEl: HTMLDivElement | null = null;
   for (let i = 0; i < ordered.length; i++) {
     const p = match.players[ordered[i]];
     const color = characterColor(p?.kind ?? "pip");
     const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "4.";
-    const payout = i === 0 ? ` +${coins}c` : "";
-    cardRows.push(
-      `<div style="color:${color};font-weight:700;">${medal} ${p?.name ?? "?"}${payout}</div>`
-    );
+    const row = document.createElement("div");
+    row.style.color = color;
+    row.style.fontWeight = "700";
+    let rowText = `${medal} ${p?.name ?? "?"}`;
+    if (ordered[i] === winner) {
+      rowText += ` +${coins}c`;
+      winnerRowEl = row;
+    }
+    row.textContent = rowText;
+    cardEl.appendChild(row);
+    rowEls.push(row);
   }
-  cardEl.innerHTML =
-    `<div style="text-align:center;font-weight:700;margin-bottom:4px;">${minigameName} — RESULTS</div>` +
-    cardRows.join("");
   document.body.appendChild(cardEl);
+
+  /* ---- DOM: floating reward label (+N) at winner's card row ---- */
+  const rewardLabel = document.createElement("div");
+  rewardLabel.style.cssText = `
+    position: fixed; left: 0; top: 0; transform: translate(-50%, -50%) scale(0);
+    font-size: clamp(28px, 6vw, 56px); font-weight: 800; color: ${winnerColor};
+    text-shadow: 0 3px 0 ${palette.ink}, 3px 0 0 ${palette.ink}, -3px 0 0 ${palette.ink}, 0 -3px 0 ${palette.ink},
+      2px 2px 0 ${palette.ink}, -2px 2px 0 ${palette.ink}, 2px -2px 0 ${palette.ink}, -2px -2px 0 ${palette.ink},
+      0 6px 0 ${palette.ink};
+    z-index: 96; pointer-events: none; white-space: nowrap; opacity: 0;
+  `;
+  rewardLabel.textContent = `+${coins}`;
+  document.body.appendChild(rewardLabel);
+
+  /* ---- DOM: reward coin sprites (burst from the +N label) ---- */
+  const rewardCoinEls: HTMLDivElement[] = [];
+  function spawnRewardCoins(x: number, y: number): void {
+    for (let i = 0; i < 8; i++) {
+      const el = document.createElement("div");
+      const size = 10 + presRng() * 6;
+      el.style.cssText = `
+        position: fixed; left: ${x}px; top: ${y}px; width: ${size}px; height: ${size}px;
+        border-radius: 50%; z-index: 95; pointer-events: none;
+        background: radial-gradient(circle at 35% 30%, rgba(255,255,255,.9) 0%, rgba(255,255,255,0) 42%),\n          linear-gradient(180deg, ${palette.sun} 0%, ${palette.sunDeep} 100%);
+        border: 2px solid ${palette.ink};
+      `;
+      document.body.appendChild(el);
+      rewardCoinEls.push(el);
+      const angle = presRng() * Math.PI * 2;
+      const dist = 40 + presRng() * 60;
+      const vx = Math.cos(angle) * dist;
+      const vy = Math.sin(angle) * dist - 40;
+      try {
+        el.animate(
+          [
+            { transform: "translate(-50%,-50%) scale(1)", opacity: 1 },
+            {
+              transform: `translate(calc(-50% + ${vx}px), calc(-50% + ${vy}px)) scale(0.4)`,
+              opacity: 0,
+            },
+          ],
+          {
+            duration: 600 + presRng() * 300,
+            easing: "cubic-bezier(.2,.55,.35,1)",
+            fill: "both",
+          }
+        ).onfinish = () => el.remove();
+      } catch {
+        window.setTimeout(() => el.remove(), 1000);
+      }
+    }
+  }
 
   /* ---- state ---- */
   let t = 0;
@@ -260,6 +322,7 @@ export function startResultsCeremony(opts: {
   let bannerShown = false;
   let confettiDone = false;
   let coinDone = false;
+  let rewardShown = false;
   let cardShown = false;
   let coinTick = 0;
   let lastCoinSfx = 0;
@@ -408,6 +471,34 @@ export function startResultsCeremony(opts: {
       coinDone = true;
       spawnCoins();
       tickerEl.style.opacity = "1";
+
+      /* Floating reward label (+N) at the winner's card-row position.
+       * The card starts translated down by 80px (translateY(80px)) and
+       * slides up at RANKCARD_T; we subtract 80 so the label lands at the
+       * row's *final* settled position — the card rises to meet it. */
+      if (!rewardShown) {
+        rewardShown = true;
+        let cx = window.innerWidth / 2;
+        let cy = window.innerHeight / 2;
+        if (winnerRowEl) {
+          const rect = winnerRowEl.getBoundingClientRect();
+          cx = rect.left + rect.width / 2;
+          cy = rect.top + rect.height / 2 - 80;
+        }
+        rewardLabel.style.left = `${cx}px`;
+        rewardLabel.style.top = `${cy}px`;
+        spawnRewardCoins(cx, cy);
+        try {
+          rewardLabel.animate(
+            [
+              { transform: "translate(-50%, -50%) scale(0)", opacity: 0 },
+              { transform: "translate(-50%, -50%) scale(1.35)", opacity: 1, offset: 0.45 },
+              { transform: "translate(-50%, -50%) scale(1)", opacity: 1 },
+            ],
+            { duration: 650, easing: "cubic-bezier(.34,1.56,.64,1)", fill: "both" }
+          );
+        } catch { /* */ }
+      }
     }
     if (coinDone && coinTick < coins) {
       const tickP = clamp01((t - COIN_T) / COIN_DUR);
@@ -453,6 +544,8 @@ export function startResultsCeremony(opts: {
     bannerEl.remove();
     tickerEl.remove();
     cardEl.remove();
+    rewardLabel.remove();
+    for (const el of rewardCoinEls) el.remove();
     for (const el of coinEls) el.remove();
 
     // Remove podium

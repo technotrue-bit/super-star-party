@@ -34,7 +34,7 @@ import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
 import { characterColor } from "../characters/roster";
 import { createCharacter, type Character } from "../characters/characterFactory";
-import { minigamePayout } from "../game/economy";
+import { minigamePayout, playerCoins } from "../game/economy";
 import {
   consumePendingMinigame,
   loadMinigame,
@@ -275,6 +275,153 @@ function disposeObj(root: THREE.Object3D): void {
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) m.dispose();
   });
+}
+
+/* ------------------------------------------------------------------ */
+/*  HUD coin rolling count-up — board chip tween when board reappears  */
+/* ------------------------------------------------------------------ */
+/* The board HUD is torn down while the minigame/ceremony run. We read
+ * the TRUE payout delta from the economy and tween the board's coin chip
+ * when it re-materialises — the board screen creates its HUD AFTER
+ * minigameScreen.exit() runs (during the wipe's onCover), so we poll via
+ * RAF until the chip element exists. No gameplay rng is touched.
+ *
+ * hud.update() (called by the board's turn-loop refreshHud) sets
+ * coinsEl.textContent unconditionally every call. To make the count-up
+ * actually visible we temporarily intercept textContent on the target
+ * element so hud.update() can't clobber the rolling value mid-tween.
+ * The original accessor is restored when the tween completes. */
+let _hudCoinName: string | null = null;
+let _hudCoinFrom = 0;
+let _hudCoinTo = 0;
+let _hudCoinRAF: number | null = null;
+let _hudCoinStart = 0;
+let _hudTweenEl: HTMLElement | null = null;
+let _hudOrigDesc: PropertyDescriptor | null = null;
+let _hudTweenActive = false;
+
+function tweenHudCoins(name: string, from: number, to: number): void {
+  if (from === to) return;
+  _hudCoinName = name;
+  _hudCoinFrom = from;
+  _hudCoinTo = to;
+  _hudCoinStart = performance.now();
+  if (_hudCoinRAF) cancelAnimationFrame(_hudCoinRAF);
+  _hudCoinRAF = requestAnimationFrame(tweenHudCoinsStep);
+}
+
+function tweenHudCoinsStep(): void {
+  if (!_hudCoinName) return;
+  if (performance.now() - _hudCoinStart > 8_000) {
+    _hudCoinName = null;
+    _hudCoinRAF = null;
+    return;
+  }
+  const chips = document.querySelectorAll(".ssp-hud-chip");
+  for (let i = 0; i < chips.length; i++) {
+    const chip = chips[i] as HTMLElement;
+    const nameEl = chip.querySelector(".ssp-hud-chip__name") as HTMLElement | null;
+    if (nameEl && nameEl.textContent === _hudCoinName) {
+      const coinEl = chip.querySelector('[aria-label="coins"]') as HTMLElement | null;
+      if (coinEl) {
+        _hudCoinName = null;
+        _hudCoinRAF = null;
+        /* The board HUD is created during the wipe's onCover (inside
+         * boardScreen.enter) — but the board isn't visible until the wipe
+         * finishes (~250ms). Delay the tween start so the rolling count-up
+         * plays out on-screen rather than during the wipe. */
+        let settle = 15; // ≈250 ms at 60 fps
+        const go = (): void => {
+          settle--;
+          if (settle > 0) {
+            requestAnimationFrame(go);
+          } else {
+            startCoinTween(coinEl, _hudCoinFrom, _hudCoinTo);
+          }
+        };
+        requestAnimationFrame(go);
+        return;
+      }
+    }
+  }
+  _hudCoinRAF = requestAnimationFrame(tweenHudCoinsStep);
+}
+
+function startCoinTween(el: HTMLElement, from: number, to: number): void {
+  const start = performance.now();
+  const dur = 500; // <= 0.6s per contract
+  const eased = (p: number) => 1 - Math.pow(1 - p, 3);
+  let tweenVal = from;
+  _hudTweenActive = true;
+  _hudTweenEl = el;
+
+  // Temporarily intercept textContent so hud.update()'s unconditional
+  // write can't clobber the rolling count-up. Restore on completion.
+  let origDesc: PropertyDescriptor | undefined;
+  try {
+    let proto: object | null = el;
+    while ((proto = Object.getPrototypeOf(proto))) {
+      const d = Object.getOwnPropertyDescriptor(proto, "textContent");
+      if (d && (d.get || d.set)) { origDesc = d; break; }
+    }
+    _hudOrigDesc = origDesc || null;
+    Object.defineProperty(el, "textContent", {
+      configurable: true,
+      get: () => String(tweenVal),
+      set: () => { /* tween owns display during count-up */ },
+    });
+    // Seed the DOM's underlying text node so the browser paints the starting
+    // value (the getter drives reads, but render comes from text nodes).
+    el.innerHTML = String(from);
+  } catch {
+    _hudOrigDesc = null; /* interception unavailable — fall through to direct set */
+  }
+
+  const tick = (t: number): void => {
+    if (!el.isConnected || !_hudTweenActive) {
+      finishTween(el, to);
+      return;
+    }
+    const p = Math.min(1, (t - start) / dur);
+    tweenVal = Math.round(from + (to - from) * eased(p));
+    // Update the DOM via innerHTML (bypasses our textContent interceptor's
+    // no-op setter, creating a real text-node mutation the browser will paint).
+    // hud.update()'s writes still hit the no-op textContent setter.
+    el.innerHTML = String(tweenVal);
+    if (p < 1) {
+      requestAnimationFrame(tick);
+    } else {
+      finishTween(el, to);
+    }
+  };
+  requestAnimationFrame(tick);
+
+  function finishTween(el: HTMLElement, finalVal: number): void {
+    _hudTweenActive = false;
+    _hudTweenEl = null;
+    try {
+      if (_hudOrigDesc) Object.defineProperty(el, "textContent", _hudOrigDesc);
+      else Reflect.deleteProperty(el, "textContent"); // fall back to prototype accessor
+    } catch { /* */ }
+    _hudOrigDesc = null;
+    el.innerHTML = String(finalVal);
+  }
+}
+
+/** Cancel any in-flight HUD coin tween and restore the element's
+ *  original textContent accessor so the board HUD is fully functional. */
+function cancelHudCoinsTween(): void {
+  if (_hudCoinRAF) cancelAnimationFrame(_hudCoinRAF);
+  _hudCoinRAF = null;
+  _hudCoinName = null;
+  if (_hudTweenActive && _hudTweenEl && _hudOrigDesc) {
+    _hudTweenActive = false;
+    try {
+      Object.defineProperty(_hudTweenEl, "textContent", _hudOrigDesc);
+    } catch { /* */ }
+    _hudOrigDesc = null;
+    _hudTweenEl = null;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -616,17 +763,27 @@ const minigameScreenImpl: MgScreenState & Screen = {
   _present() {
     this._presented = true;
     this._ceremonyDone = false;
+    cancelHudCoinsTween(); // clean up any stale tween from a previous minigame
 
     const ranking = this._ranking ?? [];
     const winner = ranking[0] ?? match.players[0]?.id ?? 0;
-    const coins = settings.minigameWinCoins;
     const mg = this._minigame;
 
-    // Payout + match bookkeeping (economy logic stays in economy.ts).
+    // Read the TRUE payout the economy awards — never hardcode 10.
+    const coinsBefore = playerCoins(winner);
     minigamePayout(winner);
+    const coinsAfter = playerCoins(winner);
+    const payout = coinsAfter - coinsBefore;
+
     const winnerPlayer = match.players[winner];
     if (winnerPlayer) winnerPlayer.minigameWins += 1;
-    bus.emit("minigame:end", { id: mg?.id ?? "?", winner, coins });
+    bus.emit("minigame:end", { id: mg?.id ?? "?", winner, coins: payout });
+
+    // Schedule a rolling count-up on the board's coin chip when the board
+    // reappears (its HUD is destroyed during the ceremony).
+    if (payout !== 0 && winnerPlayer) {
+      tweenHudCoins(winnerPlayer.name, coinsBefore, coinsAfter);
+    }
 
     // Crowd cheer via the existing bus hook (minigame:end wired in crowd.ts).
     audio.music.play("win", { intensity: 0.9 });
@@ -636,7 +793,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
       chars: this._chars ?? [],
       ranking,
       winner,
-      coins,
+      coins: payout,
       minigameName: mg?.name ?? "MINIGAME",
     });
   },
