@@ -9,7 +9,8 @@ coverage/
 
 # probe/critic evidence and render output — regenerable, not source
 tools/music/
-toolstest-results/
+tools/*.log
+test-results/
 shots_*/
 debug_page.png
 # stray dir created by a subagent's malformed path — ignore, do not commit
