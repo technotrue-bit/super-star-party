@@ -14,7 +14,7 @@ import { world } from "../main";
 import { palette } from "../config/palette";
 import { settings } from "../config/settings";
 import { match, startMatch } from "../core/game";
-import { rng } from "../core/rng";
+import { rng, ease } from "../core/rng";
 import { bus } from "../core/events";
 import { roster } from "../characters/roster";
 import { audio } from "../audio/audioEngine";
@@ -73,6 +73,15 @@ function injectBoardStyles(): void {
 .ssp-podium { display:flex; flex-direction:column; gap:8px; max-height:44vh; overflow-y:auto; text-align:left; font-size:16px; }
 .ssp-podium__row { background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:14px; padding:8px 12px; box-shadow:0 3px 0 ${palette.ink}; }
 .ssp-podium__row--win { background:${palette.sun}; font-weight:700; }
+.ssp-vignette { position:fixed; inset:0; pointer-events:none; z-index:80;
+  background:radial-gradient(ellipse at center, transparent 25%, rgba(43,29,78,0.4) 100%);
+  opacity:0; transition:opacity 120ms ease-out; }
+.ssp-fb-banner--gold { color:${palette.sun};
+  font-size:clamp(28px, 7.5vw, 56px);
+  text-shadow:0 3px 0 ${palette.ink}, 3px 0 0 ${palette.ink}, -3px 0 0 ${palette.ink}, 0 -3px 0 ${palette.ink},
+    3px 3px 0 ${palette.ink}, -3px 3px 0 ${palette.ink}, 3px -3px 0 ${palette.ink}, -3px -3px 0 ${palette.ink},
+    0 6px 0 ${palette.ink}; }
+.ssp-fb-banner--gold.ssp-fb-banner--show { transform:translateX(-50%) scale(1.08); }
 `;
   document.head.appendChild(style);
 }
@@ -133,6 +142,33 @@ interface Punch {
   t: number;
 }
 
+/** Active 3D star-travel animation, driven from the board update loop. */
+interface StarTravelActive {
+  group: THREE.Group;
+  geo: THREE.ExtrudeGeometry;
+  mat: THREE.MeshBasicMaterial;
+  elapsed: number;
+  duration: number;
+  start: THREE.Vector3;
+  end: THREE.Vector3;
+  sparkleCooldown: number;
+}
+
+/** 5-pointed star shape for the traveling star mesh (replicates boardScenery's starShape5). */
+function starShape5(): THREE.Shape {
+  const s = new THREE.Shape();
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 === 0 ? 1 : 0.42;
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * r;
+    if (i === 0) s.moveTo(x, y);
+    else s.lineTo(x, y);
+  }
+  s.closePath();
+  return s;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Screen state                                                       */
 /* ------------------------------------------------------------------ */
@@ -149,7 +185,10 @@ interface BoardScreenState {
   _die3d?: Die3DHandle;
   _dieFace?: HTMLDivElement;
   _flash?: HTMLDivElement;
+  _vignette?: HTMLDivElement;
+  _starTravels?: StarTravelActive[];
   _cam?: CamFit;
+  _camHold?: { base: THREE.Vector3; look: THREE.Vector3; fov: number } | null;
   _punch?: Punch | null;
   _t?: number;
   _onResize?: () => void;
@@ -187,6 +226,39 @@ function projectToScreen(pos: THREE.Vector3): { x: number; y: number } | null {
     x: (v.x * 0.5 + 0.5) * window.innerWidth,
     y: (-v.y * 0.5 + 0.5) * window.innerHeight,
   };
+}
+
+/** Module-level sparkle emitter (reused by ceremony.sparkle + star-travel trail). */
+function emitSparkle(x: number, y: number, count: number, color: string): void {
+  for (let i = 0; i < count; i++) {
+    const el = document.createElement("div");
+    const size = 4 + ((i * 37) % 8);
+    el.style.cssText = `
+      position: fixed; left: ${x}px; top: ${y}px;
+      width: ${size}px; height: ${size}px;
+      background: ${color};
+      clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+      z-index: 96; pointer-events: none;
+      transform: translate(-50%,-50%);
+    `;
+    document.body.appendChild(el);
+    const angle = (i / count) * Math.PI * 2;
+    const dist = 30 + (i % 5) * 18;
+    const vx = Math.cos(angle) * dist;
+    const vy = Math.sin(angle) * dist - 20;
+    try {
+      el.animate(
+        [
+          { transform: "translate(-50%,-50%) scale(0)", opacity: 0 },
+          { transform: `translate(calc(-50% + ${vx.toFixed(0)}px), calc(-50% + ${vy.toFixed(0)}px)) scale(1)`, opacity: 1, offset: 0.4 },
+          { transform: `translate(calc(-50% + ${(vx * 1.3).toFixed(0)}px), calc(-50% + ${(vy * 1.3 + 40).toFixed(0)}px)) scale(0.3)`, opacity: 0 },
+        ],
+        { duration: 550 + (i % 4) * 80, easing: "cubic-bezier(.2,.55,.35,1)", fill: "both" }
+      ).onfinish = () => el.remove();
+    } catch {
+      window.setTimeout(() => el.remove(), 700);
+    }
+  }
 }
 
 const boardScreenImpl: BoardScreenState & Screen = {
@@ -365,6 +437,12 @@ const boardScreenImpl: BoardScreenState & Screen = {
     document.body.appendChild(flash);
     this._flash = flash;
 
+    // Gold/bubble vignette overlay for ceremony background reactions.
+    const vignette = document.createElement("div");
+    vignette.className = "ssp-vignette";
+    document.body.appendChild(vignette);
+    this._vignette = vignette;
+
     /* A red-space STING, not a red screen: snap to peak, then fade over ~0.42s.
        Wall-clock timed (game dt is useless here: at speed=2 it expires in ~4 frames), and
        mirrored to __SSP_FLASH so a probe can verify the timeline without racing
@@ -406,12 +484,17 @@ const boardScreenImpl: BoardScreenState & Screen = {
     const suppressNextBanner = { current: false };
     const queuedHud = {
       ...hud,
-      showBanner: (text: string, opts?: { durationMs?: number }) => {
+      showBanner: (text: string, opts?: { durationMs?: number; style?: "default" | "green" | "grumpus" | "gold"; priority?: "normal" | "high" | "critical" }) => {
         if (suppressNextBanner.current) {
           suppressNextBanner.current = false;
           return { el: document.createElement("div"), destroy() {} };
         }
-        return queue.banner(text, { durationMs: opts?.durationMs });
+        const { durationMs, style, priority } = opts ?? {};
+        // Star ceremony: clear any active turn banner so the gold spectacle takes center stage.
+        if (style === "gold") {
+          ui.clearFeedback();
+        }
+        return queue.banner(text, { durationMs, style, priority });
       },
     };
     const charPos = (pid: number): THREE.Vector3 => {
@@ -434,6 +517,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._unsubs.push(
       bus.on("happening:event", ({ player, label, eventId }) => {
         suppressNextBanner.current = true;
+        // Clear any active turn banner so the happening banner fires immediately.
+        ui.clearFeedback();
         const isGrumpus = eventId.startsWith("grumpus");
         queue.happening(label, {
           durationMs: 1900,
@@ -480,6 +565,22 @@ const boardScreenImpl: BoardScreenState & Screen = {
             t: 0,
           };
         },
+        holdCamera: (pos: THREE.Vector3, look: THREE.Vector3, fov: number) => {
+          if (!this._cam) return;
+          this._camHold = { base: this._cam.base.clone(), look: this._cam.look.clone(), fov: cam.fov };
+          this._cam.base.copy(pos);
+          this._cam.look.copy(look);
+          cam.fov = fov;
+          cam.updateProjectionMatrix();
+        },
+        releaseCamera: () => {
+          if (!this._cam || !this._camHold) return;
+          this._cam.base.copy(this._camHold.base);
+          this._cam.look.copy(this._camHold.look);
+          cam.fov = this._camHold.fov;
+          cam.updateProjectionMatrix();
+          this._camHold = null;
+        },
         projectToScreen,
         flashOverlay: (color: string) => {
           this._die3d?.flash(color);
@@ -513,36 +614,58 @@ const boardScreenImpl: BoardScreenState & Screen = {
           }
         },
         sparkle: (x: number, y: number, count: number, color: string) => {
-          // Glittering sparkle burst: small 4-point stars that flash and fade.
-          for (let i = 0; i < count; i++) {
-            const el = document.createElement("div");
-            const size = 4 + ((i * 37) % 8);
-            el.style.cssText = `
-              position: fixed; left: ${x}px; top: ${y}px;
-              width: ${size}px; height: ${size}px;
-              background: ${color};
-              clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
-              z-index: 96; pointer-events: none;
-              transform: translate(-50%,-50%);
-            `;
-            document.body.appendChild(el);
-            const angle = (i / count) * Math.PI * 2;
-            const dist = 30 + (i % 5) * 18;
-            const vx = Math.cos(angle) * dist;
-            const vy = Math.sin(angle) * dist - 20;
-            try {
-              el.animate(
-                [
-                  { transform: "translate(-50%,-50%) scale(0)", opacity: 0 },
-                  { transform: `translate(calc(-50% + ${vx.toFixed(0)}px), calc(-50% + ${vy.toFixed(0)}px)) scale(1)`, opacity: 1, offset: 0.4 },
-                  { transform: `translate(calc(-50% + ${(vx * 1.3).toFixed(0)}px), calc(-50% + ${(vy * 1.3 + 40).toFixed(0)}px)) scale(0.3)`, opacity: 0 },
-                ],
-                { duration: 550 + (i % 4) * 80, easing: "cubic-bezier(.2,.55,.35,1)", fill: "both" }
-              ).onfinish = () => el.remove();
-            } catch {
-              window.setTimeout(() => el.remove(), 700);
-            }
+          emitSparkle(x, y, count, color);
+        },
+        starTravel: (startPos: THREE.Vector3, endPos: THREE.Vector3, duration: number) => {
+          if (!world.scene) return;
+          const geo = new THREE.ExtrudeGeometry(starShape5(), {
+            depth: 0.18, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.06, bevelSegments: 2,
+          });
+          // Main star — scaled up + additive blend for MP7-scale spectacle.
+          const mat = new THREE.MeshBasicMaterial({
+            color: palette.sun, transparent: true, opacity: 1,
+            depthWrite: false, side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending,
+          });
+          const star = new THREE.Mesh(geo, mat);
+          star.rotation.x = -Math.PI / 2;
+          star.scale.setScalar(2.5);
+          // Ink outline shell (BackSide = silhouette border)
+          const shell = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+            color: palette.ink, side: THREE.BackSide, depthWrite: false,
+            transparent: true, opacity: 0.85,
+          }));
+          shell.scale.setScalar(2.95);
+          const group = new THREE.Group();
+          group.add(star, shell);
+          group.position.copy(startPos);
+          group.position.y = 0.9; // lifted off the space
+          world.scene.add(group);
+          (boardScreenImpl._starTravels = boardScreenImpl._starTravels ?? []).push({
+            group, geo, mat, elapsed: 0, duration,
+            start: startPos.clone(), end: endPos.clone(), sparkleCooldown: 0,
+          });
+        },
+        vignettePulse: (color: string, intensity: number, duration: number) => {
+          const v = boardScreenImpl._vignette;
+          if (!v) return;
+          // Parse hex color (#RRGGBB) to rgb; fall back to ink.
+          let r = 43, g = 29, b = 78;
+          const h = color.replace("#", "");
+          if (h.length === 6) {
+            r = parseInt(h.slice(0, 2), 16);
+            g = parseInt(h.slice(2, 4), 16);
+            b = parseInt(h.slice(4, 6), 16);
           }
+          v.style.background = `radial-gradient(ellipse at center, transparent 25%, rgba(${r},${g},${b},${intensity}) 100%)`;
+          v.style.transition = "opacity 120ms ease-out";
+          v.style.opacity = "1";
+          const holdMs = Math.max(50, Math.round(duration * 1000) - 520);
+          window.setTimeout(() => {
+            v.style.transition = "opacity 400ms ease-out";
+            v.style.opacity = "0";
+            window.setTimeout(() => { if (v) v.style.background = ""; }, 400);
+          }, holdMs);
         },
       },
       projectToScreen,
@@ -621,6 +744,21 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._pauseBtn = undefined;
     ui.clearScreen();
     audio.music.stop(0.3);
+    // Clean up vignette overlay.
+    if (this._vignette) {
+      this._vignette.remove();
+      this._vignette = undefined;
+    }
+    // Clean up any active star travels.
+    if (this._starTravels) {
+      for (const s of this._starTravels) {
+        world.scene?.remove(s.group);
+        s.geo.dispose();
+        s.mat.dispose();
+        ((s.group.children[1] as THREE.Mesh).material as THREE.Material).dispose();
+      }
+      this._starTravels = [];
+    }
   },
 
   update(dt: number) {
@@ -674,6 +812,43 @@ const boardScreenImpl: BoardScreenState & Screen = {
 
     this._loop?.update(dt);
     this._die3d?.update(dt);
+
+    // Animate active star travels (MP7: the star physically arcs to the buyer).
+    if (this._starTravels && this._starTravels.length > 0) {
+      for (let i = this._starTravels.length - 1; i >= 0; i--) {
+        const s = this._starTravels[i];
+        s.elapsed += dt;
+        s.sparkleCooldown -= dt;
+        const p = Math.min(1, s.elapsed / s.duration);
+        const e = ease.outCubic(p);
+        // Parabolic arc: rise then fall.
+        const height = Math.sin(p * Math.PI) * 2.6;
+        const pos = new THREE.Vector3().lerpVectors(s.start, s.end, e);
+        pos.y = height + 0.5;
+        s.group.position.copy(pos);
+        s.group.rotation.y = s.elapsed * 4;
+        // Scale pulse: the star gently grows/shrinks during flight for life.
+        const pulse = 1 + Math.sin(s.elapsed * 6) * 0.15;
+        (s.group.children[0] as THREE.Mesh).scale.setScalar(5 * pulse);
+        (s.group.children[1] as THREE.Mesh).scale.setScalar(6.0 * (0.95 + Math.sin(s.elapsed * 4) * 0.05));
+        // Sparkle trail at the star's projected screen position.
+        if (s.sparkleCooldown <= 0 && p < 0.98) {
+          s.sparkleCooldown = 0.08;
+          const sc = projectToScreen(s.group.position);
+          if (sc) emitSparkle(sc.x, sc.y, 4, palette.sun);
+        }
+        if (p >= 1) {
+          // Arrival: big sparkle burst.
+          const sc = projectToScreen(s.group.position);
+          if (sc) emitSparkle(sc.x, sc.y, 20, palette.sun);
+          world.scene?.remove(s.group);
+          s.geo.dispose();
+          s.mat.dispose();
+          ((s.group.children[1] as THREE.Mesh).material as THREE.Material).dispose();
+          this._starTravels.splice(i, 1);
+        }
+      }
+    }
 
     // Natural end of match -> the awards finale (MP7's closing ceremony).
     // The turn loop sets phase='ended' after the final round + bonus stars.

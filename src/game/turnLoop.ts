@@ -111,6 +111,14 @@ export interface CeremonyDeps {
   shakeScreen(amp: number, duration: number): void;
   /** Sparkle burst at a screen position (purely cosmetic). */
   sparkle(x: number, y: number, count: number, color: string): void;
+  /** Launch a 3D star that arcs from startPos to endPos with a sparkle trail. */
+  starTravel(startPos: THREE.Vector3, endPos: THREE.Vector3, duration: number): void;
+  /** Gold vignette pulse for background reaction (MP7 ceremony spectacle). */
+  vignettePulse(color: string, intensity: number, duration: number): void;
+  /** Lock camera to a sustained closer position for cinematic moments. */
+  holdCamera(pos: THREE.Vector3, look: THREE.Vector3, fov: number): void;
+  /** Restore the camera to its default position after a holdCamera. */
+  releaseCamera(): void;
 }
 
 export interface TurnLoopDeps {
@@ -193,6 +201,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     starCeremonyStepped2: boolean;
     starCeremonyStepped3: boolean;
     starCeremonyStepped4: boolean;
+    starCeremonyStepped5: boolean;
+    starCeremonyStepped6: boolean;
     // results
     resultSteps: Array<() => void>;
     resultTimer: number;
@@ -227,6 +237,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     starCeremonyStepped2: false,
     starCeremonyStepped3: false,
     starCeremonyStepped4: false,
+    starCeremonyStepped5: false,
+    starCeremonyStepped6: false,
     resultSteps: [],
     resultTimer: 0,
   };
@@ -588,16 +600,32 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     };
   })();
 
-  const STAR_CEREMONY_DUR = 3.0;
+  const STAR_CEREMONY_DUR = 3.8;
 
   const celebrateStar = (pid: number): void => {
     S.starCeremony = true;
     S.starCeremonyT = 0;
     S.starCeremonyPid = pid;
     stinger("star_fanfare", 4500);
-    // Camera pushes toward the buyer's world position.
-    const target = charPos(pid);
-    ceremony.focusCamera(target, 0.4);
+    // Camera commits to the STAR SPACE first — the ceremony's anchor
+    // (MP7: the camera locks onto the star, then follows it to the buyer).
+    const spaceIdx = match.players[pid]?.space ?? 0;
+    const starPos = board.spaceWorldPos(spaceIdx);
+    // Camera commits to the STAR SPACE — closer, tighter framing so the
+    // 3D star arc and player reactions are visible (MP7: camera locks on star).
+    const buyerPos = charPos(pid);
+    const midPoint = starPos.clone().lerp(buyerPos, 0.5);
+    ceremony.holdCamera(
+      starPos.clone().setY(12).add(new THREE.Vector3(0, 0, 14)),
+      midPoint,
+      42
+    );
+    ceremony.focusCamera(starPos, 0.45);
+    // Background reaction: gold vignette pulse swells under the fanfare.
+    ceremony.vignettePulse(palette.sun, 0.45, 3.6);
+    // The star physically travels from its space to the buying player's token.
+    ceremony.starTravel(starPos, buyerPos, 1.6);
+    (globalThis as any).__SSP_STAR_CEREMONY = { active: true, pid, t: 0 };
   };
 
   /** Star ceremony update driven from the main update() while starCeremony is set. */
@@ -605,46 +633,83 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     S.starCeremonyT += dt;
     const t = S.starCeremonyT;
     const pid = S.starCeremonyPid;
-    const pos = board.spaceWorldPos(match.players[pid]?.space ?? 0);
+    const spaceIdx = match.players[pid]?.space ?? 0;
+    const pos = board.spaceWorldPos(spaceIdx);
+    (globalThis as any).__SSP_STAR_CEREMONY = { active: true, pid, t: Math.round(t * 100) / 100 };
 
+    // t=0.05: star materializes, lift-off SFX, space disk pulses (physical change)
     if (t >= 0.05 && !S.starCeremonyStepped0) {
       S.starCeremonyStepped0 = true;
       audio.sfx.play("star.get", { volume: 1.0 });
+      board.highlight(spaceIdx);
     }
-    if (t >= 0.3 && !S.starCeremonyStepped1) {
+    // t=0.25: STAR! banner slams in (gold, large), cheer pose, confetti + sparkle at the space
+    if (t >= 0.25 && !S.starCeremonyStepped1) {
       S.starCeremonyStepped1 = true;
       const sc = ceremony.projectToScreen(pos);
       if (sc) {
-        ceremony.sparkle(sc.x, sc.y, 30, palette.sun);
-        ui.confettiBurst(sc.x, sc.y, { count: 80, sound: null });
+        ceremony.sparkle(sc.x, sc.y, 30 + Math.floor(presRng() * 10), palette.sun);
+        ui.confettiBurst(sc.x, sc.y, { count: 80 + Math.floor(presRng() * 20), sound: null });
       }
-      // HUD star count ticks 0 -> 1 with a gold banner.
+      // HUD star count ticks 0 -> 1.
       refreshHud();
-      hud.showBanner("★ STAR! ★", { durationMs: 1600 });
+      // Gold banner: clear any active turn banner first so the ceremony owns the screen.
+      // clear() starts the CSS exit fade (~120ms) which would briefly overlap with the
+      // gold banner — violating the 1-banner rule. Force-remove exiting elements instead.
+      ui.clearFeedback();
+      document.querySelectorAll(".ssp-fb-banner").forEach(function(el) {
+        if ((el as HTMLElement).classList.contains("ssp-fb-banner--out"))
+          (el as HTMLElement).remove();
+      });
+      ui.queue.banner("★ STAR! ★", { durationMs: 2000, style: "gold", priority: "critical" });
+      chars[pid]?.anim.cheer();
     }
+    // t=0.6: crowd cheer, sparkle at the buyer as the star arcs past
     if (t >= 0.6 && !S.starCeremonyStepped2) {
       S.starCeremonyStepped2 = true;
-      chars[pid]?.anim.cheer();
       const sc = ceremony.projectToScreen(charPos(pid));
-      if (sc) ceremony.sparkle(sc.x, sc.y - 20, 24, palette.sun);
+      if (sc) ceremony.sparkle(sc.x, sc.y - 20, 24 + Math.floor(presRng() * 8), palette.sun);
       audio.sfx.play("crowd.cheer", { volume: 0.6 });
     }
+    // t=1.0: mid-travel sparkle wave back at the star space
     if (t >= 1.0 && !S.starCeremonyStepped3) {
       S.starCeremonyStepped3 = true;
       const sc = ceremony.projectToScreen(pos);
-      if (sc) ceremony.sparkle(sc.x, sc.y, 20, palette.candy);
+      if (sc) ceremony.sparkle(sc.x, sc.y, 20 + Math.floor(presRng() * 6), palette.candy);
     }
-    if (t >= 1.8 && !S.starCeremonyStepped4) {
+    // t=1.6: star ARRIVES at the buyer — big burst, camera punch to buyer
+    if (t >= 1.6 && !S.starCeremonyStepped4) {
       S.starCeremonyStepped4 = true;
-      const sc = ceremony.projectToScreen(charPos(pid));
-      if (sc) {
-        ceremony.sparkle(sc.x, sc.y, 40, palette.sun);
-        ui.confettiBurst(sc.x, sc.y, { count: 100, sound: null });
+      const buyerSc = ceremony.projectToScreen(charPos(pid));
+      if (buyerSc) {
+        ceremony.sparkle(buyerSc.x, buyerSc.y, 50 + Math.floor(presRng() * 10), palette.sun);
+        ui.confettiBurst(buyerSc.x, buyerSc.y, { count: 100 + Math.floor(presRng() * 20), sound: null });
       }
+      audio.sfx.play("star.get", { volume: 1.0 });
+      // Camera commits to the buyer as the star lands in their hands.
+      ceremony.focusCamera(charPos(pid), 0.3);
+    }
+    // t=2.2: second confetti wave at the buyer
+    if (t >= 2.2 && !S.starCeremonyStepped5) {
+      S.starCeremonyStepped5 = true;
+      const buyerSc = ceremony.projectToScreen(charPos(pid));
+      if (buyerSc) {
+        ceremony.sparkle(buyerSc.x, buyerSc.y - 20, 30 + Math.floor(presRng() * 8), palette.sun);
+        ui.confettiBurst(buyerSc.x, buyerSc.y, { count: 60 + Math.floor(presRng() * 10), sound: null });
+      }
+    }
+    // t=3.0: final resolve — sparkle at the space, character returns to idle
+    if (t >= 3.0 && !S.starCeremonyStepped6) {
+      S.starCeremonyStepped6 = true;
+      const sc = ceremony.projectToScreen(pos);
+      if (sc) ceremony.sparkle(sc.x, sc.y, 25 + Math.floor(presRng() * 6), palette.sun);
+      chars[pid]?.anim.idle();
     }
     if (t >= STAR_CEREMONY_DUR) {
       S.starCeremony = false;
+      ceremony.releaseCamera();
       finishEffect();
+      (globalThis as any).__SSP_STAR_CEREMONY = { active: false, pid: 0, t: 0 };
     }
   };
 
@@ -769,6 +834,28 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         if (sc) ceremony.sparkle(sc.x, sc.y, 14, palette.lava);
       }
     }
+    // ---- Green happening staged beat (MP7 theatricality) ----
+    // The board reacts, characters react, something physically changes,
+    // then it resolves. Presentation randomness goes through presRng only.
+    if (kind === "green") {
+      // Character reaction based on the outcome's emotional valence.
+      if (outcome.coinsDelta > 0) {
+        chars[pid]?.anim.cheer();
+        audio.sfx.play("crowd.ohh", { volume: 0.4 });
+      } else if (outcome.coinsDelta < 0) {
+        chars[pid]?.anim.sad();
+      } else {
+        chars[pid]?.anim.idle();
+      }
+      // Physical board change: pulse the space + sparkle at the character.
+      const sc = ceremony.projectToScreen(charPos(pid));
+      if (sc) {
+        board.highlight(player.space);
+        ceremony.sparkle(sc.x, sc.y, 12 + Math.floor(presRng() * 6), palette.bubble);
+      }
+      // Background reaction: bubble vignette nudge.
+      ceremony.vignettePulse(palette.bubble, 0.3, 1.2);
+    }
     hud.showBanner(outcome.banner, { durationMs: 1900 });
     if (outcome.message && outcome.message !== outcome.banner) {
       ui.toast(outcome.message, { durationMs: 2600 });
@@ -790,6 +877,12 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       startMoving([outcome.moveTo], "done");
     } else if (outcome.moveBy !== undefined) {
       startMoving([wrap(player.space + outcome.moveBy)], "done");
+    } else if (kind === "green") {
+      // Green happening with no movement: brief reaction beat, then resolve.
+      pause(0.45, () => {
+        chars[pid]?.anim.idle();
+        finishTurn();
+      });
     } else {
       finishTurn();
     }
