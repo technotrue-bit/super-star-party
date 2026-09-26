@@ -62,7 +62,7 @@ const CROWD_COOLDOWN = 0.35; /* min seconds between crowd SFX */
 /* Finish staging */
 const POST_GAME_TIME = 2.0; /* win ceremony (s): must outlast the 2.2s banner so the celebration plays BEFORE the results card */
 const CAMERA_PUSH_X = 2.6; /* lateral push toward winning side */
-const VIGNETTE_DARKNESS = 0.42;
+const VIGNETTE_DARKNESS = 0.62;
 
 /* --- Escalation: readable-in-pixels staging (presentation only, NO rng) --- */
 /* Vignette: a noticeable stage-lighting darkening. ~0.36 at rest, climbs to a
@@ -72,7 +72,7 @@ const VIGNETTE_BASE = 0.36;        /* clearly visible even at rest (was 0.168) *
 const VIGNETTE_SURGE_PEAK = 0.68;  /* peak during a POWER SURGE */
 const VIGNETTE_ENDGAME = 0.58;     /* ceremony climax */
 const VIGNETTE_TENSION = 0.22;     /* +darkness as the crate nears a goal line */
-const VIGNETTE_MAX = 0.72;         /* hard ceiling so court stays readable */
+const VIGNETTE_MAX = 0.85;         /* hard ceiling so court stays readable */
 /* Crate charge: a growing ring + colour shift make "charged" unmistakable. */
 const CRATE_CHARGE_RING_MAX = 1.3; /* ring scale at full charge */
 const CRATE_SURGE_EMISSIVE = 1.2;  /* crate glow at surge peak (was ~0.8) */
@@ -320,7 +320,7 @@ function makeVignette(): HTMLDivElement {
   const el = document.createElement("div");
   el.style.cssText = `
     position:fixed; inset:0; pointer-events:none; z-index:78;
-    background:radial-gradient(ellipse at center, transparent 22%, ${palette.ink} 88%);
+    background:radial-gradient(ellipse at center, transparent 38%, ${palette.ink} 72%, ${palette.ink} 100%);
     opacity:0; transition:opacity 0.12s ease-out;
   `;
   document.body.appendChild(el);
@@ -699,7 +699,7 @@ function updateVisuals(st: PushOfWarState, dt: number): void {
     } else {
       v = VIGNETTE_BASE + tension * VIGNETTE_TENSION + 0.04 * Math.sin(t * 1.7);
     }
-    st.vignetteEl.style.opacity = String(Math.min(VIGNETTE_MAX, Math.max(0.30, v)));
+    st.vignetteEl.style.opacity = String(Math.min(VIGNETTE_MAX, Math.max(0.38, v)));
   }
 
   // ---- Surge flash: full-screen white jolt, decays after ignition ----
