@@ -50,6 +50,15 @@ function injectShopStyles(): void {
 .ssp-shop__desc { font-size:13px; color:${palette.inkSoft}; line-height:1.3; }
 .ssp-shop__price { display:flex; align-items:center; gap:5px; margin-top:4px; font-size:16px; font-weight:700; color:${palette.ink}; }
 .ssp-shop__unaffordable { margin-top:6px; font-size:12px; font-weight:700; color:${palette.lava}; }
+/* --- Fizzy Fairgrounds carnival awning (the stall front) --- */
+.ssp-shop__awning { display:flex; align-items:center; gap:10px; background:repeating-linear-gradient(45deg, ${palette.tentRed} 0%, ${palette.tentRed} 10px, ${palette.cream} 10px, ${palette.cream} 20px); border:3px solid ${palette.ink}; border-bottom-width:5px; border-radius:16px; padding:8px 14px; margin:0 0 12px; box-shadow:0 4px 0 ${palette.ink}; }
+.ssp-shop__shopkeeper { font-size:28px; line-height:1; flex:none; filter:drop-shadow(0 2px 0 rgba(43,29,78,.5)); }
+.ssp-shop__stall-title { font-size:15px; font-weight:700; color:${palette.ink}; flex:1; }
+.ssp-shop__stall-sub { font-size:11px; color:${palette.inkSoft}; }
+/* --- owned item card (player holds this gumball) --- */
+.ssp-shop__card--owned { position:relative; border-color:${palette.mint}; box-shadow:0 0 0 4px ${palette.mint}, 0 4px 0 ${palette.ink}; }
+.ssp-shop__owned-badge { position:absolute; top:-10px; right:-10px; background:${palette.mint}; color:${palette.ink}; border:2px solid ${palette.ink}; border-radius:999px; font-size:11px; font-weight:700; padding:3px 10px; line-height:1; box-shadow:0 2px 0 ${palette.ink}; text-shadow:0 1px 0 rgba(255,255,255,.5); }
+.ssp-btn.ssp-shop__buy--owned { background:linear-gradient(180deg, rgba(255,255,255,.5) 0%, rgba(255,255,255,0) 42%), linear-gradient(180deg, ${palette.mint} 0%, ${palette.mintDeep} 100%); color:${palette.ink}; }
 `;
   document.head.appendChild(style);
 }
@@ -81,6 +90,25 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
     const content = document.createElement("div");
     content.className = "ssp-shop";
 
+    // ---- Fizzy Fairgrounds carnival awning: the stall front ----
+    const awning = document.createElement("div");
+    awning.className = "ssp-shop__awning";
+    const shopkeeper = document.createElement("span");
+    shopkeeper.className = "ssp-shop__shopkeeper";
+    shopkeeper.textContent = "👹";
+    shopkeeper.setAttribute("aria-hidden", "true");
+    const awningText = document.createElement("div");
+    awningText.style.flex = "1";
+    const awningTitle = document.createElement("div");
+    awningTitle.className = "ssp-shop__stall-title";
+    awningTitle.textContent = "GRUMPUS'S GUMBOOTH";
+    const awningSub = document.createElement("div");
+    awningSub.className = "ssp-shop__stall-sub";
+    awningSub.textContent = "Gumball Emporium · Fizzy Fairgrounds";
+    awningText.append(awningTitle, awningSub);
+    awning.append(shopkeeper, awningText);
+    content.appendChild(awning);
+
     // ---- wallet header: avatar + name + live coin counter ----
     const wallet = document.createElement("div");
     wallet.className = "ssp-shop__wallet";
@@ -109,9 +137,37 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
     grid.className = "ssp-shop__grid";
     const buyButtons: Array<{ key: string; btn: ReturnType<typeof ui.button>; card: HTMLDivElement; price: number }> = [];
 
+    /** Flip a card's BUY button into the OWNED state (or back out of it). */
+    const applyOwnedState = (card: HTMLDivElement, btn: ReturnType<typeof ui.button>, owned: boolean): void => {
+      if (owned) {
+        card.classList.add("ssp-shop__card--owned");
+        btn.setLabel("OWNED");
+        btn.setEnabled(false);
+        btn.el.classList.add("ssp-shop__buy--owned");
+        if (!card.querySelector(".ssp-shop__owned-badge")) {
+          const badge = document.createElement("div");
+          badge.className = "ssp-shop__owned-badge";
+          badge.textContent = "OWNED";
+          card.appendChild(badge);
+        }
+        card.querySelector(".ssp-shop__unaffordable")?.remove();
+      } else {
+        card.classList.remove("ssp-shop__card--owned");
+        btn.setLabel("BUY");
+        btn.el.classList.remove("ssp-shop__buy--owned");
+        card.querySelector(".ssp-shop__owned-badge")?.remove();
+      }
+    };
+
     const refreshAffordability = (): void => {
       const coins = coinsNow();
-      for (const { btn, card, price } of buyButtons) {
+      for (const { key, btn, card, price } of buyButtons) {
+        // Owned takes precedence: a held gumball can't be bought again.
+        if ((player?.items ?? []).includes(key)) {
+          applyOwnedState(card, btn, true);
+          continue;
+        }
+        applyOwnedState(card, btn, false);
         const canAfford = coins >= price;
         btn.setEnabled(canAfford);
         if (canAfford) {
@@ -167,10 +223,12 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
         label: "BUY",
         kind: "gold",
         size: "sm",
-        disabled: coinsNow() < def.price,
+        disabled: (player?.items ?? []).includes(key) || coinsNow() < def.price,
       });
       btn.el.setAttribute("data-buy", key);
       btn.el.addEventListener("click", () => {
+        // Already holding this gumball — not purchasable again until used.
+        if ((player?.items ?? []).includes(key)) return;
         if (coinsNow() < def.price) {
           // Can't afford — shake the card for feedback.
           try {
