@@ -64,6 +64,26 @@ const POST_GAME_TIME = 2.0; /* win ceremony (s): must outlast the 2.2s banner so
 const CAMERA_PUSH_X = 2.6; /* lateral push toward winning side */
 const VIGNETTE_DARKNESS = 0.42;
 
+/* --- Escalation: readable-in-pixels staging (presentation only, NO rng) --- */
+/* Vignette: a noticeable stage-lighting darkening. ~0.36 at rest, climbs to a
+ * clear pulse at surge peak and endgame. Radial gradient keeps the centre
+ * court bright so it never washes out — only the edges stage-darken. */
+const VIGNETTE_BASE = 0.36;        /* clearly visible even at rest (was 0.168) */
+const VIGNETTE_SURGE_PEAK = 0.68;  /* peak during a POWER SURGE */
+const VIGNETTE_ENDGAME = 0.58;     /* ceremony climax */
+const VIGNETTE_TENSION = 0.22;     /* +darkness as the crate nears a goal line */
+const VIGNETTE_MAX = 0.72;         /* hard ceiling so court stays readable */
+/* Crate charge: a growing ring + colour shift make "charged" unmistakable. */
+const CRATE_CHARGE_RING_MAX = 1.3; /* ring scale at full charge */
+const CRATE_SURGE_EMISSIVE = 1.2;  /* crate glow at surge peak (was ~0.8) */
+/* Crowd: procedural silhouettes along the arena boundary, side-tagged. */
+const CROWD_PER_EDGE = 6;
+const CROWD_Z = 3.45;   /* back/front boundary */
+const CROWD_X = 2.85;   /* goal-side boundary */
+/* Surge flash overlay (DOM), full-screen white pulse at surge ignition. */
+const SURGE_FLASH_DURATION = 0.45;
+const SURGE_FLASH_PEAK = 0.42;
+
 type Side = "solo" | "trio";
 
 interface PlayerState {
@@ -115,6 +135,13 @@ interface PushOfWarState {
   soloAuraRing: THREE.Mesh;
   soloTAG: THREE.Sprite;
   vignetteEl: HTMLDivElement;
+  /* Escalation visuals (presentation only — never touch fixed-step sim) */
+  crateChargeRing: THREE.Mesh;          /* grows/pulses around the crate when charged */
+  crowdSilhouettes: { mesh: THREE.Sprite; side: Side }[];  /* perimeter spectators */
+  surgeFlashEl: HTMLDivElement;         /* full-screen white pulse on surge ignition */
+  surgeFlashT: number;                 /* remaining seconds of the surge flash */
+  chargeLevel: number;                 /* 0..1 current crate charge for telemetry */
+  leadingSide: Side | null;            /* side currently ahead, for crowd/audio */
 }
 
 function toon(color: number): THREE.MeshToonMaterial {
@@ -286,16 +313,71 @@ function makeSoloTag(text: string, color: string): THREE.Sprite {
   return sprite;
 }
 
-/** Fullscreen radial-gradient vignette that darkens corners. */
+/** Fullscreen radial-gradient vignette that darkens corners — tightened so the
+ * 0.36 base opacity is actually visible on a phone screen while the centre
+ * court (inside the transparent core) stays bright. */
 function makeVignette(): HTMLDivElement {
   const el = document.createElement("div");
   el.style.cssText = `
     position:fixed; inset:0; pointer-events:none; z-index:78;
-    background:radial-gradient(ellipse at center, transparent 30%, ${palette.ink} 90%);
-    opacity:0; transition:opacity 0.6s ease-out;
+    background:radial-gradient(ellipse at center, transparent 22%, ${palette.ink} 88%);
+    opacity:0; transition:opacity 0.12s ease-out;
   `;
   document.body.appendChild(el);
   return el;
+}
+
+/** Full-screen white flash (sibling of the vignette) — fires on surge ignition
+ * and decays fast so a viewer sees the jolt even without reading "POWER SURGE". */
+function makeSurgeFlash(): HTMLDivElement {
+  const el = document.createElement("div");
+  el.style.cssText = `
+    position:fixed; inset:0; pointer-events:none; z-index:79;
+    background:radial-gradient(ellipse at center, #fff 0%, transparent 70%);
+    opacity:0; transition:opacity 0.04s linear;
+  `;
+  document.body.appendChild(el);
+  return el;
+}
+
+/** A flat ring halo that sits at the crate's feet and grows/pulses as it charges. */
+function makeCrateChargeRing(): THREE.Mesh {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.9, 1.25, 48),
+    new THREE.MeshBasicMaterial({
+      color: hex(palette.mint),
+      opacity: 0,
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = -0.55; /* sit just below the crate on the ground */
+  return ring;
+}
+
+/** A tiny person silhouette sprite (procedural canvas). Tagged with a side so the
+ * crowd can raise/brighten on the winning side and crouch/dim on the losing side.
+ * The silhouette is drawn WHITE so it picks up the side tint (pink SOLO / cyan TRIO)
+ * and stays readable against the green field at half-opacity. */
+function makeCrowdSilhouette(sideColor: number): THREE.Sprite {
+  const canvas = document.createElement("canvas");
+  canvas.width = 32; canvas.height = 48;
+  const c = canvas.getContext("2d")!;
+  c.fillStyle = "#fff";
+  c.beginPath();
+  c.arc(16, 12, 6, 0, Math.PI * 2); /* head */
+  c.fill();
+  c.fillRect(10, 16, 12, 20); /* body */
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.SpriteMaterial({ map: tex, color: sideColor, transparent: true, depthWrite: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(0.6, 1.0, 1);
+  sprite.renderOrder = 0;
+  return sprite;
 }
 
 function stepFixed(st: PushOfWarState): void {
@@ -327,10 +409,11 @@ function stepFixed(st: PushOfWarState): void {
     st.surgeActive = true;
     st.surgeTimer = SURGE_STEPS;
     st.soloMeter = 0;
-    st.ctx.announce("POWER SURGE!", { durationMs: 900, sound: "whoosh" });
-    ctx.playSfx("whoosh", { volume: 0.5, pitch: 2 });
-    ctx.playSfx("crowd.ooh", { volume: 0.5 });
-    ctx.playSfx("pop", { volume: 0.35, pitch: 3 });
+    st.surgeFlashT = SURGE_FLASH_DURATION; /* full-screen white flash on ignition */
+    st.ctx.announce("POWER SURGE!", { durationMs: 1100, sound: "whoosh" });
+    ctx.playSfx("whoosh", { volume: 0.6, pitch: 1.4 }); /* deeper swell than a pop */
+    ctx.playSfx("pop", { volume: 0.45, pitch: 2 });
+    ctx.playSfx("crowd.cheer", { volume: 0.5 });       /* surge = crowd electric */
     st.audioLog.push({ step: st.stepIndex, t: +t.toFixed(3), event: "surge-start", value: 1 });
   }
   if (st.surgeActive) {
@@ -447,6 +530,10 @@ function endGame(st: PushOfWarState, path: "solo-win" | "trio-win" | "timeout"):
 
   st.shakeT = 0.4; st.shakeMag = 0.12;
   spawnConfetti(st);
+  /* Stage the finish: a white flash + the charge ring going full gold so the
+   * goal-line / buzzer-beater is readable without reading the banner text. */
+  st.surgeFlashT = SURGE_FLASH_DURATION * 0.6;
+  st.ended = true;
 
   setTimeout(() => { if (st.finished && st.ranking) ctx.finish(st.ranking); }, 2150);
 }
@@ -596,23 +683,92 @@ function updateVisuals(st: PushOfWarState, dt: number): void {
     else tagMat.color.setHex(hex(palette.candy));
   }
 
-  // Vignette darkens during play, intensifies on surge + post-game climax
+  // ---- Leading side (presentation; derived from sim cratePos, no rng) ----
+  const crateSign = st.cratePos > 0.02 ? 1 : st.cratePos < -0.02 ? -1 : 0;
+  st.leadingSide = crateSign > 0 ? "solo" : crateSign < 0 ? "trio" : st.leadingSide;
+
+  // ---- Vignette: clearly visible stage darkening (was too faint to read) ----
   if (st.vignetteEl) {
-    let v = VIGNETTE_DARKNESS * 0.4;
-    if (st.surgeActive) v = VIGNETTE_DARKNESS * (0.4 + 0.35 * Math.sin(t * 8));
-    else if (st.ended) v = VIGNETTE_DARKNESS * (0.4 + 0.3 * pushEased);
-    st.vignetteEl.style.opacity = String(Math.min(0.65, v));
+    const tension = Math.abs(st.cratePos) / WIN_THRESHOLD; /* 0..1 near a goal */
+    let v: number;
+    if (st.surgeActive) {
+      v = 0.52 + 0.16 * Math.sin(t * 8);            /* 0.36..0.68 — pulsing, always visible */
+    } else if (st.ended) {
+      const climax = VIGNETTE_ENDGAME * (0.8 + 0.2 * pushEased); /* 0.46..0.58 climbing */
+      v = climax + 0.06 * Math.sin(t * 2.5);
+    } else {
+      v = VIGNETTE_BASE + tension * VIGNETTE_TENSION + 0.04 * Math.sin(t * 1.7);
+    }
+    st.vignetteEl.style.opacity = String(Math.min(VIGNETTE_MAX, Math.max(0.30, v)));
+  }
+
+  // ---- Surge flash: full-screen white jolt, decays after ignition ----
+  if (st.surgeFlashEl) {
+    if (st.surgeFlashT > 0) st.surgeFlashT = Math.max(0, st.surgeFlashT - dt);
+    const f = st.surgeFlashT > 0 ? SURGE_FLASH_PEAK * (st.surgeFlashT / SURGE_FLASH_DURATION) : 0;
+    st.surgeFlashEl.style.opacity = String(f);
   }
 
   updateDust(st, dt);
   updateConfetti(st, dt);
 
+  // ---- Crate charge: colour shift + growing/pulsing halo ring (unmistakable) ----
+  const charge = Math.min(1, st.soloMeter / SURGE_TAPS); /* 0..1 charge-up */
+  st.chargeLevel = charge;
+  if (st.crateChargeRing) st.crateChargeRing.position.x = crateX;
   const crateMat = st.crate.material as THREE.MeshToonMaterial;
   if (st.surgeActive) {
+    const pulse = 0.5 + 0.5 * Math.sin(t * 18);
+    crateMat.color.lerpColors(new THREE.Color(hex(palette.sunDeep)), new THREE.Color(hex(palette.sun)), 0.8 + 0.2 * pulse);
     crateMat.emissive = new THREE.Color(hex(palette.sun));
-    crateMat.emissiveIntensity = 0.5 + 0.3 * Math.sin(t * 20);
+    crateMat.emissiveIntensity = 0.6 + CRATE_SURGE_EMISSIVE * pulse; /* up to ~1.8 */
   } else {
+    crateMat.color.lerpColors(new THREE.Color(hex(palette.sunDeep)), new THREE.Color(hex(palette.sun)), 0.15 + 0.35 * charge);
     crateMat.emissiveIntensity *= 0.9;
+  }
+
+  // Crate charge ring: grows with charge, pulses hot during surge, wins during ceremony
+  if (st.crateChargeRing) {
+    const ringMat = st.crateChargeRing.material as THREE.MeshBasicMaterial;
+    if (st.surgeActive) {
+      const pulse = 0.5 + 0.5 * Math.sin(t * 18);
+      ringMat.color = new THREE.Color(hex(palette.sun));
+      ringMat.opacity = 0.5 + 0.4 * pulse;
+      st.crateChargeRing.scale.setScalar(CRATE_CHARGE_RING_MAX * (1 + 0.25 * pulse));
+    } else if (st.ended) {
+      ringMat.color = new THREE.Color(hex(palette.candy));
+      ringMat.opacity = 0.55 + 0.12 * Math.sin(t * 3);
+      st.crateChargeRing.scale.setScalar(1.2 + 0.1 * pushEased);
+    } else {
+      ringMat.color = new THREE.Color(hex(palette.mint));
+      ringMat.opacity = 0.18 + 0.32 * charge;
+      st.crateChargeRing.scale.setScalar(1 + 0.3 * charge);
+    }
+  }
+
+  // ---- Crowd: raise/brighten on the winning side, crouch/dim on the losing ----
+  for (const c of st.crowdSilhouettes) {
+    const phase = (c.mesh as any).userData?.phase ?? 0;
+    const bob = Math.sin(t * 2.2 + phase) * 0.04;
+    const isWinning = st.leadingSide === c.side;
+    if (st.surgeActive && isWinning) {
+      const pulse = 0.5 + 0.5 * Math.sin(t * 18);
+      c.mesh.position.y = 0.08 + bob + 0.2 * pulse;
+      c.mesh.scale.set(0.6, 1.0 + 0.5 * pulse, 1);
+      (c.mesh.material as THREE.SpriteMaterial).opacity = 0.85 + 0.12 * pulse;
+    } else if (st.ended && isWinning) {
+      c.mesh.position.y = 0.08 + bob + 0.26;
+      c.mesh.scale.set(0.6, 1.25, 1);
+      (c.mesh.material as THREE.SpriteMaterial).opacity = 0.95;
+    } else if (st.ended && !isWinning) {
+      c.mesh.position.y = 0.08 + bob - 0.1;
+      c.mesh.scale.set(0.6, 0.65, 1);
+      (c.mesh.material as THREE.SpriteMaterial).opacity = 0.32;
+    } else {
+      c.mesh.position.y = 0.08 + bob;
+      c.mesh.scale.set(0.6, 0.7 + 0.15 * (isWinning ? 1 : 0), 1);
+      (c.mesh.material as THREE.SpriteMaterial).opacity = isWinning ? 0.55 : 0.4;
+    }
   }
 }
 
@@ -649,17 +805,21 @@ function updateAudio(st: PushOfWarState, dt: number): void {
     st.lastIntensity = target;
   }
 
-  // --- Crowd SFX: swells with the push rate ---
+  // --- Crowd SFX: position-responsive — louder for the side currently winning ---
   st.lastCrowdT += dt;
   if (st.lastCrowdT < CROWD_COOLDOWN) return;
-
+  // Magnitude toward the relevant goal line = how far the leader is ahead.
+  const sideLead = Math.min(1, Math.abs(st.cratePos) / WIN_THRESHOLD);
+  const winningSide = st.cratePos > 0.02 ? "solo" : st.cratePos < -0.02 ? "trio" : null;
   if (st.surgeActive && pushRate > 0.3) {
-    st.ctx.playSfx("crowd.cheer", { volume: 0.5 });
-    st.audioLog.push({ step: st.stepIndex, t: +t.toFixed(3), event: "crowd.cheer", value: +pushRate.toFixed(2) });
+    const vol = 0.45 + 0.35 * sideLead; /* 0.45..0.80 — swells as the leader pulls away */
+    st.ctx.playSfx("crowd.cheer", { volume: vol });
+    st.audioLog.push({ step: st.stepIndex, t: +t.toFixed(3), event: `crowd.cheer.${winningSide}`, value: +sideLead.toFixed(2) });
     st.lastCrowdT = 0;
   } else if (pushRate > CROWD_PUSH_THRESHOLD) {
-    st.ctx.playSfx("crowd.ooh", { volume: 0.4 });
-    st.audioLog.push({ step: st.stepIndex, t: +t.toFixed(3), event: "crowd.ooh", value: +pushRate.toFixed(2) });
+    const vol = 0.35 + 0.25 * sideLead;
+    st.ctx.playSfx("crowd.ooh", { volume: vol });
+    st.audioLog.push({ step: st.stepIndex, t: +t.toFixed(3), event: `crowd.ooh.${winningSide}`, value: +pushRate.toFixed(2) });
     st.lastCrowdT = 0;
   }
 }
@@ -685,6 +845,18 @@ function publishDebug(st: PushOfWarState): void {
     ceremonyMs: POST_GAME_TIME * 1000,
     vignette: st.vignetteEl ? +(parseFloat(st.vignetteEl.style.opacity || "0")).toFixed(3) : null,
     crateEmissive: +(((st.crate.material as THREE.MeshToonMaterial).emissiveIntensity) ?? 0).toFixed(3),
+    /* Escalation telemetry — lets a probe read what the visuals are doing. */
+    chargeLevel: +st.chargeLevel.toFixed(3),
+    leadingSide: st.leadingSide,
+    surgeFlash: st.surgeFlashT > 0 ? +(st.surgeFlashT).toFixed(3) : 0,
+    crateColor: (st.crate.material as THREE.MeshToonMaterial).color.getHexString(),
+    chargeRing: {
+      opacity: st.crateChargeRing ? +((st.crateChargeRing.material as THREE.MeshBasicMaterial).opacity ?? 0).toFixed(3) : null,
+      scale: st.crateChargeRing ? +st.crateChargeRing.scale.x.toFixed(2) : null,
+    },
+    crowd: st.crowdSilhouettes
+      ? { count: st.crowdSilhouettes.length, leadingSide: st.leadingSide ?? null }
+      : null,
   };
 }
 
@@ -758,7 +930,40 @@ const pushOfWar: Minigame = {
 
     /* Vignette overlay — darkens the arena for staging */
     const vignetteEl = makeVignette();
-    vignetteEl.style.opacity = String(VIGNETTE_DARKNESS * 0.4);
+    vignetteEl.style.opacity = String(VIGNETTE_BASE);
+
+    /* Surge flash overlay — full-screen white jolt on surge ignition */
+    const surgeFlashEl = makeSurgeFlash();
+
+    /* Crate charge ring — a growing halo at the crate's feet, unmistakable when
+     * the crate is charged / surging. Parented to root and synced to the crate's
+     * X so it follows the crate without coupling to its squash. */
+    const crateChargeRing = makeCrateChargeRing();
+    crateChargeRing.position.set(0, 0.05, 0);
+    root.add(crateChargeRing);
+
+    /* Crowd of procedural silhouettes along the arena boundary, each side-tagged
+     * so the visible crowd raises/brightens on the side currently winning and
+     * crouches/dims on the losing side. Positions are fixed (no rng). */
+    const crowdSilhouettes: { mesh: THREE.Sprite; side: Side }[] = [];
+    let crowdIdx = 0;
+    const placeCrowd = (x: number, z: number, side: Side): void => {
+      const s = makeCrowdSilhouette(side === "solo" ? hex(palette.candy) : hex(palette.bubble));
+      s.position.set(x, 0.08, z);
+      (s as any).userData = { phase: crowdIdx * 0.61 };
+      root.add(s);
+      crowdSilhouettes.push({ mesh: s, side });
+      crowdIdx++;
+    };
+    const span = (i: number, min: number, max: number) => min + (i / (CROWD_PER_EDGE - 1)) * (max - min);
+    for (let i = 0; i < CROWD_PER_EDGE; i++) {
+      const z = span(i, -2.8, 2.8);
+      placeCrowd(CROWD_X, z, "solo");   /* right goal wall = SOLO */
+      placeCrowd(-CROWD_X, z, "trio");  /* left goal wall = TRIO */
+      const x = span(i, -2.6, 2.6);
+      placeCrowd(x, CROWD_Z, x >= 0 ? "solo" : "trio");   /* back edge */
+      placeCrowd(x, -CROWD_Z, x >= 0 ? "solo" : "trio");  /* front edge */
+    }
 
     /* Re-mark the VS splash: highlight the SOLO player, not P0 */
     setTimeout(() => {
@@ -789,6 +994,8 @@ const pushOfWar: Minigame = {
       maxAbsCrate: 0, postGameT: 0, camPushDir: 1, lastIntensity: BASE_INTENSITY,
       recentPushes: 0, lastCrowdT: 0, audioLog: [],
       soloAuraRing, soloTAG: soloTag, vignetteEl,
+      crateChargeRing, crowdSilhouettes, surgeFlashEl,
+      surgeFlashT: 0, chargeLevel: 0, leadingSide: null,
     };
     round = st;
 
@@ -875,6 +1082,7 @@ const pushOfWar: Minigame = {
     });
     st.root.removeFromParent();
     if (st.vignetteEl?.parentElement) st.vignetteEl.parentElement.removeChild(st.vignetteEl);
+    if (st.surgeFlashEl?.parentElement) st.surgeFlashEl.parentElement.removeChild(st.surgeFlashEl);
     round = null;
     (window as unknown as { __POW__?: unknown }).__POW__ = undefined;
   },
