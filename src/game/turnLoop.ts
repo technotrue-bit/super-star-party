@@ -527,7 +527,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       // Lock the roll through the post-land pause so the autoplay hook can't
       // fire a phantom second roll (rng + bus determinism).
       S.rolling = true;
-      pause(0.5, () => {
+      pause(1.0, () => {
         S.rolling = false;
         if (!(window as any).__SSP_HOLD_DIE) { dice.hide(); startMoving([], "effect", total); }
       });

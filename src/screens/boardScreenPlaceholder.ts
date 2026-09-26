@@ -551,8 +551,12 @@ const boardScreenImpl: BoardScreenState & Screen = {
         const dist = dir.length();
         dir.normalize();
         this._punch = {
-          pos: this._cam.base.clone().add(dir.multiplyScalar(dist * 0.14)),
-          look: this._cam.look.clone().lerp(target, 0.35),
+          // Commit to the shot. The portrait frustum is only about +/-9 world units
+          // wide at board depth, so a 35%-of-the-way aim left left-side rolls hugging
+          // the frame edge (or outside it); aiming AT the target and pulling in harder
+          // frames the die centred and roughly twice as large.
+          pos: this._cam.base.clone().add(dir.multiplyScalar(dist * 0.30)),
+          look: target.clone(),
           t: 0,
         };
       },
@@ -798,15 +802,17 @@ const boardScreenImpl: BoardScreenState & Screen = {
         if (p.t < 0.45) {
           const q = p.t / 0.45;
           k = 1 - Math.pow(1 - q, 3); // ease-out in
-        } else if (p.t < 1.15) {
+        } else if (p.t < 1.55) {
+          // Hold the shot long enough to read the die's settled face: the die lands
+          // at the end of the roll suspense and used to lose the camera ~0.15s later.
           k = 1;
         } else {
-          const q = Math.min(1, (p.t - 1.15) / 0.45);
+          const q = Math.min(1, (p.t - 1.55) / 0.45);
           k = 1 - (1 - Math.pow(1 - q, 3)); // ease-out back
         }
         pos.lerpVectors(pos, p.pos, k);
         lk.lerpVectors(lk, p.look, k);
-        if (p.t > 1.6) this._punch = null;
+        if (p.t > 2.05) this._punch = null;
       }
 
       cam.position.copy(pos);
