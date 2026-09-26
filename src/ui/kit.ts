@@ -37,7 +37,7 @@ import { popup } from "./popup";
 import type { PopupOpts } from "./popup";
 import { coinCounter } from "./counter";
 import { confettiBurst } from "./confetti";
-import { hud } from "./hud";
+import { hud, setHudBannerSink } from "./hud";
 import { playerAvatar } from "./avatar";
 import { settingsPanel } from "./settings";
 import { sfx } from "./sound";
@@ -202,6 +202,7 @@ class BannerQueue {
   private bannerQueue: QueuedBanner[] = [];
   private toastQueue: QueuedToast[] = [];
   private activeBannerEl: HTMLDivElement | null = null;
+  private activeBannerPriority = -1;
   private activeBannerTimer = 0;
   private activeToastEl: HTMLDivElement | null = null;
   private activeToastTimer = 0;
@@ -366,6 +367,14 @@ class BannerQueue {
       }
     }
     this.bannerQueue.splice(insertIdx, 0, item);
+    // Preemption: a strictly higher-priority banner cuts off whatever is on screen
+    // instead of stacking beside it. Space events interrupt the turn banner; the
+    // turn banner never interrupts them.
+    const top = this.bannerQueue[0];
+    if (this.activeBannerEl && top && PRIORITY_RANK[top.priority] > this.activeBannerPriority) {
+      this.hideActiveBanner();
+      return;
+    }
     this.maybeShowNextBanner();
   }
 
@@ -411,6 +420,7 @@ class BannerQueue {
       if (item.handle.el.isConnected) item.handle.el.classList.add("ssp-fb-banner--show");
     });
     this.activeBannerEl = item.handle.el;
+    this.activeBannerPriority = PRIORITY_RANK[item.priority];
     this.activeBannerTimer = window.setTimeout(() => {
       this.hideActiveBanner();
     }, item.durationMs);
@@ -419,6 +429,7 @@ class BannerQueue {
   private hideActiveBanner(): void {
     const el = this.activeBannerEl;
     this.activeBannerEl = null;
+    this.activeBannerPriority = -1;
     this.activeBannerTimer = 0;
     if (!el) return;
     el.classList.remove("ssp-fb-banner--show");
@@ -465,6 +476,10 @@ class BannerQueue {
 }
 
 export const queue = new BannerQueue();
+
+/* ONE banner channel: the HUD's own showBanner() is routed through this queue,
+   so a space-event banner and the turn banner can never be on screen together. */
+setHudBannerSink((text, opts) => queue.banner(text, { durationMs: opts?.durationMs }))
 
 /* ------------------------------------------------------------------ */
 /*  Public ui                                                         */

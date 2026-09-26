@@ -368,6 +368,9 @@ const boardScreenImpl: BoardScreenState & Screen = {
     // ---- keyboard: Escape and P toggle the pause overlay ----
     this._onPauseKey = (e: KeyboardEvent) => {
       if (!this._pause) return;
+      // A modal owns the keyboard while it is up: closing the shop with Escape must
+      // not also pop the pause menu behind it.
+      if (document.querySelector(".ssp-shop") || document.querySelector(".ssp-popup")) return;
       if (e.key === "Escape" || e.key === "p" || e.key === "P") {
         e.preventDefault();
         if (this._pause.isOpen()) {

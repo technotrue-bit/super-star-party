@@ -9,6 +9,19 @@ import { injectStyles } from "./styles";
 import { root } from "./root";
 import { playerAvatar } from "./avatar";
 
+/**
+ * Single-banner-channel hook. When kit.ts wires this, every HUD banner is routed
+ * through the shared feedback queue so the board cannot show two banners at once
+ * (the turn banner and a space-event banner used to stack on top of each other).
+ */
+type BannerSink = (text: string, opts?: { durationMs?: number }) => { el: HTMLElement; destroy(): void };
+let bannerSink: BannerSink | null = null;
+
+/** Installed by kit.ts — routes showBanner() through the serialized queue. */
+export function setHudBannerSink(fn: BannerSink | null): void {
+  bannerSink = fn;
+}
+
 export interface HudPlayerState {
   id?: string | number;
   kind?: string;
@@ -169,6 +182,7 @@ export function hud(): HudHandle {
   }
 
   function showBanner(text: string, opts?: { durationMs?: number }) {
+    if (bannerSink) return bannerSink(text, opts);
     const b = document.createElement("div");
     b.className = "ssp-hud-banner";
     b.setAttribute("role", "status");

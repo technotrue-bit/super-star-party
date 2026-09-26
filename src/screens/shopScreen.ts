@@ -59,6 +59,19 @@ function injectShopStyles(): void {
 .ssp-shop__card--owned { position:relative; border-color:${palette.mint}; box-shadow:0 0 0 4px ${palette.mint}, 0 4px 0 ${palette.ink}; }
 .ssp-shop__owned-badge { position:absolute; top:-10px; right:-10px; background:${palette.mint}; color:${palette.ink}; border:2px solid ${palette.ink}; border-radius:999px; font-size:11px; font-weight:700; padding:3px 10px; line-height:1; box-shadow:0 2px 0 ${palette.ink}; text-shadow:0 1px 0 rgba(255,255,255,.5); }
 .ssp-btn.ssp-shop__buy--owned { background:linear-gradient(180deg, rgba(255,255,255,.5) 0%, rgba(255,255,255,0) 42%), linear-gradient(180deg, ${palette.mint} 0%, ${palette.mintDeep} 100%); color:${palette.ink}; }
+
+/* --- while the stall is open, the board chrome is NOT interactive ---
+   The shop is a modal: leaving ROLL!, the pause FAB and the player chips live
+   underneath let a player roll dice or open menus through the stall. Keyed off
+   the shop's own presence so nothing has to remember to toggle a class. */
+body:has(.ssp-shop) .ssp-roll-wrap,
+body:has(.ssp-shop) .ssp-pause-fab,
+body:has(.ssp-shop) .ssp-hud,
+body:has(.ssp-shop) .ssp-item-bar {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
 `;
   document.head.appendChild(style);
 }
