@@ -26,13 +26,15 @@ for (let i = 0; i < 60; i++) {
 }
 
 const found = await p.evaluate(() => {
+  // find the VIGNETTE specifically: fixed, full-inset, z-index 78 (a generic radial-gradient
+  // search matched a different element and measured the wrong thing entirely)
   const el = Array.from(document.querySelectorAll("div")).find((d) => {
-    const bg = getComputedStyle(d).backgroundImage || "";
-    return bg.includes("radial-gradient");
-  });
+    const cs = getComputedStyle(d);
+    return cs.position === "fixed" && cs.zIndex === "78" && (cs.backgroundImage || "").includes("gradient");
+  }) || Array.from(document.querySelectorAll("div")).find((d) => (getComputedStyle(d).backgroundImage || "").includes("radial-gradient"));
   if (!el) return null;
   window.__VIG__ = el;
-  return { opacity: getComputedStyle(el).opacity, tag: el.tagName, z: getComputedStyle(el).zIndex };
+  return { opacity: getComputedStyle(el).opacity, tag: el.tagName, z: getComputedStyle(el).zIndex, bg: (getComputedStyle(el).backgroundImage || "").slice(0, 90) };
 });
 console.log("vignette element:", JSON.stringify(found));
 

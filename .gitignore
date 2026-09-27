@@ -20,3 +20,5 @@ debug_page.png
 scratch/
 _test_*.cjs
 *vitebuild*.log
+tools/critic/_*
+tools/check-files.mjs

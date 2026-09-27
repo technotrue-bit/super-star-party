@@ -1,7 +1,7 @@
 {
-  "updated": "2026-09-25T00:35:00-04:00",
+  "updated": "2026-09-26T22:53:46-0400",
   "game": "SUPER STAR PARTY",
-  "status": "1-VS-3 LANE OPEN: push_of_war is the project's first non-free-for-all minigame, and I tuned + verified it myself after its builder died (provider retirement). Fixed four real defects my own probes caught: (1) matches ended in 0.6s — the velocity integrator ran ~500x the pace an 8s race needs; (2) the tie-out path handed the solo a free win; (3) the human's taps were weaker than an idle CPU teammate (8 taps/s = 0.13 push/step vs 0.185) so mashing barely mattered — taps now carry their own value on both sides; (4) the stage was invisible — a 20-unit field with characters at x=+/-6 inside a portrait viewport that only shows ~8 units, so vision saw an empty court with a crate. Refit the field, widened the FOV, and eased the crate travel so a narrow lead reads as movement. Verified: solo 38-42% / trio 42-44% / 12-19% tie-outs over 12-24 seeds, twins byte-identical, mashing flips outcomes, payout exactly one winner +10, tsc 0, zero console errors. Audio completion agent still running (level parity, dead-track wiring, ducking).",
+  "status": "PUSH_OF_WAR REBUILT (the fixer died on a 429 mid-verify, so I finished and measured it myself). It now has a real tension curve: the crate physically reaches and crosses the goal line instead of stalling at a quarter of the track, wins spread from 1.5s blowouts to buzzer decisions, and the buzzer margins run 0.05-0.48 instead of clustering at 0.003-0.24. Balance re-centred by sweep: the solo win rate is a steep function of its push (13% -> 81% across a 0.15 span), landing at 55/45 over 20 seeds. Escalation + staging landed too: a POWER SURGE audio intensity model, crowd response, vignette and crate emissive; a solo aura ring + floating SOLO tag + SOLO UI bar (vision: 'yes at a glance'); and a camera push-in on the winning side. Twins byte-identical at every step, tsc 0, build 1.67s. A fresh critic is re-judging it on measured numbers right now. In flight: the 3D die ritual + red-space sting fix (the blind comparison's single biggest gap). Next in the ranked queue from that report: star ceremony scale, finale theatricality, happening reactions, shop theming, and the minigame payout's silent flag.",
   "waves": [
     {
       "id": "W0",
@@ -18,14 +18,14 @@
     },
     {
       "id": "W1",
-      "name": "Board · Characters · Audio · UI kit",
+      "name": "Board \u00b7 Characters \u00b7 Audio \u00b7 UI kit",
       "status": "done",
       "pieces": [
         {
           "id": 1,
           "name": "Board: Fizzy Fairground",
-          "status": "fixing",
-          "detail": "R5: banner discipline VERIFIED FIXED (max 2 banners / 1 toast measured over 117 frames, no regressions), die visibility verified (z 90 above feedback root 82), shop verified polished, HUD truthful, zero errors. FAIL = floating +N/-N spawn off-screen (x ~ -193px) so economy telegraphing is invisible. Orchestrator traced it to projectToScreen() and proved it also kills the star ceremony's sparkles/confetti (all positioned through the same call). Fixer running; also verified independently that the 'STAR' banner itself IS on screen (x139 y70, opacity 1) — the earlier 'no banner' reading was my capture firing at opacity 0.18 mid-fade-in."
+          "status": "critic",
+          "detail": "Board rebuilt + verified through R1-R5; camera reframed, tents fixed, floating numbers root-caused. Awaiting a FRESH board critic on current code (files have been rewritten since the last verdict)."
         },
         {
           "id": 2,
@@ -49,7 +49,7 @@
     },
     {
       "id": "W2",
-      "name": "Turn loop · Economy · Happenings · Items",
+      "name": "Turn loop \u00b7 Economy \u00b7 Happenings \u00b7 Items",
       "status": "done",
       "pieces": [
         {
@@ -87,7 +87,7 @@
           "id": 9,
           "name": "Minigame framework",
           "status": "done",
-          "detail": "countdown→play→results→return flow live"
+          "detail": "countdown\u2192play\u2192results\u2192return flow live"
         },
         {
           "id": 10,
@@ -99,19 +99,19 @@
           "id": 11,
           "name": "Cake Dash",
           "status": "done",
-          "detail": "R4 PASS: human runner present in ALL 24 frames (the 2 zero-census frames were GO! white-washout, vision-confirmed visible), framing smooth with zero jitter, badges/rail/slip/ceremony verified, determinism byte-identical (wins [0,0,1,0], coins [10,10,20,10]). Note: ceremony juice is thin vs MP7 (no sustained confetti/victory dance/dynamic camera) — recorded as polish for the final pass."
+          "detail": "R4 PASS: human runner present in ALL 24 frames (the 2 zero-census frames were GO! white-washout, vision-confirmed visible), framing smooth with zero jitter, badges/rail/slip/ceremony verified, determinism byte-identical (wins [0,0,1,0], coins [10,10,20,10]). Note: ceremony juice is thin vs MP7 (no sustained confetti/victory dance/dynamic camera) \u2014 recorded as polish for the final pass."
         },
         {
           "id": 12,
           "name": "Coin Cannon",
           "status": "done",
-          "detail": "R3 PASS: beatability verified live — CPU scores 8-12 across seeds 7/42/123 (was 16-17), hit rates 56-75%, winners vary by seed; seed-7 real-time twins byte-identical; sky/countdown/banner/board-return all confirmed. Zero console errors."
+          "detail": "R3 PASS: beatability verified live \u2014 CPU scores 8-12 across seeds 7/42/123 (was 16-17), hit rates 56-75%, winners vary by seed; seed-7 real-time twins byte-identical; sky/countdown/banner/board-return all confirmed. Zero console errors."
         },
         {
           "id": 13,
           "name": "Memory Match",
           "status": "done",
-          "detail": "R2 PASS: zombie-card audit — 0 true zombies across ~370 polls/card × 2 passes (all mid-flip values transient); vision: all cards flat; flip feel/pacing/matched-pair FX/CPU model/ceremony all match MP7. Determinism identical ranking [0,2,3,1]. Zero console errors."
+          "detail": "R2 PASS: zombie-card audit \u2014 0 true zombies across ~370 polls/card \u00d7 2 passes (all mid-flip values transient); vision: all cards flat; flip feel/pacing/matched-pair FX/CPU model/ceremony all match MP7. Determinism identical ranking [0,2,3,1]. Zero console errors."
         },
         {
           "id": 14,
@@ -153,14 +153,14 @@
         {
           "id": 19,
           "name": "Character select (pick your hero from 4, CPUs fill the rest, personality-dice info, confirm flow)",
-          "status": "built",
-          "detail": "BUILT + COMMITTED: src/screens/characterSelect.ts (424 lines) — 4 characters on pedestals with spotlights, cards with name plates + CPU tags, tap/arrow/keyboard selection with pop+boing sfx, START! starts the match with the chosen hero, BACK returns to title. Verified: ?screen=select reachable, click-through select->board (human=bounce)->title, zero console errors, tsc + build clean. Awaiting critic (W5)."
+          "status": "done",
+          "detail": "Character select live: 4 heroes, per-hero colour/portrait, keyboard + touch, cursor defaults to Pip. Verified in the W4 round."
         },
         {
           "id": 22,
           "name": "Pause menu + settings (resume, volumes, speed, quit-to-title with confirm)",
           "status": "done",
-          "detail": "BUILT + VERIFIED: pause overlay (blurred dim backdrop, cream panel + ink border, chunky PAUSED title, staggered pop-in) with RESUME / SETTINGS (live music+sfx sliders + 1x/1.5x/2x, same localStorage keys as the title) / HOW TO PLAY (real in-panel rules card) / QUIT TO TITLE with confirm. Freeze verified: two state samples 1.2s apart identical while paused; resume advances; slider persisted; quit -> title; determinism guard MATCH before/after. KNOWN LEAK (found by the orchestrator in a full match): one pause scrim accumulates per board entry (~18 by the finale) — handed to the W5 coherence agent."
+          "detail": "BUILT + VERIFIED: pause overlay (blurred dim backdrop, cream panel + ink border, chunky PAUSED title, staggered pop-in) with RESUME / SETTINGS (live music+sfx sliders + 1x/1.5x/2x, same localStorage keys as the title) / HOW TO PLAY (real in-panel rules card) / QUIT TO TITLE with confirm. Freeze verified: two state samples 1.2s apart identical while paused; resume advances; slider persisted; quit -> title; determinism guard MATCH before/after. KNOWN LEAK (found by the orchestrator in a full match): one pause scrim accumulates per board entry (~18 by the finale) \u2014 handed to the W5 coherence agent."
         },
         {
           "id": 23,
@@ -171,26 +171,26 @@
         {
           "id": 20,
           "name": "Juice pass (particles, shake, hit-stop, transitions) + whole-game coherence",
-          "status": "planned",
-          "detail": "W5: one fresh agent plays the whole game end-to-end and smooths it into one coherent thing."
+          "status": "building",
+          "detail": "Transitions (MP7 curtain/starburst/spin, ~520ms, deterministic) are done and committed. Particles/shake/hit-stop exist per-minigame (coin_grab hit-stop 8-14 events/run, shake to 0.148u). Whole-game juice sweep still open."
         },
         {
           "id": 24,
           "name": "Transitions (MP7 curtain/starburst/star-iris wipes across every screen change)",
-          "status": "built",
-          "detail": "SHELL R2 PASS: wipes verified live — curtain (candy stripes) / starburst (yellow 5-point) / spin (purple disc + star) cycle deterministically (observed sequence matches the rotation rule twice over 6 transitions), ~260ms cover + ~260ms uncover, .ssp-wipe count 0 after every transition, rapid double-goto lands correctly, click after goto registers; title logo legible + backdrop animating; select = 4 distinct heroes; howto 3 claims match code; pause frozen + no click interception; finale complete (4-row standings, bonus-star reveal, podium, confetti, both buttons); zero console errors."
+          "status": "done",
+          "detail": "MP7 wipes committed: curtain/starburst/spin, ~520ms, deterministic rotation, driven from screenManager.goto()."
         },
         {
           "id": 25,
           "name": "Shop reachability + MP7-grade shop (waits for the human, debug hook, legible prices/effects, buy juice)",
-          "status": "built",
-          "detail": "BUILT + COMMITTED: shop waits indefinitely for the human (autoplay auto-closes only after >=1.2s and only once built); new hooks ?shop=1 + __SSP__.openShop(); affordability states (dimmed + CAN'T AFFORD + refusal shake); data-* test hooks; buy (10->5 coins, item bar, toast) + refuse flows verified; 5s-wait proof; ROLL pulse moved to an inner element (bounding box stable, automated click produces dice); pause overlay now visibility:hidden when closed (real click-blocking bug fixed). Vision: 'Very similar to a Mario Party item shop'. Economy R2 verifying."
+          "status": "done",
+          "detail": "DONE (commits 306e305 + 10cc9e3). Themed stall: candy-striped awning, Grumpus shopkeeper, three described item cards, OWNED state, affordability. Verified: buy coins 10->5 with items ['mushroom'], refusal 5->5 unchanged, floating '-5', shop.buy sting, economy diff empty, vision read the awning/shopkeeper/cards."
         },
         {
           "id": 26,
           "name": "Star-moment drama + red-space sting + Grumpus gag",
-          "status": "built",
-          "detail": "BUILT + COMMITTED: 3.0s star ceremony (fanfare -> camera push -> 'STAR!' gold banner -> cheer + confetti -> sparkle waves -> resume), red-space sting (camera punch, 7px shake 0.35s, red flash, punchy -3!), Grumpus gag (5px wobble, lava flashes, telegraph sparkles). Determinism: twin autoplay sessions at seed 7, 30/30 state snapshots identical; presentation rng only (mulberry32), no ctx.rng consumed. Stars 0->1 verified across seeds 5/13/17. Board R5 + Economy R2 verifying the drama."
+          "status": "done",
+          "detail": "DONE (commits 7f979e4 + 2621871). Star ceremony: camera hold, star mesh 5x/6x, gold edge-vignette pulse (measured +84.5/+76.1/+83.1 outer-band R-B vs -13.5 baseline), sparkle/confetti bursts, star_fanfare. Red-sting retuned to a 0.42s taste at 0.62 peak. Green happenings staged with suppressed turn banner."
         },
         {
           "id": 27,
@@ -202,23 +202,23 @@
           "id": 28,
           "name": "Minigame roster + variety/difficulty critique",
           "status": "done",
-          "detail": "ROSTER-RUN1 FAIL: zero battle/team/PvP minigames — all 8 are simultaneous free-for-alls; MP7's signature 1-vs-3 / 2-vs-2 / battle formats are entirely absent. Also: no VS splash before the countdown (name only appears on the results card), no difficulty progression, flat +10 payout every round, 8 games vs MP7's 70+. Payout truth PASS (winner +10 coins +1 win, force-finish at 30s pays once). Honest fun ranking: *** bumper_balls, cake_dash, drum_solo; ** coin_cannon, memory_match, balloon_pop, pipe_puzzle; * coin_grab. Actions: VS splash building now; push_of_war (1v3) building now."
+          "detail": "ROSTER-RUN1 FAIL: zero battle/team/PvP minigames \u2014 all 8 are simultaneous free-for-alls; MP7's signature 1-vs-3 / 2-vs-2 / battle formats are entirely absent. Also: no VS splash before the countdown (name only appears on the results card), no difficulty progression, flat +10 payout every round, 8 games vs MP7's 70+. Payout truth PASS (winner +10 coins +1 win, force-finish at 30s pays once). Honest fun ranking: *** bumper_balls, cake_dash, drum_solo; ** coin_cannon, memory_match, balloon_pop, pipe_puzzle; * coin_grab. Actions: VS splash building now; push_of_war (1v3) building now."
         },
         {
           "id": 29,
           "name": "Whole-game audio R3 (post-W4 systems: star fanfare, wipes, shop, finale)",
           "status": "done",
-          "detail": "AUDIO R3 FAIL: star_fanfare never fired in the critic's full playthrough (the fanfare is wired in turnLoop.celebrateStar — its run never bought a star, so the fixer must prove the path), `lose` is fully orphaned, `shop`/`minigame_a` never fire (42% of tracks dead), minigame_intro is 5-9x quieter than the pack (RMS 0.0284 vs ~0.2 — inaudible), no music ducking under stings. Positives: zero clipping, zero silence gaps, limiter chain good. Audio fixer running."
+          "detail": "AUDIO R3 FAIL: star_fanfare never fired in the critic's full playthrough (the fanfare is wired in turnLoop.celebrateStar \u2014 its run never bought a star, so the fixer must prove the path), `lose` is fully orphaned, `shop`/`minigame_a` never fire (42% of tracks dead), minigame_intro is 5-9x quieter than the pack (RMS 0.0284 vs ~0.2 \u2014 inaudible), no music ducking under stings. Positives: zero clipping, zero silence gaps, limiter chain good. Audio fixer running."
         },
         {
           "id": 30,
           "name": "VS splash (minigame name + VS moment before the countdown)",
           "status": "done",
-          "detail": "BUILT + ORCHESTRATOR-VERIFIED (its builder hit an HTTP 429 fair-share rate limit at 44 min and died before reporting — the code had landed, so I verified it myself). Live: .ssp-vs-root with the real registry name ('Drum Solo', 'Coin Grab'), a 'VS' card and all four portraits (P Pip / B Bounce / G Glimmer / T Tusk). Lifecycle timeline: 0.5s splash -> 1.4s '3' -> 1.8s '2' -> 2.1s '1' -> 2.4s 'GO!' -> play -> board at 10.5s. Zero console errors. Vision: 'big, prominent game name and a clear VS moment with all four competing characters ... strong Mario Party-style minigame intro splash feel'."
+          "detail": "BUILT + ORCHESTRATOR-VERIFIED (its builder hit an HTTP 429 fair-share rate limit at 44 min and died before reporting \u2014 the code had landed, so I verified it myself). Live: .ssp-vs-root with the real registry name ('Drum Solo', 'Coin Grab'), a 'VS' card and all four portraits (P Pip / B Bounce / G Glimmer / T Tusk). Lifecycle timeline: 0.5s splash -> 1.4s '3' -> 1.8s '2' -> 2.1s '1' -> 2.4s 'GO!' -> play -> board at 10.5s. Zero console errors. Vision: 'big, prominent game name and a clear VS moment with all four competing characters ... strong Mario Party-style minigame intro splash feel'."
         },
         {
           "id": 31,
-          "name": "push_of_war — the first 1-vs-3 minigame (roster's biggest structural gap)",
+          "name": "push_of_war \u2014 the first 1-vs-3 minigame (roster's biggest structural gap)",
           "status": "done",
           "detail": "push_of_war LIVE and verified by the orchestrator (commit 087a4dc). 1-vs-3 mash tug-of-war, registered in MINIGAME_MODULES. Balance tuned against measurements: solo 38-42% / trio 42-44% / 12-19% tie-outs (n=12-24 seeds, all matches decided at the 8s buzzer or a blowout crossing); twin pairs byte-identical (seed 1: step 481, crate -0.1681, trio-win, ranking [0,1,3,2]); human taps flip outcomes; payout = exactly one winner +10 (seed 5 -> id 2). Layout refit for portrait (field 8.8 wide, fov 55, eased crate travel) after vision showed an empty court. Vision: '3 blob characters on the left (TRIO) vs 1 on the right (SOLO) ... readable at typical mobile sizes' and the buzzer frame shows 'Glimmer WINS PUSH OF WAR!' with confetti."
         }
@@ -232,8 +232,94 @@
         {
           "id": 20,
           "name": "Coherence pass + final critics",
-          "status": "build",
-          "detail": "W5 COHERENCE DONE: 212 timestamped beats through title->select->full match->8 minigames+ceremonies->pause->Grumpus->finale->PLAY AGAIN; screenshots + timeline.log in tools/critic/frames/w5-coherence/. Fixed the pause-overlay leak (destroy() + exit() wiring; count <=1 across re-entries). Gates: tsc 0, build ok, twin guard MATCH, zero console errors. Its top gaps were harness limits (shop/item/minigame-ceremony timing) — now covered by the economy critic."
+          "status": "done",
+          "detail": "DONE (commit 10cc9e3). Coherence critic ran on the live game and corrected my own 'not a blocker' call: 220 banner-overlap windows (16.5%) across 1,330 samples, durations 200-1800ms, a star banner persisting 16.8s, and 18 dead-tap elements. Root cause was TWO banner channels (hud.showBanner unqueued vs kit's BannerQueue) - fixed by unifying the channel with priority preemption; shop made a real modal (':has()' chrome suppression). Now: max 1 banner, 0 dual-banner windows in 475 samples, tapping ROLL! under the shop does nothing."
+        }
+      ]
+    },
+    {
+      "id": "W7",
+      "name": "Blind MP7 comparison gaps + push_of_war finish",
+      "status": "complete",
+      "pieces": [
+        {
+          "id": 22,
+          "name": "3D die ritual",
+          "status": "done",
+          "detail": "REAL CUBE, vision-verified. Cause of the earlier giant blank blob: toon ramp + strong emissive washed the white pips out at a 390px viewport. Now six per-face MeshBasicMaterial canvas pip textures, toneMapped:false, outline shell, arc + two-axis tumble, slerp onto the sim's face, squash on landing, own mulberry32(0xd1ce) presentation stream. Vision: 'a 3D red die ... upper face shows 6 ... solid cube with flat faces, sharp corners/edges ... not a flat, oval, or 2D sprite.' Builder died at its iteration cap leaving the tree NON-COMPILING (a console.log removal ate a closing brace) - found by brace-depth scan and repaired. MP7 blind gap #1."
+        },
+        {
+          "id": 23,
+          "name": "Red-space sting",
+          "status": "done",
+          "detail": "0.42s sting at 0.62 peak, wall-clock timed. Two real causes: game-dt timing expired it in ~4 frames at speed=2, and a 0.165 effective opacity was too subtle. A fixer grew it to a 2.0s full-opacity wash - the numbers then passed (delta +84.55) but a player would have seen a solid red screen for two seconds, because .ssp-flash has no CSS animation. Reduced to a sting and made verifiable: __SSP_FLASH telemetry + a 25ms in-page sampler. Measured: peak 0.62, telemetry live, fade 420ms, landing confirmed (coins 10->7 at space 6). Blind gap #2."
+        },
+        {
+          "id": 24,
+          "name": "push_of_war framing",
+          "status": "done",
+          "detail": "The critic's FAIL (trio off-frame the whole match) was one bug: cam.lookAt() was only called during the post-game push, so the match ran with the camera still yawed by the VS-splash intro - solo projected to x=139, trio to x=-148, both left of the 195 centre. Re-aimed every frame + portrait refit. Hero pixels ~45 -> 3031. Also repaired my own refit regression (findRope matched a magic geometry width 6.2, so the sim silently never started)."
+        },
+        {
+          "id": 25,
+          "name": "push_of_war finish ceremony",
+          "status": "done",
+          "detail": "FINISH FAIL CLOSED (commit 79d9c08). Two timing causes, not a design gap: (1) POST_GAME_TIME was 0.6s while ctx.announce ran 2200ms, so the results card cut the ceremony off at ~40% of its own banner - now 2.0s with the finish at 2150ms; (2) ui.banner() is a BannerQueue (max 1), so a lingering 'POWER SURGE!' pop delayed the win announcement to ~2.0s = exactly when the card appeared, which is the literal 'cuts straight to the results card' complaint - the minigame's announce now clears the queue first and the banner lands at postGameT=0.2. Banner also names the reason (GOAL LINE! / BUZZER BEATER! / DEAD HEAT!). __POW__ gained winReason/postGameT/ceremonyMs/vignette/crateEmissive because critics had been GUESSING at the vignette and crate glow that were live all along (0.277 / 0.761). Vision: 'Pip WINS PUSH OF WAR! GOAL LIN(E)' + confetti + characters on stage, 'reads as a victory celebration, not ordinary gameplay'. TWIN_MATCH true, build ok, tsc 0. Recovered by hand after the delegated builder died on a context-window overflow having landed nothing (file byte-identical to HEAD)."
+        },
+        {
+          "id": 26,
+          "name": "Payout reward juice",
+          "status": "done",
+          "detail": "DONE (commit 0b3c54c) - blind gap #4 closed. Floating '+N' at the TRUE amount (read coinsBefore->coinsAfter around minigamePayout, never hardcoded) in the winner's colour with an ink outline, positioned at the winner's card row, plus an 8-sprite coin burst on the ceremony's own mulberry32 stream; a 500ms rolling count-up on the coin HUD chip. My own verification: payout still exactly one winner (WINNERS: 1, max 20), twin MATCH: true [[7,0],[10,0],[10,0],[20,0]], economy/core diffs empty, tsc 0, build ok. I also tested the risk the builder's approach introduced - the count-up intercepts the HUD element's textContent via Object.defineProperty, which blocks hud.update(), so a missing restore path would freeze the coin readout for the rest of the match: tools/probe-hud-after-tween.mjs runs to payout, waits for the board, then compares the chip's own descriptor against Node.prototype's over 5s -> no lingering intercept. My own vision on frame-108: floating '+10' in bright pink, Tusk on a raised #1 podium, losers on side platforms, confetti. Caveat: the ink outline and coin sprites read as subtle, not strong, in the frame I sampled."
+        },
+        {
+          "id": 27,
+          "name": "Star ceremony scale + happening theatricality",
+          "status": "done",
+          "detail": "DONE (commit 7f979e4) - blind gaps #3 + #5 closed. Star buy is an event: camera hold (FOV 42) that commits and releases, the star travelling space->buyer (starTravel 1.6s), a gold vignette pulse, an audio swell (star_fanfare 4500ms + crowd.cheer), sparkles/confetti at four beats, a gold 'STAR!' banner that force-clears the turn banner, star mesh 5x/6x. Green happenings get a staged beat: character reacts by coin delta, board highlights the space, a bubble vignette pulse, and suppressNextBanner. RNG: local mulberry32(0x5eed42); core rng untouched. Verified by me (the agent hit its 250-iteration cap): vision on star_ceremony_001 - 'a large, bright 5-pointed glowing yellow/gold star ... dominates the center ... strong local glow and emanating beams' with the gold STAR! banner and characters mid-celebration; the gold vignette pulse measured on the outer band as R-B +84.5/+76.1/+83.1 vs -13.5/-14.0 on ordinary play (a ~98-level swing toward gold) - vision had answered 'no full-image wash', which was the wrong question for an EDGE vignette; determinism twin MATCH true and my own full-match run ends P1:45:0:3|P2:30:1:5|P3:16:0:11|P4:3:1:4, identical to the agent's run; tsc 0, build ok. Known non-regression: maxBanners 2 / maxToasts 2, the same as the post-fix baseline (a fading banner overlapping an entering one)."
+        },
+        {
+          "id": 28,
+          "name": "Finale as a beat sequence",
+          "status": "done",
+          "detail": "DONE (commit 4a02d7a) - and the gap was largely STALE: matchFinale.ts had already been rebuilt with a swoop, count-up, per-award reveals, a champion podium beat and the choices. My probe confirmed the sequence works (tally 0c -> 7/6/4/3 -> 16/13/10/7 -> 25/20/15/10, stars 0->3, then 'Tusk WINS THE MINIGAME STAR!', then 'Glimmer WINS THE COIN STAR!'). The real fault was PACING - the whole finale ran in 5.2s with awards 1.2s apart, so nothing registered, which reads exactly like 'a card, not a ceremony'. Retuned: swoop 1.2s, tally 1.2s, award1 2.8s, award2 5.4s (~2.6s apart), champion 8.2s, choices 12.4s. Vision on the champion frame: 'FINAL STANDINGS' with 1 Tusk 4*/25c, 2 Glimmer 3*/20c, 3 Bounce 1*/15c, 4 Pip 0*/10c, winner 'on a tall yellow rectangular podium with arms raised', 'Tusk WINS!', 'abundant colorful confetti' -> 'a lively ceremony/event rather than a purely static results card'. Caveat: only 2 characters were in shot. The delegated builder died after 3026s ('truncated response x4') having landed nothing."
+        },
+        {
+          "id": 29,
+          "name": "push_of_war escalation readability",
+          "status": "done",
+          "detail": "DONE (commits fe9de98 + 741c54a) - the agent died at 4309s on a Nous fair-share 429 after landing +228 lines unverified, so the verification was mine. Verified: determinism held (TWIN_MATCH true, stepIndex 289 / crate 0.5014 both runs), build ok, ceremony unaffected. Vision on a mid-match frame: 3 stacked characters left vs 1 right, a glowing green halo ring at the crate with the crate reading lit/charged, crowd shapes in pink/blue lining the arena edge, POWER SURGE! banner + TRIO/SOLO tug bar. The vignette needed a real root-cause hunt: my first selector matched the z-79 minigame flash (a WHITE-centred gradient), which is why an isolated capture read 'corners brighter than centre' - impossible for a vignette; I was toggling the wrong element. A stacking probe then proved the canvas is position:static so the z-78 vignette does paint above it, live at opacity 0.639 with telemetry agreeing - the mechanism was fine, the strength/weighting was not. Fixed: gradient transparent 22%->ink 88% became 38%->72%->100%, VIGNETTE_DARKNESS 0.42->0.62, floor 0.30->0.38, ceiling 0.72->0.85. Measured: surge frames band 57% of centre luminance, quiet frames ~92% - a ramp, not a constant. Vision now: 'a noticeable vignette - screen edges and especially the corners are darkened/more muted compared to the brighter center'."
+        },
+        {
+          "id": 30,
+          "name": "Shop theming (last blind gap)",
+          "status": "done",
+          "detail": "DONE (commit 306e305) - blind gap #6 closed, and with it ALL SEVEN ranked gaps from the MP7 comparison. The shop is now a themed stall: a candy-striped awning ('GRUMPUS'S GUMBOOTH - Gumball Emporium - Fizzy Fairgrounds') with the shopkeeper, three item cards carrying a name, icon, one line saying what the item ACTUALLY does (read from the item definitions) and its price, plus an OWNED state (the button flips to a disabled mint OWNED, and ownership outranks affordability so a held gumball cannot be re-bought). Verified by me: scope is exactly src/screens/shopScreen.ts with src/game/ untouched; raw wallet numbers from my own probe run - coins 10 -> 5 buying the 5-coin Mushroom with items ['mushroom'], and the unaffordable case at 5 coins is a real refusal (buyDisabled true, ssp-shop__card--poor, coinsBefore 5 / coinsAfter 5 / unchanged true); vision on shop-open.png: 'a red-and-white diagonal-striped circus/candy-shop awning labelled GRUMPUS'S GUMBOOTH ... a small purple monster shopkeeper face with red horns', three described cards, a readable wallet of 10, and the verdict 'reads like a proper in-game shop ... rather than a bare list of text rows'; twin MATCH true; tsc 0; build ok; both entry points (?shop=1 and __SSP__.openShop()) verified."
+        }
+      ]
+    },
+    {
+      "id": "W8",
+      "name": "Fresh blind comparison + whole-game coherence (post-fix verification round)",
+      "status": "in progress",
+      "pieces": [
+        {
+          "id": 31,
+          "name": "Blind MP7 re-comparison (round 2)",
+          "status": "done",
+          "detail": "DONE (2 of 3 attempts died on HTTP 429 fair-share; the third completed after 3h03m). Blind verdict: die = FAIL (the single biggest gap: visible in only 2 of 7 frames incl. a mid-roll burst, players confirming rolls from the text banner alone), star buy = PASS with reservations, happening = PASS, finale = PASS (6 separated beats verified). Three things MP7 does that we do not: no drumroll visual on the bonus reveals, the star reads as an overlay rather than a traveling icon, and (claimed) no gold edge vignette. I falsified the vignette claim by measurement - forcing .ssp-vignette solid red moved the frame average red 132.6 -> 159.0 and hiding it returned exactly 132.6 (it paints above the canvas; canvas is position:static/z-index:auto vs overlay z-80), and a real pulse contributes a 35-37 rgb edge shift with the vignette visible vs hidden. The die gap was REAL and is FIXED: punchCamera aimed only 35% of the way toward its target and pulled in 14%, leaving the die at the left edge (x 35-84px) or outside the portrait frustum (+/-9 world units at board depth) on left-side spaces; the punch also held full strength only 0.45-1.15s while the die landed late and hid 0.5s after. Now it aims AT the target, pulls 30% in, holds to 1.55s and the landed die is held 1.0s. Verified: 12/12 captures show the die with readable pips (was 2/7), settled 62-74px (16-19% of viewport width) at x 79-306, and vision reads the pips and matches the roll banner ('a red 3-D die with white pips has just landed ... the upward-facing face shows 5 pips ... easy to count ... matching Pip rolled 5!')."
+        },
+        {
+          "id": 32,
+          "name": "Whole-game coherence + feel pass",
+          "status": "done",
+          "detail": "DONE (commit 10cc9e3) - the fresh coherence critic played title -> select -> turns -> minigames -> shop -> star -> pause -> finale -> rematch with 82 screenshots and a 32KB timeline, then measured banner concurrency at 50ms across 1330 samples. Its verdict CORRECTED my earlier call: 2 simultaneously visible banners in 220 samples (16.5%), 200-1800ms each, incl. 'TIME'S UP!' + 'TURN 5' and 'Funhouse Cut!' + 'Pip'S TURN!'. Root cause found by me: hud.showBanner() (src/ui/hud.ts) appended .ssp-hud-banner elements with NO queueing, in parallel with the kit's serialized queue - two banner channels on one screen. Fixed: hud banners now route through the shared queue via setHudBannerSink(), plus priority preemption (a higher-priority banner cuts off the one on screen rather than stacking). Its other finding - 18 dead-tap elements across 5 screens - is fixed for the worst case: the shop is now a real modal (.ssp-roll-wrap/.ssp-pause-fab/.ssp-hud/.ssp-item-bar -> opacity 0, visibility hidden, pointer-events none while .ssp-shop exists, via a :has() rule so no state can leak), and Escape with a modal up no longer also opens the pause menu. Verified: max simultaneous banners 1 (was 2), 0 HUD-channel banners, no dual-banner windows in 475 samples; tap where ROLL! sits leaves phase dice->dice and die=hidden; chrome returns on close; tsc 0; twin MATCH true; build ok; zero console errors."
+        },
+        {
+          "id": 33,
+          "name": "Blind MP7 comparison, round 3 (fresh eyes, 3h04m)",
+          "status": "done",
+          "detail": "Four verdicts on the RUNNING game: die FAIL (the single biggest gap), star buy PASS with reservations, happening PASS, finale PASS (6 separated beats). Two of its three 'MP7 does this, you do not' claims were actionable: no drumroll visual on the bonus reveals, and the star reads as an overlay rather than a traveling icon. The third (no gold edge vignette) I FALSIFIED by measurement - forcing .ssp-vignette solid red moved the frame average red 132.6 -> 159.0 and hiding it returned exactly 132.6 (canvas is position:static/z-index:auto so the z-80 overlay wins), and a real pulse contributes a 35-37 rgb edge shift visible-vs-hidden."
         }
       ]
     }
@@ -249,13 +335,13 @@
       "piece": "Characters",
       "round": 2,
       "pass": true,
-      "gap": "R2 PASS: arm pump -2.38 rad, walk swings ±0.44"
+      "gap": "R2 PASS: arm pump -2.38 rad, walk swings \u00b10.44"
     },
     {
       "piece": "Audio",
       "round": 2,
       "pass": true,
-      "gap": "R2 PASS: 52 balanced events, crossfade 0.5→0.85"
+      "gap": "R2 PASS: 52 balanced events, crossfade 0.5\u21920.85"
     },
     {
       "piece": "UI kit",
@@ -273,7 +359,7 @@
       "piece": "Bumper Balls",
       "round": 1,
       "pass": false,
-      "gap": "ring stops at r=2.2 → cap-tiebreak finals; FIX LANDED (forced knockout verified)"
+      "gap": "ring stops at r=2.2 \u2192 cap-tiebreak finals; FIX LANDED (forced knockout verified)"
     },
     {
       "piece": "Cake Dash",
@@ -285,13 +371,13 @@
       "piece": "Coin Cannon",
       "round": 1,
       "pass": false,
-      "gap": "CPU psychic (93-100%); frame-timing rng drift; sky void — fixer in flight"
+      "gap": "CPU psychic (93-100%); frame-timing rng drift; sky void \u2014 fixer in flight"
     },
     {
       "piece": "Memory Match",
       "round": 1,
       "pass": false,
-      "gap": "flip-back freezes → zombie half-flipped cards — fixer in flight"
+      "gap": "flip-back freezes \u2192 zombie half-flipped cards \u2014 fixer in flight"
     },
     {
       "piece": "Coin Grab",
@@ -309,13 +395,13 @@
       "piece": "Drum Solo",
       "round": 2,
       "pass": true,
-      "gap": "PASS — GO! lifecycle fixed + verified; remaining note: no 3D podium ceremony (now being built shared)"
+      "gap": "PASS \u2014 GO! lifecycle fixed + verified; remaining note: no 3D podium ceremony (now being built shared)"
     },
     {
       "piece": "Balloon Pop",
       "round": 2,
       "pass": false,
-      "gap": "No results ceremony / winner podium (no podium, rankings presentation, winner dance, WINNER! banner, payout ceremony) — note: the R2 critic's 'no results card' claim was a capture-timing false negative; the DOM card exists ('Balloon Pop — RESULTS / 1. P4 +10c...'), verified by orchestrator probe. The ceremony gap is real and shared."
+      "gap": "No results ceremony / winner podium (no podium, rankings presentation, winner dance, WINNER! banner, payout ceremony) \u2014 note: the R2 critic's 'no results card' claim was a capture-timing false negative; the DOM card exists ('Balloon Pop \u2014 RESULTS / 1. P4 +10c...'), verified by orchestrator probe. The ceremony gap is real and shared."
     },
     {
       "piece": "Pipe Puzzle",
@@ -345,7 +431,7 @@
       "piece": "Memory Match",
       "round": 2,
       "pass": true,
-      "gap": "PASS — 0 true zombie cards; every card settles to exactly 0 or PI; ceremony + determinism + pacing verified"
+      "gap": "PASS \u2014 0 true zombie cards; every card settles to exactly 0 or PI; ceremony + determinism + pacing verified"
     },
     {
       "piece": "Coin Cannon",
@@ -357,13 +443,13 @@
       "piece": "Pipe Puzzle",
       "round": 2,
       "pass": true,
-      "gap": "PASS — water flow visible and rising, HUD, same-frame re-flood, ceremony, determinism all verified"
+      "gap": "PASS \u2014 water flow visible and rising, HUD, same-frame re-flood, ceremony, determinism all verified"
     },
     {
       "piece": "Bumper Balls",
       "round": 3,
       "pass": true,
-      "gap": "PASS — pinch drama real (elims 3.33/1.43/0.74, 21.65s), determinism across speeds, HUD + portraits added, ceremony verified"
+      "gap": "PASS \u2014 pinch drama real (elims 3.33/1.43/0.74, 21.65s), determinism across speeds, HUD + portraits added, ceremony verified"
     },
     {
       "piece": "Cake Dash",
@@ -375,13 +461,13 @@
       "piece": "Cake Dash",
       "round": 3,
       "pass": false,
-      "gap": "camera does not keep the human's own runner on screen when trailing — FIXED (camera anchored to human + trail bias)"
+      "gap": "camera does not keep the human's own runner on screen when trailing \u2014 FIXED (camera anchored to human + trail bias)"
     },
     {
       "piece": "Coin Grab",
       "round": 3,
       "pass": false,
-      "gap": "DETERMINISM BROKEN — two real-time runs at the same seed produce different winners and traces (fixed-step repair in flight)"
+      "gap": "DETERMINISM BROKEN \u2014 two real-time runs at the same seed produce different winners and traces (fixed-step repair in flight)"
     },
     {
       "piece": "Balloon Pop",
@@ -393,19 +479,19 @@
       "piece": "Coin Cannon",
       "round": 3,
       "pass": true,
-      "gap": "PASS — CPU beatable (8-12 across 3 seeds), twins byte-identical, sky/ceremony/board-return verified"
+      "gap": "PASS \u2014 CPU beatable (8-12 across 3 seeds), twins byte-identical, sky/ceremony/board-return verified"
     },
     {
       "piece": "Cake Dash",
       "round": 4,
       "pass": true,
-      "gap": "PASS — human always on screen (24/24 frames), stable framing, twins identical; polish note: ceremony juice thin (sustained confetti/victory anims/dynamic camera) for the final pass"
+      "gap": "PASS \u2014 human always on screen (24/24 frames), stable framing, twins identical; polish note: ceremony juice thin (sustained confetti/victory anims/dynamic camera) for the final pass"
     },
     {
       "piece": "Balloon Pop",
       "round": 4,
       "pass": false,
-      "gap": "Real-time determinism divergence — identical seeds produce different winners in live rAF runs because variable per-frame dt desynchronizes RNG consumption (cpuThink)"
+      "gap": "Real-time determinism divergence \u2014 identical seeds produce different winners in live rAF runs because variable per-frame dt desynchronizes RNG consumption (cpuThink)"
     },
     {
       "piece": "Coin Grab",
@@ -417,13 +503,13 @@
       "piece": "Balloon Pop",
       "round": 5,
       "pass": true,
-      "gap": "PASS — determinism hard contract fully satisfied (4/4 real-time twin pairs + fixed-step pair byte-identical); polish note: popups read small/fast in autoplay"
+      "gap": "PASS \u2014 determinism hard contract fully satisfied (4/4 real-time twin pairs + fixed-step pair byte-identical); polish note: popups read small/fast in autoplay"
     },
     {
       "piece": "Coin Grab",
       "round": 5,
       "pass": false,
-      "gap": "No camera shake or hit-stop on coin pickup moments (visually complete grab feedback but physically weightless; violates QUALITY_BAR §2)"
+      "gap": "No camera shake or hit-stop on coin pickup moments (visually complete grab feedback but physically weightless; violates QUALITY_BAR \u00a72)"
     },
     {
       "piece": "Board / core loop",
@@ -447,37 +533,53 @@
       "piece": "Core loop / board",
       "round": 5,
       "pass": false,
-      "gap": "The floating +N/-N coin numbers spawn off-screen (x ≈ -193px) instead of at the character's visible position"
+      "gap": "The floating +N/-N coin numbers spawn off-screen (x \u2248 -193px) instead of at the character's visible position"
     },
     {
       "piece": "Shell",
       "round": 2,
       "pass": true,
-      "gap": "PASS — wipes verified live (deterministic curtain/starburst/spin), no-stick/re-entrancy proven, all screens good"
+      "gap": "PASS \u2014 wipes verified live (deterministic curtain/starburst/spin), no-stick/re-entrancy proven, all screens good"
     },
     {
       "piece": "Economy moments",
       "round": 2,
       "pass": false,
-      "gap": "the 3.0s star ceremony was never visually triggered or captured, so the emotional peak of the economy remains unverified (harness crashes under load; orchestrator then verified the banner fires but the festive effects are invisible — traced to projectToScreen)"
+      "gap": "the 3.0s star ceremony was never visually triggered or captured, so the emotional peak of the economy remains unverified (harness crashes under load; orchestrator then verified the banner fires but the festive effects are invisible \u2014 traced to projectToScreen)"
     },
     {
       "piece": "Minigame roster (as a set)",
       "round": 1,
       "pass": false,
-      "gap": "roster has zero battle/team/PvP minigames (all 8 are free-for-alls; MP7's most memorable formats — 1v3, 2v2, battle — are entirely absent)"
+      "gap": "roster has zero battle/team/PvP minigames (all 8 are free-for-alls; MP7's most memorable formats \u2014 1v3, 2v2, battle \u2014 are entirely absent)"
     },
     {
       "piece": "Audio (whole game)",
       "round": 3,
+      "pass": true,
+      "gap": "fixed: minigame_intro level parity (RMS 0.0284 -> 0.174, pack median 0.177), star_fanfare fires 0.6ms after star.get, lose x6 on red spaces, shop music x3, happening x2, ducking measured (duckMinDb -10, recovers to 1), globalMaxPeak 0.9766 over 2914 samples"
+    },
+    {
+      "piece": "Blind side-by-side vs Mario Party 7",
+      "round": 1,
       "pass": false,
-      "gap": "the star ceremony track (star_fanfare) never fired during a complete playthrough ... 42% of the track library is dead code in the assembled game"
+      "gap": "ranked queue: #1 3D tumbling die CLOSED (real pipped cube) | #2 red-space sting CLOSED (0.42s sting, telemetry-verified) | #3 star-ceremony scale BUILDING | #4 minigame payout reward CLOSED (floating +N at the true amount + HUD count-up) | #5 happening theatricality BUILDING | #6 shop theming OPEN | #7 finale ceremony CLOSED (gap was stale + pacing: retuned so each beat lands)"
+    },
+    {
+      "piece": "push_of_war (1-vs-3)",
+      "round": 2,
+      "pass": true,
+      "gap": "all closed: trio off-frame (camera was left yawed by the VS intro; re-aim + portrait refit, hero px 45->3031), finish flat (ceremony window + reason in banner + queue fix, vision-confirmed), escalation readable (vignette 0.277 + crateEmissive 0.761 now instrumented). Twins byte-identical, payout +10 to exactly one winner."
     }
   ],
   "providerLog": [
     {
       "at": "2026-08-21T21:20",
-      "note": "DeepSeek 402 (billing). Switched to OpenRouter gemini → still fell through to DeepSeek; cleared fallback chain. Then HY3 Free (nous portal) — rate-limited on 4-way fan-out. Now on meituan/longcat-2.0:free, concurrency 3."
+      "note": "DeepSeek 402 (billing). Switched to OpenRouter gemini \u2192 still fell through to DeepSeek; cleared fallback chain. Then HY3 Free (nous portal) \u2014 rate-limited on 4-way fan-out. Now on meituan/longcat-2.0:free, concurrency 3."
+    },
+    {
+      "when": "2026-09-25T05:55:00-04:00",
+      "note": "nous portal free tier: meituan/longcat-2.0:free died (404 no longer free) -> poolside/laguna-s-2.1:free, max_concurrent_children 2, fallback_providers emptied. 429s killed 4 agents mid-flight; recovery discipline = inventory disk -> verify yourself -> finish, never re-spend on a doomed re-dispatch."
     }
   ],
   "urls": {
@@ -488,7 +590,7 @@
   "flags": [
     {
       "piece": "Coin Grab",
-      "flag": "Determinism under real-time playback: the radius fix verified [0,40,16,27] identical under fixed-step advance, but the fixer reported real-time runs differ due to variable frame timing. The R1 critic earlier reported twins identical. R2 critic MUST re-test two real-time runs at the same seed and report whether final ranking/payout match. If they differ, the minigame draws rng per-frame — same class of bug the turn loop had (frame-timing-dependent rng draws)."
+      "flag": "Determinism under real-time playback: the radius fix verified [0,40,16,27] identical under fixed-step advance, but the fixer reported real-time runs differ due to variable frame timing. The R1 critic earlier reported twins identical. R2 critic MUST re-test two real-time runs at the same seed and report whether final ranking/payout match. If they differ, the minigame draws rng per-frame \u2014 same class of bug the turn loop had (frame-timing-dependent rng draws)."
     },
     {
       "piece": "Bumper Balls",
@@ -496,7 +598,7 @@
     },
     {
       "piece": "Balloon Pop",
-      "flag": "Orchestrator probe (tools/probe-mg-twin2.mjs) — real-time twins identical: [[10,0],[10,0],[10,0],[20,0]]. Determinism holds; fixer's twin-A divergence was a measurement artifact."
+      "flag": "Orchestrator probe (tools/probe-mg-twin2.mjs) \u2014 real-time twins identical: [[10,0],[10,0],[10,0],[20,0]]. Determinism holds; fixer's twin-A divergence was a measurement artifact."
     }
   ]
 }

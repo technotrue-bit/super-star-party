@@ -39,7 +39,7 @@ push("rolled 6 -> expect red space 6");
 
 // dense burst the moment phase enters space-effect
 await waitFor(() => (async()=>{ const s=await state(); return s.phase==="space-effect"; })(), 3000, 25);
-// capture the landing (just before/at effect start)
+await page.waitForTimeout(60); // let the browser paint the flash overlay
 await cap("red-at-effect-start");
 for (let i = 0; i < 16; i++) { await cap(`red-burst-${String(i+1).padStart(2,"0")}`); await page.waitForTimeout(35); }
 push("post burst:", JSON.stringify(await state()));

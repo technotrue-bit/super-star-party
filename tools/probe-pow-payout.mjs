@@ -22,14 +22,17 @@ await page.evaluate((s) => {
   window.__SSP__.startMatch(["pip", "bounce", "glimmer", "tusk"], ["Pip", "Bounce", "Glimmer", "Tusk"]);
 }, seed);
 const before = await snap();
+await page.waitForTimeout(700); /* settle on board before navigating to minigame (proven boot pattern) */
 await page.evaluate(() => window.__SSP__.goto("minigame"));
 
 let after = null;
 const t0 = Date.now();
+let seenMinigame = false; // must actually ENTER the minigame before sampling "after"
 while (Date.now() - t0 < 60000) {
   await page.waitForTimeout(300);
   const s = await snap();
-  if (s.screen !== "minigame") {
+  if (s.screen === "minigame") seenMinigame = true;
+  if (seenMinigame && s.screen !== "minigame") {
     // The board screen registers the state provider on enter — let it land.
     await page.waitForTimeout(1600);
     after = await snap();
