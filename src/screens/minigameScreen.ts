@@ -45,6 +45,7 @@ import {
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
 import { startResultsCeremony, type ResultsCeremony } from "./resultsCeremony";
+import { createTouchPad, type TouchPad } from "../ui/touchPad";
 
 /* ------------------------------------------------------------------ */
 /*  Scoped styles (injected once; every color from the palette)        */
@@ -454,6 +455,7 @@ interface MgScreenState {
   _onPointerMove?: (e: PointerEvent) => void;
   _onPointerUp?: (e: PointerEvent) => void;
   _onKeyDown?: (e: KeyboardEvent) => void;
+  _touch?: TouchPad;
   _vsT?: number;
   _vsSkip?: boolean;
   _vsSeed?: () => number;
@@ -463,6 +465,15 @@ interface MgScreenState {
 }
 
 const COUNT_TICKS = ["3", "2", "1"];
+
+// When the pre-screen was already shown (and clicked) while the board was still
+// panning for "MINI GAME TIME", the enter() should skip re-showing the card
+// and go straight to building the arena so the player "jumps in" after the click.
+let skipPreScreen = false;
+
+export function skipNextMinigamePreScreen(): void {
+  skipPreScreen = true;
+}
 
 const minigameScreenImpl: MgScreenState & Screen = {
   id: "minigame",
@@ -487,172 +498,224 @@ const minigameScreenImpl: MgScreenState & Screen = {
     }
 
     this._active = true;
+    var self = this;
+    console.log('[minigameScreen] enter, skipPreScreen=', skipPreScreen, 'entry=', entry);
 
-    // ---- arena inside the SHARED scene (main.ts renders world.scene with
-    // world.camera — same contract as the board/showcase screens) ----
-    // Snapshot existing children: on exit we sweep everything added since.
-    this._existing = new Set(world.scene?.children ?? []);
+    if (skipPreScreen) {
+      skipPreScreen = false;
+      console.log('[minigameScreen] skipping pre-screen, direct build');
+      buildArenaAndStart();
+      return;
+    }
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x2b1d4e, 1.1);
-    const key = new THREE.DirectionalLight(0xffffff, 1.5);
-    key.position.set(6, 14, 8);
-    world.scene?.add(hemi, key);
-
-    // Decorative party floor — the minigame builds the actual arena on top.
-    const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(13, 48),
-      new THREE.MeshBasicMaterial({ color: hex(palette.grassA) })
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.02;
-    world.scene?.add(ground);
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(12.6, 13, 48),
-      new THREE.MeshBasicMaterial({ color: hex(palette.grassB) })
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = -0.01;
-    world.scene?.add(ring);
-
-    // ---- the 4 live avatars, lined up facing the arena centre ----
-    this._chars = match.players.map((p, i) => {
-      const ch = createCharacter(p.kind);
-      const x = (i - (match.players.length - 1) / 2) * 2.4;
-      ch.group.position.set(x, 0, 5.4);
-      ch.setFacing(Math.PI); // front is +Z; the arena centre is -Z from here
-      ch.anim.idle();
-      world.scene?.add(ch.group);
-      return ch;
-    });
-
-    // ---- arena camera (party angle; minigames may reposition it) ----
-    const cam = world.camera!;
-    const portrait = window.innerWidth / window.innerHeight < 1;
-    const dist = portrait ? 46 : 32;
-    const elev = 1.05; // ~60deg
-    cam.position.set(0, Math.sin(elev) * dist, Math.cos(elev) * dist);
-    cam.lookAt(0, 0.4, 0);
-
-    // ---- countdown + flash overlay elements ----
-    const countEl = document.createElement("div");
-    countEl.className = "ssp-mg-count";
-    document.body.appendChild(countEl);
-    this._countEl = countEl;
-    const flashEl = document.createElement("div");
-    flashEl.className = "ssp-mg-flash";
-    document.body.appendChild(flashEl);
-    this._flashEl = flashEl;
-
-    // ---- input routing: pointer (normalized 0..1) + keyboard actions ----
-    const px = (e: PointerEvent): [number, number] => [
-      Math.min(1, Math.max(0, e.clientX / window.innerWidth)),
-      Math.min(1, Math.max(0, e.clientY / window.innerHeight)),
-    ];
-    this._onPointerDown = (e) => {
-      if (this._phase === "play") {
-        const [x, y] = px(e);
-        this._ctx?.input.pointer(x, y, true);
-      } else if (this._phase === "vs-splash") {
-        // Skip the splash after the grace period — real-player courtesy only
-        this._vsSkip = true;
-      }
-    };
-    this._onPointerMove = (e) => {
-      if (this._phase === "play") {
-        const [x, y] = px(e);
-        this._ctx?.input.pointer(x, y, false);
-      }
-    };
-    this._onPointerUp = (e) => {
-      if (this._phase === "play") {
-        const [x, y] = px(e);
-        this._ctx?.input.pointer(x, y, false);
-      }
-    };
-    this._onKeyDown = (e) => {
-      if (this._phase !== "play") return;
-      const k = e.key;
-      let action: string | null = null;
-      if (k === "ArrowUp" || k === "w" || k === "W") action = "up";
-      else if (k === "ArrowDown" || k === "s" || k === "S") action = "down";
-      else if (k === "ArrowLeft" || k === "a" || k === "A") action = "left";
-      else if (k === "ArrowRight" || k === "d" || k === "D") action = "right";
-      else if (k === " " || k === "Enter") action = "confirm";
-      if (action) {
-        e.preventDefault();
-        this._ctx?.input.key(action);
-      }
-    };
-    window.addEventListener("pointerdown", this._onPointerDown);
-    window.addEventListener("pointermove", this._onPointerMove);
-    window.addEventListener("pointerup", this._onPointerUp);
-    window.addEventListener("keydown", this._onKeyDown);
-
-    // ---- VS splash: play intro sting + build overlay BEFORE countdown ----
-    audio.music.play("minigame_intro", { intensity: 0.8 });
-    const startRound = async (): Promise<void> => {
-      const mg = await loadMinigame(entry.id);
-      if (!this._active) return; // exited while loading
-      if (!mg) {
+    // --- Mini Game Pre-Screen (as requested) ---
+    // Show description + "START MINI GAME". The arena and players are only
+    // built AFTER the user clicks, so they "jump in".
+    const desc = (entry as any).description || getMinigameDescription(entry.id, entry.name);
+    showMinigamePreview(entry.name, desc).then((started) => {
+      if (!started) {
         screens.goto("board");
         return;
       }
-      this._minigame = mg;
+      buildArenaAndStart();
+    });
 
-      const self = this;
-      const ctx: MinigameContext = {
-        players: match.players.map((p) => ({
-          id: p.id,
-          kind: p.kind,
-          name: p.name,
-          color: characterColor(p.kind),
-        })),
-        characters: self._chars ?? [],
-        scene: world.scene!,
-        camera: world.camera!,
-        rng: () => rng.next(),
-        get time(): number {
-          return self._playT ?? 0;
-        },
-        announce: (text, opts) => {
-          /* A ceremony banner must not queue behind a stale one. The win announcement was
-           * landing ~2s late (behind a lingering POWER SURGE! pop) — i.e. at the exact moment
-           * the results card appeared, which is why every critic read the finish as flat. */
-          ui.clearFeedback();
-          ui.banner(text, {
-            durationMs: opts?.durationMs ?? 1800,
-            sound: opts?.sound === undefined ? null : opts.sound,
-          });
-        },
-        playSfx: (name, opts) => audio.sfx.play(name, opts),
-        finish: (ranking) => {
-          if (self._finished || self._phase !== "play") return;
-          const cleaned = cleanRanking(ranking);
-          if (cleaned.length === 0) return;
-          self._finished = true;
-          self._ranking = cleaned;
-        },
-        input: {
-          pointer: () => {},
-          key: () => {},
-        },
+    function buildArenaAndStart() {
+      console.log('[minigameScreen] buildArenaAndStart called');
+      // ---- arena inside the SHARED scene (main.ts renders world.scene with
+      // world.camera — same contract as the board/showcase screens) ----
+      // Snapshot existing children: on exit we sweep everything added since.
+      self._existing = new Set(world.scene?.children ?? []);
+
+      const hemi = new THREE.HemisphereLight(0xffffff, 0x2b1d4e, 1.1);
+      const key = new THREE.DirectionalLight(0xffffff, 1.5);
+      key.position.set(6, 14, 8);
+      world.scene?.add(hemi, key);
+
+      // Decorative party floor — the minigame builds the actual arena on top.
+      const ground = new THREE.Mesh(
+        new THREE.CircleGeometry(13, 48),
+        new THREE.MeshBasicMaterial({ color: hex(palette.grassA) })
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = -0.02;
+      world.scene?.add(ground);
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(12.6, 13, 48),
+        new THREE.MeshBasicMaterial({ color: hex(palette.grassB) })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = -0.01;
+      world.scene?.add(ring);
+
+      // ---- the 4 live avatars — players "jump in" only after START is clicked ----
+      self._chars = match.players.map((p, i) => {
+        const ch = createCharacter(p.kind);
+        const x = (i - (match.players.length - 1) / 2) * 2.4;
+        ch.group.position.set(x, 0, 5.4);
+        ch.setFacing(0);
+        ch.anim.idle();
+        world.scene?.add(ch.group);
+        return ch;
+      });
+
+      // ---- arena camera (party angle; minigames may reposition it) ----
+      const cam = world.camera!;
+      const portrait = window.innerWidth / window.innerHeight < 1;
+      const dist = portrait ? 46 : 32;
+      const elev = 1.05;
+      cam.position.set(0, Math.sin(elev) * dist, Math.cos(elev) * dist);
+      cam.lookAt(0, 0.4, 0);
+
+      // ---- countdown + flash overlay elements ----
+      const countEl = document.createElement("div");
+      countEl.className = "ssp-mg-count";
+      document.body.appendChild(countEl);
+      self._countEl = countEl;
+      const flashEl = document.createElement("div");
+      flashEl.className = "ssp-mg-flash";
+      document.body.appendChild(flashEl);
+      self._flashEl = flashEl;
+
+      // ---- input routing ----
+      // Pointer listeners were defined and removed but never attached, so a
+      // finger did nothing. Keys were passed raw ("ArrowLeft") while every
+      // minigame listens for "left" / "confirm".
+      const keyAction = (key: string): string | null => {
+        switch (key) {
+          case "ArrowUp":
+          case "w":
+          case "W":
+            return "up";
+          case "ArrowDown":
+          case "s":
+          case "S":
+            return "down";
+          case "ArrowLeft":
+          case "a":
+          case "A":
+            return "left";
+          case "ArrowRight":
+          case "d":
+          case "D":
+            return "right";
+          case " ":
+          case "Enter":
+            return "confirm";
+          default:
+            return null;
+        }
       };
-      this._ctx = ctx;
+      const px = (e: PointerEvent): [number, number] => [
+        Math.min(1, Math.max(0, e.clientX / window.innerWidth)),
+        Math.min(1, Math.max(0, e.clientY / window.innerHeight)),
+      ];
+      const onPad = (e: Event): boolean =>
+        (e.target as HTMLElement | null)?.closest?.(".ssp-touch") != null;
+      self._onPointerDown = (e) => {
+        if (onPad(e)) return;
+        if (self._phase === "play") {
+          const [x, y] = px(e);
+          self._ctx?.input.pointer(x, y, true);
+        } else if (self._phase === "vs-splash") {
+          self._vsSkip = true;
+        }
+      };
+      self._onPointerMove = (e) => {
+        if (onPad(e)) return;
+        if (self._phase === "play" && (e.buttons & 1)) {
+          const [x, y] = px(e);
+          self._ctx?.input.pointer(x, y, true);
+        }
+      };
+      self._onPointerUp = (e) => {
+        if (onPad(e)) return;
+        if (self._phase === "play") {
+          const [x, y] = px(e);
+          self._ctx?.input.pointer(x, y, false);
+        }
+      };
 
-      mg.setup(ctx); // build the arena (splash + countdown overlay it)
+      self._onKeyDown = (e: KeyboardEvent) => {
+        if ((e.key === " " || e.key === "Enter") && self._phase === "vs-splash") {
+          self._vsSkip = true;
+        }
+        if (self._phase !== "play" || !self._ctx) return;
+        const action = keyAction(e.key);
+        if (!action) return;
+        e.preventDefault();
+        self._ctx.input.key(action);
+      };
+      window.addEventListener("pointerdown", self._onPointerDown);
+      window.addEventListener("pointermove", self._onPointerMove);
+      window.addEventListener("pointerup", self._onPointerUp);
+      window.addEventListener("pointercancel", self._onPointerUp);
+      window.addEventListener("keydown", self._onKeyDown);
 
-      // Determine theme color from the human's character for the title accent
-      const themeColor = characterColor(match.players[0]?.kind ?? "pip");
+      self._touch = createTouchPad({
+        onSteer: (action) => {
+          if (self._phase !== "play") return;
+          document.body.dataset.sspSteer = action;
+          self._ctx?.input.key(action);
+        },
+        onAction: () => {
+          if (self._phase !== "play") return;
+          document.body.dataset.sspAction = "1";
+          self._ctx?.input.key("confirm");
+        },
+      });
 
-      // Build the VS splash overlay — runs for ~1.7s BEFORE the countdown
-      this._vsT = 0;
-      this._vsSkip = false;
-      buildVsSplash(self, mg.name, themeColor);
-      this._phase = "vs-splash";
-      this._countdownT = 0;
-      this._tick = -1;
-    };
-    void startRound();
+      // ---- wire minigame and start (VS splash etc) ----
+      const startRound = async () => {
+        if (!entry) return;
+        const mg = await loadMinigame(entry.id);
+        if (!self._active) return;
+        if (!mg) {
+          screens.goto("board");
+          return;
+        }
+        self._minigame = mg;
+
+        const ctx: MinigameContext = {
+          players: match.players.map(p => ({
+            id: p.id,
+            kind: p.kind,
+            name: p.name,
+            color: characterColor(p.kind),
+          })),
+          characters: self._chars ?? [],
+          scene: world.scene!,
+          camera: world.camera!,
+          rng: () => (match as any).rng ? (match as any).rng() : Math.random(),
+          get time() { return (self as any)._playT ?? 0; },
+          announce: (text, opts) => {
+            ui.clearFeedback();
+            ui.banner(text, { durationMs: opts?.durationMs ?? 1800, sound: opts?.sound === undefined ? null : opts.sound });
+          },
+          playSfx: (name, opts) => audio.sfx.play(name, opts),
+          finish: (ranking) => {
+            (self as any)._finished = true;
+            (self as any)._ranking = ranking;
+          },
+          input: {
+            pointer: (x, y, down) => {},
+            key: (k) => {},
+          },
+        };
+        self._ctx = ctx;
+
+        mg.setup(ctx);
+
+        const themeColor = characterColor(match.players[0]?.kind ?? "pip");
+        self._vsT = 0;
+        self._vsSkip = false;
+        buildVsSplash(self, mg.name, themeColor);
+        self._phase = "vs-splash";
+        self._countdownT = 0;
+        self._tick = -1;
+      };
+      void startRound();
+    }
   },
 
   update(dt: number) {
@@ -732,6 +795,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
         }
         if (this._finished && this._ranking) {
           this._phase = "results";
+          this._touch?.hide();
           this._resultsT = 0.6; // short winner-reveal beat
         }
         break;
@@ -821,6 +885,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
     const mgGenre = this._minigame?.genre ?? "race";
     const track = actionGenres.has(mgGenre) ? "minigame_a" : "minigame_b";
     audio.music.play(track, { intensity: 1 });
+    this._touch?.show();
     const mg = this._minigame;
     if (mg) bus.emit("minigame:start", { id: mg.id, name: mg.name });
   },
@@ -865,8 +930,13 @@ const minigameScreenImpl: MgScreenState & Screen = {
     this._flashEl = undefined;
     if (this._onPointerDown) window.removeEventListener("pointerdown", this._onPointerDown);
     if (this._onPointerMove) window.removeEventListener("pointermove", this._onPointerMove);
-    if (this._onPointerUp) window.removeEventListener("pointerup", this._onPointerUp);
+    if (this._onPointerUp) {
+      window.removeEventListener("pointerup", this._onPointerUp);
+      window.removeEventListener("pointercancel", this._onPointerUp);
+    }
     if (this._onKeyDown) window.removeEventListener("keydown", this._onKeyDown);
+    this._touch?.destroy();
+    this._touch = undefined;
     this._onPointerDown = undefined;
     this._onPointerMove = undefined;
     this._onPointerUp = undefined;
@@ -876,5 +946,59 @@ const minigameScreenImpl: MgScreenState & Screen = {
     audio.music.stop(0.3);
   },
 };
+
+export function getMinigameDescription(id: string, name: string): string {
+  const map: Record<string, string> = {
+    balloon_pop: "Pop balloons before they float away! Quick reflexes win big points.",
+    bumper_balls: "Bump other players out of the shrinking ring. Last one standing wins!",
+    cake_dash: "Race through the obstacle course. Avoid the forks and be first to the finish!",
+    coin_cannon: "Aim and fire coins into the moving baskets. Most coins in the basket wins.",
+    coin_grab: "Grab as many coins as you can before time runs out. Watch out for the others!",
+    drum_solo: "Hit the drums in time with the beat. Perfect timing scores the most points.",
+    memory_match: "Flip cards and find the matches. Memory is key to victory.",
+    pipe_puzzle: "Guide the water through the pipes to the exit. Solve it fast!",
+    push_of_war: "Push the crate to the other team's side! Teamwork and strength matter here.",
+  };
+  return map[id] || `Play ${name} and show your skills!`;
+}
+
+export async function showMinigamePreview(name: string, description: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const root = document.createElement("div");
+    root.style.cssText = "position:fixed;inset:0;z-index:95;background:rgba(43,29,78,0.35);display:flex;align-items:center;justify-content:center;font-family:Fredoka,sans-serif;box-sizing:border-box;padding:calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px));";
+    root.innerHTML = `
+      <div style="background:${palette.ink};border:5px solid ${palette.cream};border-radius:20px;padding:20px 16px;width:min(92vw, 420px);max-height:calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px);overflow-y:auto;box-sizing:border-box;text-align:center;box-shadow:0 8px 0 ${palette.ink};">
+        <div style="font-size:clamp(26px, 8vw, 44px);font-weight:700;color:${palette.sun};margin-bottom:4px;line-height:1.05;text-shadow:0 3px 0 ${palette.ink};">MINI GAME TIME!</div>
+        <div style="font-size:clamp(22px, 6vw, 34px);font-weight:700;color:${palette.cream};margin-bottom:8px;line-height:1.1;">${name}</div>
+        <div style="color:${palette.cream};font-size:17px;line-height:1.4;margin-bottom:18px;">${description}</div>
+        <div style="color:${palette.cream};opacity:0.75;font-size:14px;margin-bottom:16px;">Get ready, then start.</div>
+        <button id="mg-start-btn" style="background:${palette.sunDeep};color:${palette.ink};border:4px solid ${palette.ink};border-radius:14px;padding:14px 20px;min-height:56px;width:100%;font-size:22px;font-weight:700;cursor:pointer;touch-action:manipulation;font-family:inherit;">START MINI GAME</button>
+      </div>
+    `;
+    document.body.appendChild(root);
+
+    const btn = root.querySelector("#mg-start-btn") as HTMLButtonElement;
+    btn.onclick = () => {
+      root.remove();
+      resolve(true);
+    };
+
+    // Allow clicking outside or escape as cancel (back to board)
+    root.onclick = (e) => {
+      if (e.target === root) {
+        root.remove();
+        resolve(false);
+      }
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        window.removeEventListener("keydown", onEsc);
+        root.remove();
+        resolve(false);
+      }
+    };
+    window.addEventListener("keydown", onEsc, { once: true });
+  });
+}
 
 export const minigameScreen = minigameScreenImpl as Screen;

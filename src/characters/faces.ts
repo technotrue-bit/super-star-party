@@ -6,31 +6,31 @@ export interface FaceSpec {
   eyeSize: number;
 }
 
-const FACE_WIDTH = 128;
-const FACE_HEIGHT = 64;
+const FACE_WIDTH = 256;
+const FACE_HEIGHT = 128;
 
-const EYE_Y = 30;
-const EYE_RADIUS = 14;
-const PUPIL_RADIUS = 5;
-const PUPIL_OFFSET_X = 3; // inward, toward the face center
-const PUPIL_OFFSET_Y = 3; // downward
+const EYE_Y = 52;
+const EYE_RADIUS = 26;
+const PUPIL_RADIUS = 11;
+const PUPIL_OFFSET_X = 5;
+const PUPIL_OFFSET_Y = 5;
 
-const LEFT_EYE_X = 38;
-const RIGHT_EYE_X = 90;
+const LEFT_EYE_X = 78;
+const RIGHT_EYE_X = 178;
 
-const CHEEK_Y = 44;
-const CHEEK_RADIUS = 6;
+const CHEEK_Y = 70;
+const CHEEK_RADIUS = 12;
 const CHEEK_COLOR = 'rgba(255, 120, 160, 0.55)';
 
-const SMILE_Y = 42; // arc center y
-const SMILE_STROKE = 5;
+const SMILE_Y = 58; // sit under the eyes, inside the face card
+const SMILE_STROKE = 8;
 
 function drawSmile(ctx: CanvasRenderingContext2D, smile: FaceSpec['smile']): void {
   if (smile === 'open') {
     // Filled half-ellipse: open mouth with darker fill, spanning x 52-76.
     ctx.fillStyle = palette.ink;
     ctx.beginPath();
-    ctx.ellipse(64, SMILE_Y, 12, 8, 0, 0, Math.PI);
+    ctx.ellipse(128, SMILE_Y, 24, 14, 0, 0, Math.PI);
     ctx.closePath();
     ctx.fill();
     return;
@@ -40,13 +40,13 @@ function drawSmile(ctx: CanvasRenderingContext2D, smile: FaceSpec['smile']): voi
   ctx.lineWidth = SMILE_STROKE;
   ctx.lineCap = 'round';
 
-  let centerX = 64;
-  let radius = 12; // grin: centered arc, x 52-76
+  let centerX = 128;
+  let radius = 22; // grin
   if (smile === 'half') {
-    centerX = 68; // smaller arc on the right side, x 60-76
-    radius = 8;
+    centerX = 136;
+    radius = 14;
   } else if (smile === 'wide') {
-    radius = 16; // big arc, x 48-80
+    radius = 30;
   }
 
   ctx.beginPath();
@@ -66,16 +66,20 @@ export function makeFaceTexture(spec: FaceSpec): THREE.CanvasTexture {
   const eyeR = EYE_RADIUS * spec.eyeSize;
   const pupilR = PUPIL_RADIUS * spec.eyeSize;
 
-  // Two big white eyes.
+  // Two big white eyes with an ink rim so they read at phone size.
   ctx.fillStyle = palette.white;
+  ctx.strokeStyle = palette.ink;
+  ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.arc(LEFT_EYE_X, EYE_Y, eyeR, 0, Math.PI * 2);
   ctx.fill();
+  ctx.stroke();
   ctx.beginPath();
   ctx.arc(RIGHT_EYE_X, EYE_Y, eyeR, 0, Math.PI * 2);
   ctx.fill();
+  ctx.stroke();
 
-  // Dark ink pupils, slightly inner-bottom.
+  // Dark ink pupils, slightly inner-bottom, plus a white catchlight.
   ctx.fillStyle = palette.ink;
   const leftPupilX = LEFT_EYE_X + PUPIL_OFFSET_X * spec.eyeSize;
   const rightPupilX = RIGHT_EYE_X - PUPIL_OFFSET_X * spec.eyeSize;
@@ -85,6 +89,14 @@ export function makeFaceTexture(spec: FaceSpec): THREE.CanvasTexture {
   ctx.fill();
   ctx.beginPath();
   ctx.arc(rightPupilX, pupilY, pupilR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = palette.white;
+  const glint = Math.max(2, pupilR * 0.42);
+  ctx.beginPath();
+  ctx.arc(leftPupilX - pupilR * 0.35, pupilY - pupilR * 0.4, glint, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(rightPupilX - pupilR * 0.35, pupilY - pupilR * 0.4, glint, 0, Math.PI * 2);
   ctx.fill();
 
   // Rosy cheeks, soft pink circles under each eye.

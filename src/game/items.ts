@@ -13,6 +13,7 @@ import { rng } from "../core/rng";
 import { audio } from "../audio/audioEngine";
 import { fizzyFairground } from "../board/boardData";
 import { addCoins } from "./economy";
+import type { TrapKind } from "../core/game";
 
 export interface ItemDef {
   key: string;
@@ -20,6 +21,10 @@ export interface ItemDef {
   desc: string;
   price: number;
   icon: string;
+  /** Set when buying this item throws an orb onto a space instead of holding it. */
+  places?: TrapKind;
+  /** Hidden in the shop until this many turns remain. */
+  lateGame?: boolean;
 }
 
 /** The gumball machine stock. */
@@ -45,10 +50,122 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
     price: 10,
     icon: "⚡",
   },
+  orb_coin10: {
+    key: "orb_coin10",
+    name: "Coin Snatch 10",
+    desc: "Throw on a space. The next player loses 10 coins to you.",
+    price: 8,
+    icon: "🟡",
+    places: "coin10",
+  },
+  orb_coin20: {
+    key: "orb_coin20",
+    name: "Coin Snatch 20",
+    desc: "Throw on a space. The next player loses 20 coins to you.",
+    price: 15,
+    icon: "🟠",
+    places: "coin20",
+  },
+  orb_star: {
+    key: "orb_star",
+    name: "Star Snatch",
+    desc: "Throw on a space. Steal one star from whoever lands there.",
+    price: 25,
+    icon: "⭐",
+    places: "star_steal",
+  },
+  orb_wreck: {
+    key: "orb_wreck",
+    name: "Wreck Orb",
+    desc: "Throw on a space. The victim loses a star and 10 coins.",
+    price: 18,
+    icon: "💥",
+    places: "wreck",
+  },
+  orb_duel: {
+    key: "orb_duel",
+    name: "Duel Orb",
+    desc: "Throw on a space. Land on it and fight the placer 1v1.",
+    price: 12,
+    icon: "🥊",
+    places: "duel",
+  },
+  orb_snag: {
+    key: "orb_snag",
+    name: "Snagbag",
+    desc: "Throw on a space. Steal one item from whoever lands there.",
+    price: 10,
+    icon: "👜",
+    places: "snag",
+  },
+  orb_swap: {
+    key: "orb_swap",
+    name: "Swap Orb",
+    desc: "Throw on a space. Swap places with whoever lands there.",
+    price: 12,
+    icon: "🔄",
+    places: "swap",
+  },
+  star_cannon: {
+    key: "star_cannon",
+    name: "Star Cannon",
+    desc: "Blast yourself straight to the star. Only in the last 5 turns.",
+    price: 20,
+    icon: "🚀",
+    lateGame: true,
+  },
+  orb_tree: {
+    key: "orb_tree",
+    name: "Money Tree",
+    desc: "Grows 3 coins a round. Land on it yourself to collect.",
+    price: 12,
+    icon: "🌳",
+    places: "tree",
+  },
+  orb_circus: {
+    key: "orb_circus",
+    name: "Mini Circus",
+    desc: "Pass through and pay 1 coin a space for 3 turns.",
+    price: 14,
+    icon: "🎪",
+    places: "circus",
+  },
+  orb_starshift: {
+    key: "orb_starshift",
+    name: "Star Shift",
+    desc: "Land on it and the star jumps to the other star space.",
+    price: 16,
+    icon: "🌠",
+    places: "star_shift",
+  },
 };
 
 /** Display order for the shop (mushroom -> warp whistle -> zappy). */
-export const ITEM_ORDER: string[] = ["mushroom", "warp_whistle", "zappy"];
+export const ITEM_ORDER: string[] = [
+  "mushroom",
+  "warp_whistle",
+  "zappy",
+  "orb_coin10",
+  "orb_coin20",
+  "orb_star",
+  "orb_wreck",
+  "orb_duel",
+  "orb_snag",
+  "orb_swap",
+  "orb_tree",
+  "orb_circus",
+  "orb_starshift",
+  "star_cannon",
+];
+
+/** Turns still to play, including the current one. */
+export function turnsLeft(): number {
+  return Math.max(0, match.totalTurns - match.turn + 1);
+}
+
+export function starCannonAvailable(): boolean {
+  return turnsLeft() <= 5;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Board helpers                                                      */
@@ -144,6 +261,7 @@ export function canUseItem(playerId: number, key: string): boolean {
   if (key === "mushroom") return true;
   if (key === "warp_whistle") return greenSpacesAhead(player.space).length > 0;
   if (key === "zappy") return zappyTarget(playerId) !== null;
+  if (key === "star_cannon") return starCannonAvailable();
   return false;
 }
 
@@ -183,6 +301,15 @@ export function useItem(playerId: number, key: string): UseItemResult {
       return { label: "ZAPPY!", message: `Zap! -${stolen} from ${rival.name}` };
     }
     return { label: "ZAPPY!", message: "Zap! ...no rival in sight." };
+  }
+
+  if (key === "star_cannon") {
+    if (!starCannonAvailable()) {
+      player.items.push(key);
+      return { label: "STAR CANNON!", message: "Not yet — last 5 turns only." };
+    }
+    audio.sfx.play("whoosh");
+    return { label: "STAR CANNON!", message: "Blast off to the star!", moveTo: match.starBalloonPos };
   }
 
   return { label: "ITEM!", message: "..." };

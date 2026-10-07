@@ -43,6 +43,8 @@ function injectTitleStyles(): void {
       align-items: center; justify-content: center;
       pointer-events: none;
       font-family: 'Fredoka', 'Comic Sans MS', sans-serif;
+      box-sizing: border-box;
+      padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(20px + env(safe-area-inset-bottom, 0px));
     }
     .ssp-title-stage > * { pointer-events: auto; }
     .ssp-title-logo {
@@ -61,7 +63,9 @@ function injectTitleStyles(): void {
       margin-bottom: clamp(20px, 5vh, 40px);
       animation: sspTLogoBob 2.4s ease-in-out infinite;
       position: relative;
-      white-space: nowrap;
+      white-space: normal;
+      line-height: 0.95;
+      max-width: 92vw;
     }
     .ssp-title-logo::after {
       content: "★";
@@ -265,6 +269,8 @@ const titleImpl: TitleState & Screen = {
     // ---- camera: low party angle, hero in foreground, carnival behind ----
     const cam = world.camera!;
     cam.position.set(0, 2.6, 7.5);
+    cam.fov = 45;
+    cam.updateProjectionMatrix();
     cam.lookAt(0, 1, 0);
 
     // ---- backdrop: the full Fizzy Fairground carnival ----

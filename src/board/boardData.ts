@@ -17,6 +17,8 @@ export interface BoardDef {
   loops: number[][];
   /** Optional one-way cut that skips the main loop between two spaces. */
   shortcut?: { from: number; to: number; label: string };
+  /** Branch points. `from` is on one loop; `to` is the first space of the other. */
+  junctions?: Array<{ from: number; to: number; label: string }>;
   startIndex: number;
   /** Camera framing hint: center on the board, fit = distance multiplier. */
   cam: { center: [number, number]; fit: number };
@@ -89,13 +91,21 @@ function roundedRectLoop(
 }
 
 // ---- Fizzy Fairground space data ---------------------------------------------
-// 28 spaces: 12 blue, 6 red, 4 green, 2 star, 2 shop, 2 grumpus.
-// Specials (star/shop/grumpus) are interleaved so no two are adjacent.
+// 28 spaces — MP7 + our carnival touches.
+// 10 blue, 5 red, 3 green (happenings), 2 star (Prize Balloon spots), 2 shop, 2 grumpus,
+// 3 stamp (collect Shy/Goomba/Koopa for 30-coin jackpot + Stamp Star bonus),
+// 1 minigame_balloon (pays 5/10 + flags minigame).
+// Specials interleaved.
 const TYPES: SpaceType[] = [
   "blue", "blue", "green", "blue", "star", "blue", "red",
-  "green", "blue", "red", "shop", "blue", "green", "red",
-  "blue", "star", "blue", "grumpus", "blue", "red", "green",
-  "shop", "blue", "red", "grumpus", "blue", "red", "blue",
+  "green", "blue", "red", "shop", "stamp", "green", "red",   // stamp at Ring Toss
+  "blue", "star", "blue", "grumpus", "blue", "red", "minigame_balloon",
+  "shop", "blue", "red", "grumpus", "stamp", "red", "stamp", // stamps + balloon
+];
+
+const INNER_TYPES: SpaceType[] = [
+  "blue", "red", "blue", "green", "blue", "red", "blue", "blue",
+  "red", "blue", "green", "blue", "red", "blue", "blue", "red",
 ];
 
 const NAMES: string[] = [
@@ -129,15 +139,43 @@ const NAMES: string[] = [
   "Ticket Ticker Turn",
 ];
 
+const INNER_NAMES: string[] = [
+  "Inner Gate",
+  "Ribbon Run",
+  "Marble Mile",
+  "Whisper Well",
+  "Lantern Lane",
+  "Pepper Path",
+  "Coin Court",
+  "Bunting Bend",
+  "Sour Stretch",
+  "Glimmer Gap",
+  "Secret Stall",
+  "Midway Cut",
+  "Hot Hinge",
+  "Rejoin Ramp",
+  "Quiet Quarter",
+  "Last Loop",
+];
+
 function buildSpaces(): SpaceDef[] {
-  const pts = roundedRectLoop(TYPES.length, LOOP_A, LOOP_B, LOOP_R, settings.tileSpacing);
-  return TYPES.map((type, i) => ({
+  const outer = roundedRectLoop(TYPES.length, LOOP_A, LOOP_B, LOOP_R, settings.tileSpacing);
+  const inner = roundedRectLoop(INNER_TYPES.length, 2.4, 1.6, 0.7, settings.tileSpacing);
+  const outerSpaces = TYPES.map((type, i) => ({
     index: i,
     type,
     name: NAMES[i] ?? `Space ${i + 1}`,
-    x: pts[i].x,
-    y: pts[i].y,
+    x: outer[i].x,
+    y: outer[i].y,
   }));
+  const innerSpaces = INNER_TYPES.map((type, i) => ({
+    index: TYPES.length + i,
+    type,
+    name: INNER_NAMES[i] ?? `Inner ${i + 1}`,
+    x: inner[i].x,
+    y: inner[i].y,
+  }));
+  return [...outerSpaces, ...innerSpaces];
 }
 
 /** Fizzy Fairground — the carnival midway. Start = space 0 (Fizzy Fountain). */
@@ -145,8 +183,15 @@ export const fizzyFairground: BoardDef = {
   id: "fizzy-fairground",
   name: "Fizzy Fairground",
   spaces: buildSpaces(),
-  loops: [Array.from({ length: TYPES.length }, (_, i) => i)],
+  loops: [
+    Array.from({ length: TYPES.length }, (_, i) => i),
+    Array.from({ length: INNER_TYPES.length }, (_, i) => TYPES.length + i),
+  ],
   shortcut: { from: 20, to: 26, label: "Funhouse Cut" },
+  junctions: [
+    { from: 6, to: 32, label: "Inner Lane" },
+    { from: 38, to: 18, label: "Rejoin" },
+  ],
   startIndex: 0,
   cam: { center: [0, 0], fit: 1.35 },
 };

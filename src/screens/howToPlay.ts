@@ -28,9 +28,11 @@ function injectHowToStyles(): void {
       position: fixed; inset: 0; z-index: 60;
       display: flex; flex-direction: column;
       align-items: center;
-      padding: clamp(14px, 3vw, 24px) clamp(10px, 3vw, 20px);
+      padding: calc(14px + env(safe-area-inset-top, 0px)) clamp(10px, 3vw, 20px) calc(20px + env(safe-area-inset-bottom, 0px));
       font-family: 'Fredoka', 'Comic Sans MS', sans-serif;
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
       box-sizing: border-box;
     }
     .ssp-howto-top {

@@ -20,7 +20,11 @@ import { bus } from "../core/events";
 import { palette } from "../config/palette";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
-import { ITEM_DEFS, ITEM_ORDER, buyItem } from "../game/items";
+import { ITEM_DEFS, ITEM_ORDER, buyItem, starCannonAvailable } from "../game/items";
+import { addCoins } from "../game/economy";
+import { canPlaceTrap, placeTrap } from "../game/traps";
+import { fizzyFairground } from "../board/boardData";
+import type { TrapKind } from "../core/game";
 
 let stylesInjected = false;
 
@@ -41,7 +45,9 @@ function injectShopStyles(): void {
               linear-gradient(180deg, ${palette.sun} 0%, ${palette.sunDeep} 100%);
   border:2px solid ${palette.ink}; box-shadow: inset 0 -3px 0 rgba(43,29,78,.25); }
 .ssp-shop__counter { min-width:30px; text-align:center; font-size:20px; font-weight:700; color:${palette.ink}; }
-.ssp-shop__grid { display:flex; flex-direction:column; gap:12px; max-height:44vh; overflow-y:auto; padding:3px 2px; }
+.ssp-shop__grid { display:flex; flex-direction:column; gap:12px; max-height:44vh; overflow-y:auto; padding:3px 2px; -webkit-overflow-scrolling:touch; }
+.ssp-shop__space { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:48px; width:100%; text-align:left; font-family:inherit; font-weight:700; font-size:15px; color:${palette.ink}; background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:14px; padding:8px 12px; box-shadow:0 3px 0 ${palette.ink}; cursor:pointer; touch-action:manipulation; }
+.ssp-shop__space:active { transform:translateY(2px); box-shadow:0 1px 0 ${palette.ink}; }
 .ssp-shop__card { display:flex; align-items:center; gap:12px; background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:20px; padding:10px 12px; box-shadow:0 4px 0 ${palette.ink}; transition: opacity .25s ease-out, filter .25s ease-out; }
 .ssp-shop__card--poor { opacity:.62; filter: grayscale(.55) brightness(.92); }
 .ssp-shop__icon { font-size:34px; line-height:1; width:46px; text-align:center; flex:none; }
@@ -201,6 +207,7 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
     for (const key of ITEM_ORDER) {
       const def = ITEM_DEFS[key];
       if (!def) continue;
+      if (def.lateGame && !starCannonAvailable()) continue;
 
       const card = document.createElement("div");
       card.className = "ssp-shop__card";
@@ -265,9 +272,16 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
           const newCoins = coinsNow();
           counter.tweenTo(newCoins);
           refreshAffordability();
-          // Buy feedback: floating number rises from the button + a toast.
           const rect = btn.el.getBoundingClientRect();
           ui.showFloatingNumber(rect.left + rect.width / 2, rect.top - 8, -def.price, { durationMs: 700 });
+          if (def.places) {
+            // Orb leaves the bag immediately — the picker places it, or we refund.
+            const held = match.players[playerId]?.items;
+            const at = held?.lastIndexOf(key) ?? -1;
+            if (held && at >= 0) held.splice(at, 1);
+            showThrowPicker(def.places, def.name, def.price);
+            return;
+          }
           ui.toast(`Got the ${def.name}!`, { durationMs: 1500, priority: "high" });
         }
       });
@@ -278,6 +292,47 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
     }
     content.appendChild(grid);
     refreshAffordability();
+
+    const showThrowPicker = (kind: TrapKind, orbName: string, price: number): void => {
+      const shopSpaces = fizzyFairground.spaces.filter((s) => s.type === "shop").map((s) => s.index);
+      const legal = fizzyFairground.spaces.filter((s) =>
+        canPlaceTrap(playerId, s.index, match.starBalloonPos, shopSpaces),
+      );
+      grid.replaceChildren();
+      const title = document.createElement("div");
+      title.className = "ssp-shop__name";
+      title.textContent = `Throw ${orbName}`;
+      grid.appendChild(title);
+      const refund = (): void => {
+        addCoins(playerId, price);
+        counter.tweenTo(coinsNow());
+        ui.toast("Refunded.", { durationMs: 1200 });
+        close();
+      };
+      if (legal.length === 0) {
+        refund();
+        return;
+      }
+      for (const s of legal) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "ssp-shop__space";
+        row.textContent = `${s.index + 1}. ${s.name}`;
+        row.addEventListener("click", () => {
+          if (placeTrap(playerId, s.index, kind)) {
+            ui.toast(`${orbName} set on ${s.name}!`, { durationMs: 1500, priority: "high" });
+            close();
+          }
+        });
+        grid.appendChild(row);
+      }
+      const back = document.createElement("button");
+      back.type = "button";
+      back.className = "ssp-shop__space";
+      back.textContent = "Cancel — refund";
+      back.addEventListener("click", refund);
+      grid.appendChild(back);
+    };
 
     // ---- popup + close handling (CLOSE, Escape, screen change) ----
     let closed = false;

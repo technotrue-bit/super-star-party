@@ -1,0 +1,9 @@
+{
+  "name": "SUPER STAR PARTY",
+  "short_name": "Star Party",
+  "display": "standalone",
+  "background_color": "#2B1D4E",
+  "theme_color": "#2B1D4E",
+  "start_url": "./",
+  "scope": "./"
+}

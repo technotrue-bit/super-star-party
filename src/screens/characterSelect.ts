@@ -17,6 +17,7 @@ import { roster } from "../characters/roster";
 import { createCharacter, type Character } from "../characters/characterFactory";
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
+import { onViewportChange, viewportSize } from "../ui/viewport";
 
 const SLOT_COUNT = roster.length;
 
@@ -33,7 +34,7 @@ function injectSelectStyles(): void {
   const style = document.createElement("style");
   style.id = "ssp-select-styles";
   style.textContent = `
-    .ssp-sel-stage{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:space-between;pointer-events:none;z-index:10;padding:18px 16px;box-sizing:border-box}
+    .ssp-sel-stage{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:space-between;pointer-events:none;z-index:10;padding:calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px));box-sizing:border-box}
     .ssp-sel-top{display:flex;justify-content:space-between;align-items:center;width:100%;pointer-events:auto}
     .ssp-sel-title{font-size:24px;font-weight:700;color:${palette.cream};text-shadow:3px 3px 0 ${palette.ink},6px 6px 0 rgba(43,29,78,.35);pointer-events:none;letter-spacing:1px}
     .ssp-sel-cards{display:flex;gap:10px;width:100%;max-width:520px;pointer-events:auto;margin-bottom:14px}
@@ -41,13 +42,13 @@ function injectSelectStyles(): void {
     .ssp-sel-card:hover{transform:translateY(-3px) scale(1.03);box-shadow:5px 6px 0 ${palette.ink}}
     .ssp-sel-card:active{transform:scale(.93) translateY(2px);box-shadow:2px 2px 0 ${palette.ink}}
     .ssp-sel-card__name{font-size:16px;font-weight:700;line-height:1.1;text-align:center;word-break:break-word;text-shadow:2px 2px 0 rgba(255,255,255,.65)}
-    .ssp-sel-card__tag{font-size:10px;font-weight:500;color:${palette.ink};opacity:.85;text-align:center;line-height:1.25}
+    .ssp-sel-card__tag{font-size:12px;font-weight:500;color:${palette.ink};opacity:.85;text-align:center;line-height:1.25}
     .ssp-sel-card__cpu{position:absolute;top:-8px;right:-6px;background:${palette.lava};color:${palette.white};font-size:10px;font-weight:700;padding:2px 7px;border-radius:9px;border:2px solid ${palette.ink};box-shadow:2px 2px 0 ${palette.ink};transform:rotate(8deg);white-space:nowrap;z-index:2}
     .ssp-sel-card--sel{transform:translateY(-10px) scale(1.07);box-shadow:6px 9px 0 ${palette.ink},0 0 22px var(--sel-color)}
     .ssp-sel-card--sel:hover{transform:translateY(-13px) scale(1.1)}
     .ssp-sel-card--sel:active{transform:translateY(-7px) scale(1.04);box-shadow:4px 5px 0 ${palette.ink},0 0 22px var(--sel-color)}
     .ssp-sel-ctrls{display:flex;gap:14px;align-items:center;width:100%;max-width:520px;justify-content:center;pointer-events:auto;margin-bottom:8px}
-    @media(max-width:420px){.ssp-sel-cards{gap:6px}.ssp-sel-card{padding:8px 4px}.ssp-sel-card__name{font-size:14px}.ssp-sel-card__tag{font-size:9px}.ssp-sel-title{font-size:20px}}
+    @media(max-width:520px){.ssp-sel-cards{gap:8px}.ssp-sel-card{padding:14px 6px;min-height:72px}.ssp-sel-card__name{font-size:15px}.ssp-sel-card__tag{font-size:12px}.ssp-sel-title{font-size:22px}}
   `;
   document.head.appendChild(style);
 }
@@ -60,20 +61,81 @@ interface Layout {
   spread: number;
   baseZ: number;
   selZ: number;
-  scale: number;
-  camH: number;
-  camD: number;
+  /** Extra scale on the selected hero. Unselected uses 1. */
+  selScale: number;
+  pedR: number;
+  portrait: boolean;
 }
 
-function getLayout(): Layout {
-  const portrait = window.innerWidth / window.innerHeight < 1;
-  const spread = portrait ? 1.9 : 3.0;
-  const baseZ = 0;
-  const selZ = 1.4;
-  const scale = portrait ? 1.0 : 1.05;
-  const camDist = portrait ? 11 : 13;
-  const elev = portrait ? 1.05 : 0.85;
-  return { spread, baseZ, selZ, scale, camH: camDist * Math.sin(elev), camD: camDist * Math.cos(elev) };
+const PARTY_FOV = 45;
+
+/**
+ * Fit four heroes to the visible phone width.
+ * At fov 45 a 430-wide phone only sees ~±1.9 world units, and the old
+ * spread of 1.9 put Pip and Tusk at ±2.85 — off both edges. Portrait
+ * widens fov slightly and places the outer hero's edge at 84% of the
+ * screen so all four stay in proportion to the phone.
+ */
+function applySelectCamera(cam: THREE.PerspectiveCamera): Layout {
+  const { w, h } = viewportSize();
+  const aspect = w / Math.max(1, h);
+  const portrait = aspect < 1;
+  cam.aspect = aspect;
+  cam.fov = portrait ? 46 : PARTY_FOV;
+  cam.updateProjectionMatrix();
+
+  if (!portrait) {
+    const camDist = 13;
+    const elev = 0.85;
+    cam.position.set(0, camDist * Math.sin(elev), camDist * Math.cos(elev));
+    cam.lookAt(0, 0.4, 0);
+    cam.updateMatrixWorld();
+    return { spread: 3.0, baseZ: 0, selZ: 1.4, selScale: 1.18, pedR: 0.62, portrait: false };
+  }
+
+  const camDist = 6.4;
+  const elev = 0.48;
+  cam.position.set(0, camDist * Math.sin(elev), camDist * Math.cos(elev));
+  cam.lookAt(0, -0.05, 0);
+  cam.updateMatrixWorld();
+
+  const probe = new THREE.Vector3();
+  let lo = 0;
+  let hi = 12;
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2;
+    probe.set(mid, 1.0, 0);
+    probe.project(cam);
+    if (probe.x < 0.9) lo = mid;
+    else hi = mid;
+  }
+  // Outer center is 1.5 spreads out; a little of the slot is body half-width.
+  const spread = lo / 1.68;
+  return {
+    spread,
+    baseZ: 0,
+    selZ: 0.12,
+    selScale: 1.08,
+    pedR: spread * 0.32,
+    portrait: true,
+  };
+}
+
+/** Scale a hero so height and width match the phone slot, not the raw mesh. */
+function measureHero(group: THREE.Group, layout: Layout): { fit: number; foot: number } {
+  group.position.set(0, 0, 0);
+  group.scale.set(1, 1, 1);
+  group.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(group);
+  const size = box.getSize(new THREE.Vector3());
+  if (!layout.portrait) return { fit: 1, foot: box.min.y };
+  const targetH = Math.max(1.15, layout.spread * 2.35);
+  const targetW = layout.spread * 0.8;
+  const fit = Math.min(
+    targetH / Math.max(0.05, size.y),
+    targetW / Math.max(0.05, size.x),
+  );
+  return { fit, foot: box.min.y };
 }
 
 // ------------------------------------------------------------------
@@ -89,10 +151,15 @@ interface SelectScreenState {
   _cardEls?: HTMLDivElement[];
   _cpuEls?: HTMLDivElement[];
   _floor?: THREE.Mesh;
+  _holders?: THREE.Group[];
+  _fit?: number[];
+  _foot?: number[];
+  _offResize?: () => void;
   _hemi?: THREE.HemisphereLight;
   _existing?: Set<THREE.Object3D>;
   _onKeyDown?: (e: KeyboardEvent) => void;
   _applySelection: () => void;
+  _placeHeroes: (layout: Layout) => void;
   _doSelect: (idx: number) => void;
   _confirmStart: () => void;
   _goBack: () => void;
@@ -115,24 +182,25 @@ const characterSelectImpl: SelectScreenState & Screen = {
     this._spotlights = [];
     this._cardEls = [];
     this._cpuEls = [];
+    this._holders = [];
+    this._fit = [];
+    this._foot = [];
 
     // Snapshot existing scene children so exit() only sweeps what we add.
     this._existing = new Set(world.scene?.children ?? []);
 
-    // Camera: fixed party angle, aspect-aware.
-    const layout = getLayout();
+    // Camera fitted to the phone's visible width (landscape keeps the old party shot).
     const cam = world.camera!;
-    cam.position.set(0, layout.camH, layout.camD);
-    cam.lookAt(0, 0.4, 0);
+    const layout = applySelectCamera(cam);
 
     // Extra fill light for the stage.
     const hemi = new THREE.HemisphereLight(0xffffff, 0x2b1d4e, 0.85);
     world.scene?.add(hemi);
     this._hemi = hemi;
 
-    // Candy floor disk.
+    // Candy floor disk — wide enough to fill a phone frustum.
     const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(7, 40),
+      new THREE.CircleGeometry(14, 40),
       new THREE.MeshToonMaterial({ color: hex(palette.grassA) })
     );
     floor.rotation.x = -Math.PI / 2;
@@ -140,23 +208,20 @@ const characterSelectImpl: SelectScreenState & Screen = {
     world.scene?.add(floor);
     this._floor = floor;
     const floorRing = new THREE.Mesh(
-      new THREE.RingGeometry(6.6, 7, 40),
+      new THREE.RingGeometry(13.2, 14, 40),
       new THREE.MeshToonMaterial({ color: hex(palette.grassB) })
     );
     floorRing.rotation.x = -Math.PI / 2;
     floorRing.position.y = -0.02;
     world.scene?.add(floorRing);
 
-    // Characters + pedestals + spotlights.
-    roster.forEach((charKind, i) => {
-      const x = (i - (SLOT_COUNT - 1) / 2) * layout.spread;
-
-      // Pedestal: two-tone cylinder (character color top, ink base).
+    // Characters + pedestals + spotlights. Positions come from _placeHeroes
+    // so a phone resize can refit without rebuilding meshes.
+    roster.forEach((charKind) => {
       const pedTop = new THREE.Mesh(
         new THREE.CylinderGeometry(0.62, 0.72, 0.22, 28),
         new THREE.MeshToonMaterial({ color: hex(charKind.color) })
       );
-      pedTop.position.set(x, 0.11, 0);
       pedTop.castShadow = true;
       pedTop.receiveShadow = true;
       world.scene?.add(pedTop);
@@ -166,26 +231,27 @@ const characterSelectImpl: SelectScreenState & Screen = {
         new THREE.CylinderGeometry(0.72, 0.78, 0.12, 28),
         new THREE.MeshToonMaterial({ color: hex(palette.ink) })
       );
-      pedBase.position.set(x, -0.0, 0);
       world.scene?.add(pedBase);
       this._platforms!.push(pedBase);
 
-      // Character model + idle animation.
       const ch = createCharacter(charKind.key);
-      ch.group.position.set(x, 0.22, 0);
-      ch.setFacing(Math.PI);
+      ch.setFacing(0);
       ch.anim.idle();
-      world.scene?.add(ch.group);
+      const measured = measureHero(ch.group, layout);
+      const holder = new THREE.Group();
+      holder.add(ch.group);
+      world.scene?.add(holder);
+      this._holders!.push(holder);
+      this._fit!.push(measured.fit);
+      this._foot!.push(measured.foot);
       this._chars!.push(ch);
 
-      // Overhead spotlight per slot.
       const spot = new THREE.SpotLight(0xffffff, 0.25, 9, Math.PI / 6, 0.45, 1.4);
-      spot.position.set(x, 5.2, 1.2);
-      spot.target.position.set(x, 0, 0);
       world.scene?.add(spot);
       world.scene?.add(spot.target);
       this._spotlights!.push(spot);
     });
+    this._placeHeroes(layout);
 
     // ---- DOM overlay ----
     const stage = document.createElement("div");
@@ -302,22 +368,49 @@ const characterSelectImpl: SelectScreenState & Screen = {
       }
     };
     window.addEventListener("keydown", this._onKeyDown);
+    this._offResize = onViewportChange(() => {
+      if (!this._active || !world.camera) return;
+      this._placeHeroes(applySelectCamera(world.camera));
+    });
   },
 
   _applySelection() {
-    const layout = getLayout();
-    const sel = this._selected ?? 0;
+    if (!world.camera) return;
+    this._placeHeroes(applySelectCamera(world.camera));
+  },
 
-    this._chars?.forEach((ch, i) => {
+  _placeHeroes(layout: Layout) {
+    const sel = this._selected ?? 0;
+    const pedScale = layout.portrait ? layout.pedR / 0.62 : 1;
+
+    this._chars?.forEach((_ch, i) => {
       const isSel = i === sel;
       const x = (i - (SLOT_COUNT - 1) / 2) * layout.spread;
+      const fit = (this._fit?.[i] ?? 1) * (isSel ? layout.selScale : layout.portrait ? 0.94 : 0.9);
+      const foot = this._foot?.[i] ?? 0;
+      const holder = this._holders?.[i];
+      if (holder) {
+        holder.position.set(x, 0.22 - foot * fit, isSel ? layout.selZ : layout.baseZ);
+        holder.scale.setScalar(fit);
+      }
 
-      ch.group.position.x = x;
-      ch.group.position.z = isSel ? layout.selZ : layout.baseZ;
-      ch.group.scale.setScalar(isSel ? layout.scale * 1.18 : layout.scale * 0.9);
+      const pedTop = this._platforms?.[i * 2];
+      const pedBase = this._platforms?.[i * 2 + 1];
+      if (pedTop) {
+        pedTop.position.set(x, 0.11, 0);
+        pedTop.scale.set(pedScale, 1, pedScale);
+      }
+      if (pedBase) {
+        pedBase.position.set(x, 0, 0);
+        pedBase.scale.set(pedScale, 1, pedScale);
+      }
 
       const spot = this._spotlights?.[i];
-      if (spot) spot.intensity = isSel ? 3.5 : 0.25;
+      if (spot) {
+        spot.position.set(x, 4.2, 1.2);
+        spot.target.position.set(x, 0.6, isSel ? layout.selZ : 0);
+        spot.intensity = isSel ? 3.5 : 0.25;
+      }
 
       const card = this._cardEls?.[i];
       if (card) {
@@ -369,14 +462,24 @@ const characterSelectImpl: SelectScreenState & Screen = {
 
   exit() {
     this._active = false;
+    this._offResize?.();
+    this._offResize = undefined;
+    if (world.camera) {
+      world.camera.fov = PARTY_FOV;
+      world.camera.updateProjectionMatrix();
+    }
 
     if (this._onKeyDown) {
       window.removeEventListener("keydown", this._onKeyDown);
       this._onKeyDown = undefined;
     }
 
+    for (const h of this._holders ?? []) world.scene?.remove(h);
+    this._holders = undefined;
+    this._fit = undefined;
+    this._foot = undefined;
+
     for (const ch of this._chars ?? []) {
-      world.scene?.remove(ch.group);
       ch.dispose();
     }
     this._chars = undefined;
