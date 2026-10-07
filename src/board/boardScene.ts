@@ -22,6 +22,8 @@ import {
   buildLampPost,
   buildBalloons,
   buildStarProp,
+  buildStampProp,
+  buildSpaceBalloon,
   buildGrumpyFace,
   buildStartArrow,
   toonMat,
@@ -85,8 +87,8 @@ const DISK_RIM: Record<SpaceType, string> = {
   star: palette.sunDeep,
   shop: palette.bubbleDeep,
   grumpus: palette.lavaDeep,
-  stamp: palette.heroPip,      // our touch
-  minigame_balloon: palette.candy, // our touch
+  stamp: palette.sunDeep,
+  minigame_balloon: palette.candyDeep,
 };
 
 /** Capsule (rounded strip) shape along +X, length `len`, width `w`. */
@@ -227,6 +229,15 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
       const starProp = buildStarProp(kit, i * 1.7);
       g.add(starProp.root);
       props.push(starProp);
+    } else if (sp.type === "stamp" && sp.stamp) {
+      const stampProp = buildStampProp(kit, sp.stamp, i * 1.3);
+      g.add(stampProp.root);
+      props.push(stampProp);
+    } else if (sp.type === "minigame_balloon") {
+      const coins = sp.balloonCoins === 10 ? 10 : 5;
+      const balloonProp = buildSpaceBalloon(kit, coins, i * 1.1);
+      g.add(balloonProp.root);
+      props.push(balloonProp);
     } else if (sp.type === "grumpus") {
       g.add(buildGrumpyFace(kit));
     }

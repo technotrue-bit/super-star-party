@@ -6,7 +6,7 @@
  * equal arc-length along the perimeter (deterministic, no rng — a board is
  * fixed design data, not a random roll).
  */
-import type { SpaceDef, SpaceType } from "../core/game";
+import type { SpaceDef, SpaceType, StampKind } from "../core/game";
 import { settings } from "../config/settings";
 
 export interface BoardDef {
@@ -91,17 +91,35 @@ function roundedRectLoop(
 }
 
 // ---- Fizzy Fairground space data ---------------------------------------------
-// 28 spaces — MP7 + our carnival touches.
-// 10 blue, 5 red, 3 green (happenings), 2 star (Prize Balloon spots), 2 shop, 2 grumpus,
-// 3 stamp (collect Shy/Goomba/Koopa for 30-coin jackpot + Stamp Star bonus),
-// 1 minigame_balloon (pays 5/10 + flags minigame).
-// Specials interleaved.
+// 28 outer spaces — MP7 + our carnival touches.
+// 7 blue, 6 red, 4 green (happenings), 2 star (Prize Balloon spots), 2 shop,
+// 2 grumpus, 3 stamp (one each of Shy Guy / Goomba / Koopa), 2 minigame balloons
+// (5 coins and 10 coins).
+//
+// The Funhouse Cut (stepOn) jumps from the space before 20 straight to 26, so
+// indices 20–25 are not on the walked lap. Stamps and balloons live on spaces
+// the dice actually hops: shy at 3 (just before the first star, so a jackpot
+// can fund that star the same move), goomba at 11, koopa at 27, balloons at
+// 5 (5 coins) and 16 (10 coins).
 const TYPES: SpaceType[] = [
-  "blue", "blue", "green", "blue", "star", "blue", "red",
-  "green", "blue", "red", "shop", "stamp", "green", "red",   // stamp at Ring Toss
-  "blue", "star", "blue", "grumpus", "blue", "red", "minigame_balloon",
-  "shop", "blue", "red", "grumpus", "stamp", "red", "stamp", // stamps + balloon
+  "blue", "blue", "green", "stamp", "star", "minigame_balloon", "red",
+  "green", "blue", "red", "shop", "stamp", "green", "red",
+  "blue", "star", "minigame_balloon", "grumpus", "blue", "red", "green",
+  "shop", "blue", "red", "grumpus", "blue", "red", "stamp",
 ];
+
+/** Stamp kind granted by an outer-loop index. */
+const STAMP_KIND: Partial<Record<number, StampKind>> = {
+  3: "shy",
+  11: "goomba",
+  27: "koopa",
+};
+
+/** Coin price on a minigame balloon, by outer-loop index. */
+const BALLOON_COINS: Partial<Record<number, 5 | 10>> = {
+  5: 5,
+  16: 10,
+};
 
 const INNER_TYPES: SpaceType[] = [
   "blue", "red", "blue", "green", "blue", "red", "blue", "blue",
@@ -112,20 +130,20 @@ const NAMES: string[] = [
   "Fizzy Fountain", // 0 start, bottom-left corner
   "Gumball Alley",
   "Whimsy Whirl",
-  "Caramel Cove",
+  "Shy Stamp Stand", // shy stamp — one hop before the star
   "Starlight Stage", // star
-  "Cotton Cloud Corner",
+  "Fizzy Five Balloon", // 5-coin minigame balloon
   "Dunk Tank Drop",
   "Fortune Teller's Twist",
   "Popcorn Promenade",
   "Ring Toss Rage",
   "Gumball Emporium", // shop
-  "Taffy Twist Trail",
+  "Goomba Gallery", // goomba stamp
   "Mirror Maze Mischief",
   "Lava Pop Pit",
   "Lemonade Landing",
   "Golden Gazebo", // star
-  "Candy Cart Crawl",
+  "Grand Ten Balloon", // 10-coin minigame balloon
   "Grumpus Grove", // grumpus
   "Ferris Fling Way",
   "Fire-Eater's Fury",
@@ -136,7 +154,7 @@ const NAMES: string[] = [
   "Grumpus Gulch", // grumpus
   "Waffle Wharf",
   "Hot Pepper Plunge", // shortcut exit (red)
-  "Ticket Ticker Turn",
+  "Koopa Kiosk", // koopa stamp
 ];
 
 const INNER_NAMES: string[] = [
@@ -161,13 +179,20 @@ const INNER_NAMES: string[] = [
 function buildSpaces(): SpaceDef[] {
   const outer = roundedRectLoop(TYPES.length, LOOP_A, LOOP_B, LOOP_R, settings.tileSpacing);
   const inner = roundedRectLoop(INNER_TYPES.length, 2.4, 1.6, 0.7, settings.tileSpacing);
-  const outerSpaces = TYPES.map((type, i) => ({
-    index: i,
-    type,
-    name: NAMES[i] ?? `Space ${i + 1}`,
-    x: outer[i].x,
-    y: outer[i].y,
-  }));
+  const outerSpaces = TYPES.map((type, i) => {
+    const space: SpaceDef = {
+      index: i,
+      type,
+      name: NAMES[i] ?? `Space ${i + 1}`,
+      x: outer[i].x,
+      y: outer[i].y,
+    };
+    const stamp = STAMP_KIND[i];
+    if (stamp) space.stamp = stamp;
+    const balloonCoins = BALLOON_COINS[i];
+    if (balloonCoins) space.balloonCoins = balloonCoins;
+    return space;
+  });
   const innerSpaces = INNER_TYPES.map((type, i) => ({
     index: TYPES.length + i,
     type,

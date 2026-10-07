@@ -5,6 +5,7 @@
  */
 import * as THREE from "three";
 import { palette } from "../config/palette";
+import type { StampKind } from "../core/game";
 import { settings } from "../config/settings";
 import type { BoardTextures } from "./boardTextures";
 
@@ -480,6 +481,98 @@ export function buildStarProp(kit: BoardTextures, phase: number): Prop {
         sparks[i].position.set(Math.cos(a) * 0.9, 0.88 + Math.sin(t * 2.2 + phase + i) * 0.06, Math.sin(a) * 0.9);
         sparks[i].scale.setScalar(0.6 + 0.5 * Math.sin(t * 5 + phase + i * 2.1));
       }
+    },
+  };
+}
+
+const STAMP_SEAL_COLOR: Record<StampKind, string> = {
+  shy: palette.lava,
+  goomba: palette.wood,
+  koopa: palette.mint,
+};
+
+/**
+ * Bobbing seal for a stamp space. The letter (S / G / K) and seal color
+ * tell Shy Guy, Goomba, and Koopa apart from the party camera.
+ */
+export function buildStampProp(kit: BoardTextures, kind: StampKind, phase: number): Prop {
+  const root = new THREE.Group();
+  const seal = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.42, 0.46, 0.1, 20),
+    [
+      toonMat(kit, palette.ink),
+      toonMat(kit, palette.white, { map: kit.stampSeal[kind] }),
+      toonMat(kit, STAMP_SEAL_COLOR[kind]),
+    ]
+  );
+  seal.castShadow = true;
+  seal.position.y = 0.7;
+  // Same yaw as space disks so the initial reads upright from the south camera.
+  seal.rotation.y = Math.PI / 2;
+  root.add(seal);
+
+  return {
+    root,
+    update(t: number) {
+      seal.position.y = 0.7 + Math.sin(t * 1.7 + phase) * 0.07;
+      seal.rotation.y = Math.PI / 2 + Math.sin(t * 0.7 + phase) * 0.18;
+    },
+  };
+}
+
+/**
+ * One carnival balloon on a string, pink for 5 coins and gold for 10,
+ * with a cream price tag that bobs with it.
+ */
+export function buildSpaceBalloon(kit: BoardTextures, coins: 5 | 10, phase: number): Prop {
+  const root = new THREE.Group();
+  const bodyColor = coins === 10 ? palette.sun : palette.candy;
+  const bob = new THREE.Group();
+
+  const string = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.02, 0.02, 0.7, 6),
+    toonMat(kit, palette.ink)
+  );
+  string.position.y = 0.55;
+  bob.add(string);
+
+  const balloon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.36, 14, 12),
+    toonMat(kit, bodyColor)
+  );
+  balloon.position.y = 1.15;
+  balloon.castShadow = true;
+  bob.add(balloon);
+  const shell = outline(balloon, 1.08);
+  shell.position.copy(balloon.position);
+  bob.add(shell);
+
+  const knot = new THREE.Mesh(
+    new THREE.ConeGeometry(0.08, 0.12, 6),
+    toonMat(kit, bodyColor)
+  );
+  knot.position.y = 0.82;
+  knot.rotation.x = Math.PI;
+  bob.add(knot);
+
+  const badge = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.2, 0.2, 0.06, 16),
+    [
+      toonMat(kit, palette.ink),
+      toonMat(kit, palette.white, { map: kit.balloonBadge[coins], transparent: true }),
+      toonMat(kit, palette.cream),
+    ]
+  );
+  badge.position.y = 1.42;
+  badge.rotation.y = Math.PI / 2;
+  bob.add(badge);
+
+  root.add(bob);
+  return {
+    root,
+    update(t: number) {
+      bob.position.y = Math.sin(t * B.balloonSway + phase) * 0.08;
+      bob.rotation.z = Math.sin(t * B.balloonSway * 0.8 + phase) * 0.06;
     },
   };
 }

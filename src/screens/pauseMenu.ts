@@ -456,6 +456,8 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
       [palette.sun, "Gold — Buy a Star (20 coins)"],
       [palette.bubble, "Cyan — Gumball Shop"],
       [palette.lavaDeep, "Crimson — Grumpus!"],
+      [palette.heroPip, "Gold ticket — Stamp"],
+      [palette.candy, "Balloon — pay 5 or 10, calls a minigame"],
     ];
     for (const [color, label] of chipData) {
       const chip = document.createElement("span");
@@ -485,7 +487,7 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
     const miniP = document.createElement("p");
     miniP.style.margin = "0";
     miniP.innerHTML =
-      "After every round, all four players enter a <b>minigame</b>. Winner earns <b>+10 coins</b>. Most minigame wins takes the <b>Mini Star</b> bonus!";
+      "Pop a <b>Minigame Balloon</b> (pay 5 or 10) and everyone plays a minigame after the round. No pop, the round just rolls on. Winner earns <b>+10 coins</b>. All three stamps pays the <b>30-coin Carnival Jackpot</b>.";
     rules.appendChild(miniP);
 
     const items = document.createElement("h4");

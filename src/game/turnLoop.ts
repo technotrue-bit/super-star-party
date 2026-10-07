@@ -31,7 +31,8 @@ import type { Character } from "../characters/characterFactory";
 import type { HudHandle } from "../ui/hud";
 import type { ButtonHandle } from "../ui/button";
 import type { PopupHandle } from "../ui/popup";
-import { addCoins, tryBuyStar, computeBonusStars, finalRanking } from "./economy";
+import { addCoins, tryBuyStar, computeBonusStars, finalRanking, grantStamp, popMinigameBalloon, type BonusStarKind } from "./economy";
+import { STAMP_LABEL } from "../core/game";
 import { resolveGreen, resolveGrumpus, consumeFreeStar, consumeDoubleBlue } from "./happenings";
 import { ITEM_DEFS, canUseItem, useItem } from "./items";
 import { openShop } from "../screens/shopScreen";
@@ -75,6 +76,18 @@ export const PLAYER_OFFSETS: ReadonlyArray<[number, number]> = [
 ];
 
 const wrap = (i: number): number => ((i % N) + N) % N;
+
+function bonusStarLabel(star: BonusStarKind): string {
+  if (star === "mini") return "MINI STAR";
+  if (star === "stamp") return "STAMP STAR";
+  return "COIN STAR";
+}
+
+function bonusStarTag(star: BonusStarKind): string {
+  if (star === "mini") return "★mini";
+  if (star === "stamp") return "★stamp";
+  return "★coin";
+}
 
 /** Fewest hops from `from` to the star, honouring junctions (BFS over the graph). */
 function hopsToStar(from: number): number {
@@ -326,6 +339,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         coins: p.coins,
         stars: p.stars,
         minigameWins: p.minigameWins,
+        stamps: p.stamps,
         active: S.phase !== "results" && S.phase !== "ended" && p.id === match.currentPlayer,
         color: characterColor(p.kind),
       }))
@@ -494,6 +508,44 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     });
   };
 
+  /**
+   * Stamp spaces and minigame balloons resolve the moment a hop arrives,
+   * whether the player is passing through or landing. Other space types
+   * still resolve only on the final tile.
+   * Returns true when this space was one of those two.
+   */
+  const arriveCarnival = (pid: number, space: number, landed: boolean): boolean => {
+    const sp = fizzyFairground.spaces[wrap(space)];
+    if (!sp) return false;
+    if (sp.type === "stamp" && sp.stamp) {
+      const label = STAMP_LABEL[sp.stamp];
+      const res = grantStamp(pid, sp.stamp);
+      if (res.jackpot) {
+        hud.showBanner(`CARNIVAL JACKPOT! +${settings.stampJackpot}`, { durationMs: 1600 });
+        if (landed) chars[pid]?.anim.cheer();
+      } else if (res.added) {
+        hud.showBanner(`${label.toUpperCase()} STAMP!`, { durationMs: 1200 });
+        audio.sfx.play("pop", { pitch: 3 });
+      } else {
+        ui.toast(`Already stamped: ${label}`, { durationMs: 1000 });
+      }
+      refreshHud();
+      return true;
+    }
+    if (sp.type === "minigame_balloon") {
+      const listed = sp.balloonCoins === 10 ? 10 : 5;
+      const paid = popMinigameBalloon(pid, listed);
+      hud.showBanner(
+        paid > 0 ? `BALLOON −${paid}! MINIGAME SET` : "BALLOON POP! MINIGAME SET",
+        { durationMs: 1300 }
+      );
+      if (landed) chars[pid]?.anim.cheer();
+      refreshHud();
+      return true;
+    }
+    return false;
+  };
+
   const enterSpaceEffect = (pid: number): void => {
     S.phase = "space-effect";
     match.phase = "space-effect";
@@ -585,6 +637,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         happeningSpace(pid, "grumpus");
         return; // may move
       }
+      case "stamp":
+      case "minigame_balloon":
+        arriveCarnival(pid, player.space, true);
+        break;
       default:
         break;
     }
@@ -1033,6 +1089,18 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       S.circusToll.turnsLeft -= 1;
       if (S.circusToll.turnsLeft <= 0) S.circusToll = null;
     }
+    const popped = match.minigameTriggeredThisRound;
+    match.minigameTriggeredThisRound = false;
+    if (!popped) {
+      ui.toast("No balloon popped — the midway stays quiet.", { durationMs: 1500 });
+      match.turn += 1;
+      if (match.turn > match.totalTurns) {
+        results();
+      } else {
+        pause(0.7, beginTurn);
+      }
+      return;
+    }
     S.phase = "minigame-round";
     match.phase = "minigame";
     rollButton.setVisible(false);
@@ -1097,10 +1165,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         const p = match.players[b.playerId];
         audio.sfx.play("fanfare.win");
         ui.confettiBurst(undefined, undefined, { count: 90, sound: null });
-        hud.showBanner(
-          b.star === "mini" ? `★ MINI STAR → ${p.name}!` : `★ COIN STAR → ${p.name}!`,
-          { durationMs: 1900 }
-        );
+        hud.showBanner(`★ ${bonusStarLabel(b.star)} → ${p.name}!`, { durationMs: 1900 });
       });
     }
     steps.push(() => {
@@ -1120,7 +1185,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         const p = match.players[r.playerId];
         const row = document.createElement("div");
         row.className = `ssp-podium__row${i === 0 ? " ssp-podium__row--win" : ""}`;
-        const tags = r.bonus.map((b) => (b === "mini" ? "★mini" : "★coin")).join(" ");
+        const tags = r.bonus.map((b) => bonusStarTag(b)).join(" ");
         row.textContent = `${i + 1}. ${p?.name ?? "?"}  ★${r.stars} · ${r.coins}c${tags ? `  ${tags}` : ""}`;
         content.appendChild(row);
       });
@@ -1216,6 +1281,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
             if (S.afterMove === "effect") enterSpaceEffect(pid);
             else finishTurn();
           } else {
+            // Passing a stamp or minigame balloon pays out on the hop,
+            // before the rest of the move (so a jackpot can fund a star
+            // landed later in the same roll).
+            arriveCarnival(pid, S.hopTo, false);
             const branch = JUNCTIONS.find((j) => j.from === S.hopTo);
             const hopsLeft = S.moveQueue.length - S.moveIdx;
             if (branch && hopsLeft > 0) offerJunction(pid, hopsLeft);

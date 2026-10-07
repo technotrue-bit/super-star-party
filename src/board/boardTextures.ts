@@ -5,7 +5,7 @@
  */
 import * as THREE from "three";
 import { palette, hex } from "../config/palette";
-import type { SpaceType } from "../core/game";
+import type { SpaceType, StampKind } from "../core/game";
 
 const SIZE = 64;
 
@@ -201,6 +201,12 @@ const DISK_BASE: Record<SpaceType, string> = {
   minigame_balloon: palette.candy, // balloon pop
 };
 
+const STAMP_SEAL: Record<StampKind, string> = {
+  shy: palette.lava,
+  goomba: palette.wood,
+  koopa: palette.mint,
+};
+
 function diskTexture(type: SpaceType): THREE.CanvasTexture {
   const [c, ctx] = makeCanvas(SIZE, SIZE);
   drawDiskBase(ctx, DISK_BASE[type]);
@@ -223,7 +229,93 @@ function diskTexture(type: SpaceType): THREE.CanvasTexture {
     case "grumpus":
       drawGrumpyFace(ctx, 32, 32, 1, 2);
       break;
+    case "stamp":
+      drawStamp(ctx);
+      break;
+    case "minigame_balloon":
+      drawBalloon(ctx);
+      break;
   }
+  return toTexture(c);
+}
+
+/** Ticket punched with a gold seal — reads as a stamp from above. */
+function drawStamp(ctx: CanvasRenderingContext2D): void {
+  ctx.fillStyle = palette.cream;
+  roundRectPath(ctx, 16, 18, 32, 28, 5);
+  ctx.fill();
+  ctx.strokeStyle = palette.ink;
+  ctx.lineWidth = 2.2;
+  ctx.stroke();
+  ctx.fillStyle = palette.sun;
+  circle(ctx, 32, 32, 7);
+  ctx.fill();
+  ctx.strokeStyle = palette.ink;
+  ctx.lineWidth = 1.6;
+  circle(ctx, 32, 32, 7);
+  ctx.stroke();
+}
+
+/** Cream balloon with a knot and string. The price lives on the 3D prop. */
+function drawBalloon(ctx: CanvasRenderingContext2D): void {
+  ctx.fillStyle = palette.cream;
+  circle(ctx, 32, 26, 12);
+  ctx.fill();
+  ctx.strokeStyle = palette.ink;
+  ctx.lineWidth = 2.2;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(29, 36.5);
+  ctx.lineTo(32, 42);
+  ctx.lineTo(35, 36.5);
+  ctx.closePath();
+  ctx.fillStyle = palette.cream;
+  ctx.fill();
+  ctx.stroke();
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(32, 42);
+  ctx.quadraticCurveTo(38, 50, 30, 56);
+  ctx.stroke();
+}
+
+/** Colored seal with the stamp's initial, laid on the space as a 3D disc. */
+function stampSealTexture(kind: StampKind): THREE.CanvasTexture {
+  const [c, ctx] = makeCanvas(SIZE, SIZE);
+  ctx.fillStyle = STAMP_SEAL[kind];
+  ctx.fillRect(0, 0, SIZE, SIZE);
+  ctx.fillStyle = palette.cream;
+  circle(ctx, 32, 32, 18);
+  ctx.fill();
+  ctx.strokeStyle = palette.ink;
+  ctx.lineWidth = 3;
+  circle(ctx, 32, 32, 18);
+  ctx.stroke();
+  ctx.fillStyle = palette.ink;
+  ctx.font = "700 28px Fredoka, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const letter = kind === "shy" ? "S" : kind === "goomba" ? "G" : "K";
+  ctx.fillText(letter, 32, 34);
+  return toTexture(c);
+}
+
+/** Cream price tag for a 5- or 10-coin minigame balloon. */
+function balloonBadgeTexture(coins: 5 | 10): THREE.CanvasTexture {
+  const [c, ctx] = makeCanvas(SIZE, SIZE);
+  ctx.clearRect(0, 0, SIZE, SIZE);
+  ctx.fillStyle = palette.cream;
+  circle(ctx, 32, 32, 22);
+  ctx.fill();
+  ctx.strokeStyle = palette.ink;
+  ctx.lineWidth = 4;
+  circle(ctx, 32, 32, 22);
+  ctx.stroke();
+  ctx.fillStyle = palette.ink;
+  ctx.font = "700 26px Fredoka, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(coins), 32, 34);
   return toTexture(c);
 }
 
@@ -283,6 +375,8 @@ export interface BoardTextures {
   grass: THREE.CanvasTexture;
   face: THREE.CanvasTexture;
   disks: Record<SpaceType, THREE.CanvasTexture>;
+  stampSeal: Record<StampKind, THREE.CanvasTexture>;
+  balloonBadge: Record<5 | 10, THREE.CanvasTexture>;
   /** Get (and cache) a candy-stripe texture for a color pair. */
   stripe: (a: string, b: string) => THREE.CanvasTexture;
   dispose: () => void;
@@ -293,9 +387,21 @@ const stripeCache = new Map<string, THREE.CanvasTexture>();
 /** Build every texture the board needs. Dispose with kit.dispose(). */
 export function buildKit(): BoardTextures {
   const disks = {} as Record<SpaceType, THREE.CanvasTexture>;
-  for (const t of ["blue", "red", "green", "star", "shop", "grumpus"] as SpaceType[]) {
+  const spaceTypes: SpaceType[] = [
+    "blue", "red", "green", "star", "shop", "grumpus", "stamp", "minigame_balloon",
+  ];
+  for (const t of spaceTypes) {
     disks[t] = diskTexture(t);
   }
+  const stampSeal = {
+    shy: stampSealTexture("shy"),
+    goomba: stampSealTexture("goomba"),
+    koopa: stampSealTexture("koopa"),
+  };
+  const balloonBadge = {
+    5: balloonBadgeTexture(5),
+    10: balloonBadgeTexture(10),
+  };
   const stripe = (a: string, b: string): THREE.CanvasTexture => {
     const key = `${hex(a)}|${hex(b)}`;
     let t = stripeCache.get(key);
@@ -310,12 +416,16 @@ export function buildKit(): BoardTextures {
     grass: grassTexture(),
     face: faceDiscTexture(),
     disks,
+    stampSeal,
+    balloonBadge,
     stripe,
     dispose() {
       this.grad.dispose();
       this.grass.dispose();
       this.face.dispose();
       for (const t of Object.values(this.disks)) t.dispose();
+      for (const t of Object.values(this.stampSeal)) t.dispose();
+      for (const t of Object.values(this.balloonBadge)) t.dispose();
       for (const t of stripeCache.values()) t.dispose();
       stripeCache.clear();
     },

@@ -6,10 +6,10 @@
  * coin-star tie (then runner-up re-picks) — so seeded runs replay identically.
  * Event-driven: coin/star changes are announced on the bus; screens and the
  * audio crowd react to them. MP7-faithful: star cost 20, +10 minigame payout,
- * two end-of-match bonus stars (Mini Star = most minigame wins, Coin Star =
- * most coins), one bonus star per player.
+ * Mini Star and Coin Star (one each; a player cannot win both), plus a
+ * Stamp Star in the ranking once anyone has collected a stamp.
  */
-import { match } from "../core/game";
+import { match, STAMP_KINDS, type PlayerState, type StampKind } from "../core/game";
 import { rng } from "../core/rng";
 import { bus } from "../core/events";
 import { audio } from "../audio/audioEngine";
@@ -26,7 +26,7 @@ export interface FinalRankEntry {
   playerId: number;
   stars: number; // match stars + 1 per bonus star won
   coins: number;
-  bonus: BonusStarKind[]; // which bonus stars this player won ("mini" | "coin")
+  bonus: BonusStarKind[]; // which bonus stars this player won
 }
 
 /* ------------------------------------------------------------------ */
@@ -113,10 +113,8 @@ export function minigamePayout(winnerId: number): void {
 /*  Bonus stars + final ranking                                        */
 /* ------------------------------------------------------------------ */
 
-type Scoreable = { coins: number; minigameWins: number };
-
 /** Players tied at the max of `score(p)`; a single leader wins outright. */
-function leaders(score: (p: Scoreable) => number): number[] {
+function leaders(score: (p: PlayerState) => number): number[] {
   const players = match.players;
   let best = -Infinity;
   let ids: number[] = [];
@@ -133,7 +131,7 @@ function leaders(score: (p: Scoreable) => number): number[] {
 }
 
 /** Max-`score` players among everyone EXCEPT `excludeId` (bonus runner-up). */
-function runnerUpLeaders(score: (p: Scoreable) => number, excludeId: number): number[] {
+function runnerUpLeaders(score: (p: PlayerState) => number, excludeId: number): number[] {
   const players = match.players.filter((p) => p.id !== excludeId);
   let best = -Infinity;
   let ids: number[] = [];
@@ -155,9 +153,10 @@ function pickAmong(ids: number[]): number {
 }
 
 /**
- * End-of-match bonus stars — exactly two, MP7 style:
+ * End-of-match bonus stars, MP7 style:
  *   "mini" — most minigame wins
  *   "coin" — most coins
+ *   "stamp" — most stamps collected, only when that count is above zero
  * Ties are broken deterministically with rng (mini tie consumed FIRST, then
  * coin tie — fixed order for replay). One bonus star per player: if the same
  * player would win both, the coin star goes to the richest runner-up.
@@ -175,15 +174,21 @@ export function computeBonusStars(): BonusStarAward[] {
     coin = runnersUp.length > 0 ? pickAmong(runnersUp) : mini; // degenerate 1-player match
   }
 
-  // Our touch: third bonus star — Stamp Star for most stamps collected
-  const stampIds = leaders((p) => (p as any).stamps?.length ?? 0);
-  const stamp = pickAmong(stampIds);
-
-  return [
+  const awards: BonusStarAward[] = [
     { star: "mini", playerId: mini },
     { star: "coin", playerId: coin },
-    { star: "stamp", playerId: stamp },
   ];
+
+  // Stamp Star only when someone actually collected a stamp. A full set cashed
+  // in for the jackpot still counts via stampsCollected. The finale ceremony
+  // announces Mini and Coin; this award is in the ranking math only for now.
+  const stampIds = leaders((p) => p.stampsCollected);
+  const bestStamps = Math.max(...match.players.map((p) => p.stampsCollected), 0);
+  if (bestStamps > 0 && stampIds.length > 0) {
+    awards.push({ star: "stamp", playerId: pickAmong(stampIds) });
+  }
+
+  return awards;
 }
 
 /**
@@ -240,20 +245,56 @@ function sameScore(a: FinalRankEntry, b: FinalRankEntry): boolean {
 /* ------------------------------------------------------------------ */
 
 /**
- * Award 30 coins if the player just collected their 3rd distinct stamp.
- * Can be called from turn loop on landing/passing a stamp space.
- * Returns true if jackpot paid.
+ * Give the player a stamp kind they do not already hold.
+ * When the held set reaches all three, pay the Carnival Jackpot immediately
+ * and clear the held stamps so the coins are in hand for a later stop on
+ * this same move (a star buy checks coins after pass effects resolve).
+ * Duplicate stamps are a no-op. Returns whether a new stamp was added and
+ * whether the jackpot paid.
+ */
+export function grantStamp(playerId: number, kind: StampKind): { added: boolean; jackpot: boolean } {
+  const p = match.players[playerId];
+  if (!p) return { added: false, jackpot: false };
+  if (p.stamps.includes(kind)) return { added: false, jackpot: false };
+  p.stamps.push(kind);
+  p.stampsCollected += 1;
+  bus.emit("stamp:collected", { player: playerId, kind, total: p.stampsCollected });
+  const jackpot = awardStampJackpot(playerId);
+  return { added: true, jackpot };
+}
+
+/**
+ * Pay the Carnival Jackpot if the player is holding every stamp kind.
+ * Clears the held set on payout so the same set cannot pay twice.
+ * Coins stay — a star space later in the same move can spend them.
  */
 export function awardStampJackpot(playerId: number): boolean {
   const p = match.players[playerId];
   if (!p) return false;
   const distinct = new Set(p.stamps);
-  if (distinct.size >= 3) {
-    addCoins(playerId, 30);
-    bus.emit("stamp:jackpot", { player: playerId, amount: 30 });
-    audio.sfx.play("coin.gain", { pitch: 10 });
-    audio.sfx.play("crowd.cheer");
-    return true;
-  }
-  return false;
+  if (distinct.size < STAMP_KINDS.length) return false;
+  const amount = settings.stampJackpot;
+  addCoins(playerId, amount);
+  p.stamps = [];
+  bus.emit("stamp:jackpot", { player: playerId, amount });
+  audio.sfx.play("crowd.cheer");
+  return true;
+}
+
+/**
+ * Pop a minigame balloon: the player pays the listed price (as many coins
+ * as they have, never below zero) and the round is flagged for a minigame.
+ * A player with no coins still pops it — the midway does not refuse a pop.
+ * Returns the coins actually paid.
+ */
+export function popMinigameBalloon(playerId: number, listed: 5 | 10): number {
+  const p = match.players[playerId];
+  if (!p) return 0;
+  const before = p.coins;
+  addCoins(playerId, -listed);
+  const paid = before - (match.players[playerId]?.coins ?? before);
+  match.minigameTriggeredThisRound = true;
+  bus.emit("balloon:popped", { player: playerId, coins: paid, listed });
+  audio.sfx.play("pop");
+  return paid;
 }
