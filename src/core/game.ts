@@ -10,7 +10,7 @@ export type SpaceType =
   | "blue"
   | "red"
   | "green"
-  | "star"              // Prize Balloon (movable Star Balloon)
+  | "star"              // disk style only; the balloon lives on match.starBalloonPos
   | "shop"
   | "grumpus"
   | "stamp"             // collect Shy Guy / Goomba / Koopa stamp
@@ -169,8 +169,9 @@ export function startMatch(kinds: string[], names: string[], totalTurns = 10, se
   match.lastDice = [];
   match.events = [];
   match.players = kinds.map((k, i) => makePlayer(i, k, names[i] ?? `P${i + 1}`));
-  // Initialize movable Prize Balloon to the first star space (will be overridden by board setup)
-  match.starBalloonPos = 4; // reasonable default near first star in current layout
+  // Grand Prize Balloon starts one hop after the Shy Stamp Stand, so a
+  // jackpot collected on the way in can fund a purchase the same move.
+  match.starBalloonPos = 4;
   match.minigameTriggeredThisRound = false;
   match.turnOrder = [0, 1, 2, 3];
   match.orderRolls = [];

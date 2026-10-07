@@ -11,6 +11,7 @@ import * as THREE from "three";
 import { world } from "../main";
 import { settings } from "../config/settings";
 import { palette } from "../config/palette";
+import { ease } from "../core/rng";
 import type { SpaceType } from "../core/game";
 import { fizzyFairground, type BoardDef } from "./boardData";
 import { buildKit, type BoardTextures } from "./boardTextures";
@@ -24,6 +25,7 @@ import {
   buildStarProp,
   buildStampProp,
   buildSpaceBalloon,
+  buildGrandPrizeBalloon,
   buildGrumpyFace,
   buildStartArrow,
   toonMat,
@@ -49,6 +51,11 @@ export interface BoardScene {
   clearHighlights(): void;
   /** Advance idle animations (ferris, stars, pennants, highlights). */
   update(dt: number): void;
+  /**
+   * Park the Grand Prize Balloon on a space. The first call snaps into place.
+   * Later calls pop it and reinflate at the new index. Null hides it.
+   */
+  setPrizeBalloon(index: number | null): void;
   /** Remove the group and free all GPU resources. */
   dispose(): void;
 }
@@ -251,6 +258,25 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
     spaceGroups.push(g);
   }
 
+  // One Grand Prize Balloon for the whole board. Hidden until a screen
+  // parks it on match.starBalloonPos. Pop/reinflate is presentation only.
+  const prize = buildGrandPrizeBalloon(kit);
+  prize.root.visible = false;
+  group.add(prize.root);
+  props.push(prize);
+  let prizeShown: number | null = null;
+  let prizeTarget: number | null = null;
+  let prizePop = -1;
+  const POP_SHRINK = 0.16;
+  const POP_INFLATE = 0.42;
+
+  const placePrize = (index: number, scale: number): void => {
+    const sp = def.spaces[wrapIndex(index, n)];
+    prize.root.position.set(sp.x, 0, sp.y);
+    const s = Math.max(0.001, scale);
+    prize.root.scale.setScalar(s);
+  };
+
   // ---- scenery ----------------------------------------------------------------------
   const bounds = boardBounds();
   const cx = (bounds.minX + bounds.maxX) / 2;
@@ -358,10 +384,47 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
       }
     },
 
+    setPrizeBalloon(index: number | null): void {
+      if (index === null) {
+        prize.root.visible = false;
+        prizeTarget = null;
+        return;
+      }
+      prize.root.visible = true;
+      prizeTarget = wrapIndex(index, n);
+      if (prizeShown === null) {
+        prizeShown = prizeTarget;
+        prizePop = -1;
+        placePrize(prizeShown, 1);
+      }
+    },
+
     update(dt: number): void {
       if (disposed) return;
       t += dt;
       for (const p of props) p.update?.(t, dt);
+      if (
+        prize.root.visible &&
+        prizeShown !== null &&
+        prizeTarget !== null &&
+        prizeTarget !== prizeShown &&
+        prizePop < 0
+      ) {
+        prizePop = 0;
+      }
+      if (prizePop >= 0 && prizeShown !== null && prizeTarget !== null) {
+        prizePop += dt;
+        if (prizePop < POP_SHRINK) {
+          placePrize(prizeShown, 1 - prizePop / POP_SHRINK);
+        } else if (prizePop < POP_SHRINK + POP_INFLATE) {
+          const u = (prizePop - POP_SHRINK) / POP_INFLATE;
+          placePrize(prizeTarget, ease.outBack(u));
+        } else {
+          prizeShown = prizeTarget;
+          prizePop = -1;
+          placePrize(prizeShown, 1);
+        }
+      }
       for (const r of rings) {
         if (!r.ring.visible) continue;
         if (r.on) {

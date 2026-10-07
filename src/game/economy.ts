@@ -5,15 +5,17 @@
  * through `rng`, always consumed in FIXED order — mini-star tie first, then
  * coin-star tie (then runner-up re-picks) — so seeded runs replay identically.
  * Event-driven: coin/star changes are announced on the bus; screens and the
- * audio crowd react to them. MP7-faithful: star cost 20, +10 minigame payout,
- * Mini Star and Coin Star (one each; a player cannot win both), plus a
- * Stamp Star in the ranking once anyone has collected a stamp.
+ * audio crowd react to them. MP7-faithful: stars are 10 coins from the
+ * Grand Prize Balloon (bundles up to 5), +10 minigame payout, Mini Star and
+ * Coin Star (one each; a player cannot win both), plus a Stamp Star in the
+ * ranking once anyone has collected a stamp.
  */
 import { match, STAMP_KINDS, type PlayerState, type StampKind } from "../core/game";
 import { rng } from "../core/rng";
 import { bus } from "../core/events";
 import { audio } from "../audio/audioEngine";
 import { settings } from "../config/settings";
+import { fizzyFairground } from "../board/boardData";
 
 export type BonusStarKind = "mini" | "coin" | "stamp";
 
@@ -64,32 +66,91 @@ export function playerCoins(playerId: number): number {
 /*  Stars                                                              */
 /* ------------------------------------------------------------------ */
 
-/**
- * Buy a star at the star space: costs settings.starCost (20) coins, +1 star.
- * Fails (returns false, no side effects) when the player has fewer coins.
- * On success emits `star:buy` {player, star, total} where `star` is the
- * player's NEW star count and `total` is their REMAINING coins after the
- * purchase, and plays the star.get fanfare at full volume.
- */
-export function tryBuyStar(playerId: number): boolean {
-  const p = match.players[playerId];
-  if (!p || p.coins < settings.starCost) return false;
-  p.coins -= settings.starCost;
-  p.stars += 1;
-  bus.emit("star:buy", { player: playerId, star: p.stars, total: p.coins });
-  audio.sfx.play("star.get", { volume: 1 });
-  // Our touch: after purchase, move the Prize Balloon to a new random spot (not current)
-  movePrizeBalloon(playerId);
-  return true;
+export interface StarPurchase {
+  /** Stars actually added. */
+  bought: number;
+  /** Chosen stars that could not be paid for. They are gone, not saved. */
+  discarded: number;
+  /** Coins spent. 0 when nothing was bought. */
+  spent: number;
 }
 
-/** Move the Prize Balloon (Star Balloon) to a new location after purchase. Carnival re-inflate touch. */
-export function movePrizeBalloon(buyerId: number): void {
+/**
+ * How many stars a careful buyer takes: every star they can pay for, capped
+ * at the bundle size. CPUs and autoplay use this so a visit never stalls and
+ * never asks for stars they cannot afford.
+ */
+export function sensibleStarCount(playerId: number): number {
+  const coins = match.players[playerId]?.coins ?? 0;
+  if (settings.starCost <= 0) return 0;
+  return Math.min(settings.starBundleMax, Math.floor(coins / settings.starCost));
+}
+
+/**
+ * Buy a bundle of stars from the Grand Prize Balloon.
+ * `requested` is clamped to 1..starBundleMax. The player pays for as many as
+ * they can afford; the rest of the bundle is discarded. A purchase of at
+ * least one star emits `star:buy` and moves the balloon. Buying nothing
+ * (no coins) leaves the balloon where it is.
+ */
+export function tryBuyStars(playerId: number, requested: number): StarPurchase {
+  const none = (discarded = 0): StarPurchase => ({ bought: 0, discarded, spent: 0 });
+  const p = match.players[playerId];
+  if (!p) return none();
+  const want = Math.max(0, Math.min(settings.starBundleMax, Math.floor(requested)));
+  if (want <= 0) return none();
+  const affordable = Math.floor(p.coins / settings.starCost);
+  const bought = Math.min(want, affordable);
+  const discarded = want - bought;
+  if (bought <= 0) return none(discarded);
+  const spent = bought * settings.starCost;
+  p.coins -= spent;
+  p.stars += bought;
+  bus.emit("star:buy", {
+    player: playerId,
+    star: p.stars,
+    total: p.coins,
+    bought,
+    spent,
+  });
+  audio.sfx.play("star.get", { volume: 1 });
+  movePrizeBalloon(playerId);
+  return { bought, discarded, spent };
+}
+
+/**
+ * Spaces the Grand Prize Balloon may float to. The Funhouse Cut skips
+ * indices [shortcut.from, shortcut.to), so those tiles are never a spot —
+ * a balloon there could not be reached.
+ */
+function prizeBalloonSpots(except: number): number[] {
+  const sc = fizzyFairground.shortcut;
+  const main = fizzyFairground.loops[0];
+  const spots: number[] = [];
+  for (const loop of fizzyFairground.loops) {
+    for (const index of loop) {
+      if (index === except) continue;
+      if (loop === main && sc && index >= sc.from && index < sc.to) continue;
+      spots.push(index);
+    }
+  }
+  return spots;
+}
+
+/**
+ * Pop the Grand Prize Balloon and reinflate it on a new walkable space.
+ * Deterministic via rng. Plays the gasp/pop. Returns the new position
+ * (unchanged when there is nowhere else to go).
+ */
+export function movePrizeBalloon(byId: number): number {
   const current = match.starBalloonPos;
-  const candidates = [4, 15]; // the two classic star space indices
-  const others = candidates.filter((i) => i !== current);
-  match.starBalloonPos = others.length > 0 ? rng.pick(others) : candidates[0];
-  bus.emit("star:balloon_moved", { from: current, to: match.starBalloonPos, by: buyerId });
+  const spots = prizeBalloonSpots(current);
+  if (spots.length === 0) return current;
+  const next = rng.pick(spots);
+  match.starBalloonPos = next;
+  bus.emit("star:balloon_moved", { from: current, to: next, by: byId });
+  audio.sfx.play("balloon.gasp");
+  return next;
 }
 
 /** Current star count for a player (0 for unknown ids). */

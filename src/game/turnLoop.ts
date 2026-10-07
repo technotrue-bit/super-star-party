@@ -6,7 +6,7 @@
  *
  * Owns ALL match-flow logic: dice (deterministic rng + forced-dice debug
  * hook), per-tile hop movement with the Funhouse Cut shortcut, space effects
- * (blue / red / star / shop / green / grumpus), item use before rolling,
+ * (blue / red / Grand Prize Balloon / shop / green / grumpus), item use before rolling,
  * minigame-round gating, bonus stars and the final podium. Every beat plays
  * its SFX, the music intensity follows the phase, and bus events keep the
  * crowd reactions + debug API live.
@@ -31,7 +31,7 @@ import type { Character } from "../characters/characterFactory";
 import type { HudHandle } from "../ui/hud";
 import type { ButtonHandle } from "../ui/button";
 import type { PopupHandle } from "../ui/popup";
-import { addCoins, tryBuyStar, computeBonusStars, finalRanking, grantStamp, popMinigameBalloon, type BonusStarKind } from "./economy";
+import { addCoins, tryBuyStars, sensibleStarCount, movePrizeBalloon, computeBonusStars, finalRanking, grantStamp, popMinigameBalloon, type BonusStarKind } from "./economy";
 import { STAMP_LABEL } from "../core/game";
 import { resolveGreen, resolveGrumpus, consumeFreeStar, consumeDoubleBlue } from "./happenings";
 import { ITEM_DEFS, canUseItem, useItem } from "./items";
@@ -261,6 +261,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     starCeremonyStepped4: boolean;
     starCeremonyStepped5: boolean;
     starCeremonyStepped6: boolean;
+    starCeremonyCount: number;
+    starCeremonyThen: (() => void) | null;
+    /** If autoplay flips on while the human bundle popup is up, buy this. */
+    starAutoCommit: (() => void) | null;
     // results
     resultSteps: Array<() => void>;
     resultTimer: number;
@@ -299,6 +303,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     starCeremonyStepped4: false,
     starCeremonyStepped5: false,
     starCeremonyStepped6: false,
+    starCeremonyCount: 1,
+    starCeremonyThen: null,
+    starAutoCommit: null,
     resultSteps: [],
     resultTimer: 0,
     circusToll: null,
@@ -557,6 +564,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     }
     const type = board.spaceType(player.space);
     const pos = board.spaceWorldPos(player.space);
+    const onPrize = player.space === match.starBalloonPos;
     const trap = trapAt(player.space);
     if (trap) {
       if (trap.kind === "circus" && trap.ownerId !== pid) {
@@ -587,6 +595,26 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     if (S.circusToll && S.circusToll.ownerId !== pid) {
       if (payCircusToll(pid, S.circusToll.ownerId)) refreshHud();
     }
+    // Stamps and minigame balloons resolve before the prize balloon so a
+    // Carnival Jackpot paid on this tile is in hand for the star bundle.
+    if (type === "stamp" || type === "minigame_balloon") {
+      arriveCarnival(pid, player.space, true);
+    }
+    const afterPrize = (): void => {
+      landRemainder(pid, type, pos);
+    };
+    if (onPrize) {
+      offerPrizeBalloon(pid, afterPrize);
+      return;
+    }
+    afterPrize();
+  };
+
+  /**
+   * Space effect that is not the Grand Prize Balloon. Stamp and minigame
+   * balloon tiles are already resolved by the caller.
+   */
+  const landRemainder = (pid: number, type: string, pos: THREE.Vector3): void => {
     switch (type) {
       case "blue": {
         let gained = settings.blueCoin;
@@ -621,10 +649,6 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         }
         break;
       }
-      case "star": {
-        starSpace(pid);
-        return; // popup / async path finishes itself
-      }
       case "shop": {
         shopSpace(pid);
         return; // async
@@ -639,7 +663,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       }
       case "stamp":
       case "minigame_balloon":
-        arriveCarnival(pid, player.space, true);
+      case "star":
         break;
       default:
         break;
@@ -794,10 +818,19 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   const STAR_CEREMONY_DUR = 3.8;
 
-  const celebrateStar = (pid: number): void => {
+  const celebrateStar = (pid: number, count: number, then: () => void): void => {
     S.starCeremony = true;
     S.starCeremonyT = 0;
     S.starCeremonyPid = pid;
+    S.starCeremonyCount = count;
+    S.starCeremonyThen = then;
+    S.starCeremonyStepped0 = false;
+    S.starCeremonyStepped1 = false;
+    S.starCeremonyStepped2 = false;
+    S.starCeremonyStepped3 = false;
+    S.starCeremonyStepped4 = false;
+    S.starCeremonyStepped5 = false;
+    S.starCeremonyStepped6 = false;
     stinger("star_fanfare", 4500);
     // Camera commits to the STAR SPACE first — the ceremony's anchor
     // (MP7: the camera locks onto the star, then follows it to the buyer).
@@ -853,7 +886,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         if ((el as HTMLElement).classList.contains("ssp-fb-banner--out"))
           (el as HTMLElement).remove();
       });
-      ui.queue.banner("★ STAR! ★", { durationMs: 2000, style: "gold", priority: "critical" });
+      const count = S.starCeremonyCount;
+      const label = count === 1 ? "★ STAR! ★" : `★ ${count} STARS! ★`;
+      ui.queue.banner(label, { durationMs: 2000, style: "gold", priority: "critical" });
       chars[pid]?.anim.cheer();
     }
     // t=0.6: crowd cheer, sparkle at the buyer as the star arcs past
@@ -900,65 +935,110 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     if (t >= STAR_CEREMONY_DUR) {
       S.starCeremony = false;
       ceremony.releaseCamera();
-      finishEffect();
+      const next = S.starCeremonyThen;
+      S.starCeremonyThen = null;
       (globalThis as any).__SSP_STAR_CEREMONY = { active: false, pid: 0, t: 0 };
+      if (next) next();
     }
   };
 
-  const starSpace = (pid: number): void => {
+  /**
+   * The player just reached the Grand Prize Balloon (pass or land).
+   * A free-star magnet takes one star and moves the balloon. Otherwise the
+   * human picks a bundle of 1–5; CPUs and autoplay buy every star they can
+   * pay for, up to 5, so a smoke run never waits on the popup.
+   * `then` continues the move or the rest of the landing effect.
+   */
+  const offerPrizeBalloon = (pid: number, then: () => void): void => {
     const player = match.players[pid];
     if (!player) {
-      finishEffect();
+      then();
       return;
     }
-    // star_magnet happening: next star is free
     if (consumeFreeStar(pid)) {
       player.stars += 1;
-      bus.emit("star:buy", { player: pid, star: player.stars, total: player.coins });
-      audio.sfx.play("star.get");
-      celebrateStar(pid);
-      return;
-    }
-    if (player.coins < settings.starCost) {
-      ui.toast("A star costs 20 coins!", { durationMs: 2000 });
-      finishEffect();
-      return;
-    }
-    if (pid === HUMAN && !isAutoplay()) {
-      S.starPopup = ui.popup({
-        title: "BUY A STAR?",
-        body: `${player.name}, a star costs ${settings.starCost} coins. Buy it?`,
-        sound: null,
-        buttons: [
-          {
-            label: `BUY ★ ${settings.starCost}`,
-            kind: "gold",
-            onClick: () => {
-              S.starPopup?.destroy();
-              S.starPopup = null;
-              doStarBuy(pid);
-            },
-          },
-          {
-            label: "NO",
-            kind: "ghost",
-            onClick: () => {
-              S.starPopup?.destroy();
-              S.starPopup = null;
-              ui.toast("Maybe next time!", { durationMs: 1200 });
-              finishEffect();
-            },
-          },
-        ],
+      bus.emit("star:buy", {
+        player: pid,
+        star: player.stars,
+        total: player.coins,
+        bought: 1,
+        spent: 0,
       });
-    } else {
-      doStarBuy(pid);
+      audio.sfx.play("star.get");
+      movePrizeBalloon(pid);
+      celebrateStar(pid, 1, then);
+      return;
     }
-  };
-
-  const doStarBuy = (pid: number): void => {
-    if (tryBuyStar(pid)) celebrateStar(pid);
-    else ui.toast("Not enough coins!", { durationMs: 1600 });
+    const affordable = sensibleStarCount(pid);
+    if (affordable <= 0) {
+      if (pid === HUMAN) {
+        ui.toast(`A star costs ${settings.starCost} coins!`, { durationMs: 1600 });
+      }
+      then();
+      return;
+    }
+    const commit = (requested: number): void => {
+      const res = tryBuyStars(pid, requested);
+      if (res.bought <= 0) {
+        ui.toast("Not enough coins!", { durationMs: 1400 });
+        then();
+        return;
+      }
+      celebrateStar(pid, res.bought, () => {
+        if (res.discarded > 0) {
+          const word = res.discarded === 1 ? "star" : "stars";
+          ui.toast(`${res.discarded} unpaid ${word} popped away!`, { durationMs: 1600 });
+        }
+        then();
+      });
+    };
+    if (pid !== HUMAN || isAutoplay()) {
+      commit(affordable);
+      return;
+    }
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;justify-content:center;";
+    let settled = false;
+    const close = (): void => {
+      S.starAutoCommit = null;
+      S.starPopup?.destroy();
+      S.starPopup = null;
+    };
+    const choose = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      close();
+      fn();
+    };
+    S.starAutoCommit = () => choose(() => commit(sensibleStarCount(pid)));
+    for (let n = 1; n <= settings.starBundleMax; n++) {
+      const count = n;
+      const btn = ui.button({
+        label: `★${count}`,
+        kind: "gold",
+        size: "sm",
+        ariaLabel: `Buy ${count} star${count === 1 ? "" : "s"} for ${count * settings.starCost} coins`,
+        onClick: () => choose(() => commit(count)),
+      });
+      row.appendChild(btn.el);
+    }
+    const pass = ui.button({
+      label: "PASS",
+      kind: "ghost",
+      size: "sm",
+      onClick: () => choose(() => {
+        ui.toast("Maybe next time!", { durationMs: 1200 });
+        then();
+      }),
+    });
+    row.appendChild(pass.el);
+    S.starPopup = ui.popup({
+      title: "GRAND PRIZE BALLOON",
+      body: `${player.name}, stars are ${settings.starCost} coins each, up to ${settings.starBundleMax}. You have ${player.coins} coins. If you can't pay for the whole bundle, you get what you can afford and the rest pops away.`,
+      content: row,
+      sound: null,
+      closeOnEsc: false,
+    });
   };
 
   const shopSpace = (pid: number): void => {
@@ -1216,6 +1296,15 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const update = (dt: number): void => {
     if (S.disposed) return;
 
+    // Autoplay turned on while the human was choosing a bundle: buy the
+    // sensible amount so a smoke run cannot sit on the popup.
+    if (isAutoplay() && S.starPopup && S.starAutoCommit) {
+      const fn = S.starAutoCommit;
+      S.starAutoCommit = null;
+      fn();
+      return;
+    }
+
     // Star ceremony runs INSTEAD of the pause chain — it's a staged presentation
     // beat. It draws no gameplay rng, so the seeded simulation stays identical.
     if (S.starCeremony) {
@@ -1283,12 +1372,17 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
           } else {
             // Passing a stamp or minigame balloon pays out on the hop,
             // before the rest of the move (so a jackpot can fund a star
-            // landed later in the same roll).
+            // landed later in the same roll). The Grand Prize Balloon is
+            // the same kind of pass: buy, then keep hopping.
             arriveCarnival(pid, S.hopTo, false);
-            const branch = JUNCTIONS.find((j) => j.from === S.hopTo);
-            const hopsLeft = S.moveQueue.length - S.moveIdx;
-            if (branch && hopsLeft > 0) offerJunction(pid, hopsLeft);
-            else startHop(pid);
+            const resumeMove = (): void => {
+              const branch = JUNCTIONS.find((j) => j.from === S.hopTo);
+              const hopsLeft = S.moveQueue.length - S.moveIdx;
+              if (branch && hopsLeft > 0) offerJunction(pid, hopsLeft);
+              else startHop(pid);
+            };
+            if (S.hopTo === match.starBalloonPos) offerPrizeBalloon(pid, resumeMove);
+            else resumeMove();
           }
         }
         break;
@@ -1342,6 +1436,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     }
     S.starPopup?.destroy();
     S.starPopup = null;
+    S.starAutoCommit = null;
     liveLoop = null;
   };
 
@@ -1350,7 +1445,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     update,
     rollPressed,
     isWaitingForRoll: (): boolean =>
-      S.phase === "dice" && !S.rolling && S.betweenRolls <= 0 && !S.shopOpen,
+      S.phase === "dice" && !S.rolling && S.betweenRolls <= 0 && !S.shopOpen && !S.starPopup && !S.starCeremony,
     get phase(): LoopPhase {
       return S.phase;
     },

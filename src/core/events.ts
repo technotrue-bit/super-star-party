@@ -13,7 +13,7 @@ export interface SSPEventMap {
   "player:move": { player: number; from: number; to: number };
   "player:land": { player: number; space: number; type: string };
   "coins:change": { player: number; delta: number; total: number };
-  "star:buy": { player: number; star: number; total: number };
+  "star:buy": { player: number; star: number; total: number; bought: number; spent: number };
   "star:balloon_moved": { from: number; to: number; by: number };
   "happening:event": { player: number; eventId: string; label: string };
   "stamp:collected": { player: number; kind: string; total: number };

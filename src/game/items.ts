@@ -133,7 +133,7 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
   orb_starshift: {
     key: "orb_starshift",
     name: "Star Shift",
-    desc: "Land on it and the star jumps to the other star space.",
+    desc: "Land on it and the Grand Prize Balloon pops over to a new spot.",
     price: 16,
     icon: "🌠",
     places: "star_shift",

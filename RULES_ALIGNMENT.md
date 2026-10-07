@@ -11,16 +11,16 @@
 
 ### How a Turn Works
 - Roll Dice Block, move, choose path at forks — **Already** (dice + movement + shortcut at 20→26 "Funhouse Cut").
-- Passing or landing on balloons and shops triggers immediately — **Partial**: Minigame balloons and stamp spaces pay/grant on pass and on land. Shops and stars still resolve on land only.
+- Passing or landing on balloons and shops triggers immediately — **Partial**: Minigame balloons, stamp spaces, and the Grand Prize Balloon pay, grant, or sell on pass and on land. Shops still resolve on land only.
 - If two players end on same space → Tight Squeeze Bonus 1 coin — **TODO**.
 - If anyone popped a Minigame Balloon → minigame after all moved — **Done**: `match.minigameTriggeredThisRound` is set when a balloon is passed or landed, and the round-end check starts a minigame only then (otherwise the round rolls on). Roulette-slice boost for the popper is still **TODO**.
 - Last 5 turns: Toad (→ "Fizzy Barker") gives pity item to last place — **TODO**.
 
 ### Spaces and Balloons
-- Star Balloon: 10 coins per Star. Bundles up to 5. If can't pay whole bundle, discard rest. After purchase, balloon moves to new spot. — **Current**: Fixed 20-coin star spaces. **TODO**: Dynamic position, bundle buy, move after purchase.
+- Star Balloon: 10 coins per Star. Bundles up to 5. If can't pay whole bundle, discard rest. After purchase, balloon moves to new spot. — **Done**: Grand Prize Balloon at `match.starBalloonPos` (starts on space 4). 10 coins each, bundle of 1–5. Unpaid stars in the chosen bundle are discarded. Any purchase moves the balloon to a new walkable space via `rng` (Funhouse Cut gaps are excluded), with a pop, gasp, and confetti. CPUs and autoplay buy as many as they can afford, up to 5.
 - Minigame Balloon: shows 5 or 10 coins. Passing pays + flags minigame. Balloon poppers get bigger roulette slice. — **Partial**: Fizzy Five Balloon (space 5, pay 5) and Grand Ten Balloon (space 16, pay 10) charge on pass and land and set the minigame flag. A player with fewer coins pays what they have and the balloon still pops. Weight boost **TODO**.
 - ? Block: random item — **Current**: green events + shop. Align ? to green or add explicit.
-- Event space: random (free item, coin bonus, steal, swap, move Star Balloon, etc.) — **Current**: rich green + grumpus. Good base. Add "move balloon" event.
+- Event space: random (free item, coin bonus, steal, swap, move Star Balloon, etc.) — **Current**: rich green + grumpus, including Balloon Breeze (moves the Grand Prize Balloon). Good base.
 - Shy Guy Shop: buy items — **Current**: Gumball Emporium. Expand stock.
 - Stamp space: land/pass → collect stamp. All 3 = 30 coins jackpot (can fund star same move). — **Done**: Shy Stamp Stand (space 3, before the first star), Goomba Gallery (11), Koopa Kiosk (27). Held stamps live on `player.stamps`; completing the set pays `settings.stampJackpot` (30), clears the held set, and leaves the coins in hand so a star landed later in the same move can be bought. Lifetime count is `player.stampsCollected`.
 
@@ -55,7 +55,7 @@
 
 ## Our Own Touches (Carnival / Fizzy Fairground flavor + mischievous party energy)
 
-1. **Prize Balloon instead of Star Balloon** — The "Grand Prize Balloon" floats around the midway. Buying a star makes it "pop and re-inflate" at a new random spot (with a little gasp sound and confetti).
+1. **Prize Balloon instead of Star Balloon** — **Done**: The Grand Prize Balloon floats around the midway (`match.starBalloonPos`). Buying a star pops it and reinflates it at a new spot, with a procedural gasp/pop and confetti.
 
 2. **Carnival Packs** (3 original packs, each 8–10 minigames themed):
    - **Midway Mayhem** — physical, chaotic, strength/speed (bumpers, cannon, push of war).
@@ -68,7 +68,7 @@
 
 5. **Carnival Squeeze** — Tight Squeeze Bonus is 2 coins (more generous, party vibe) and plays a big "group hug" sound.
 
-6. **Passing triggers** — Balloons and certain events fire on *passing* the space as well as landing (you get the effect while hopping by). — **Partial**: stamps and minigame balloons. Other events still land-only.
+6. **Passing triggers** — Balloons and certain events fire on *passing* the space as well as landing (you get the effect while hopping by). — **Partial**: stamps, minigame balloons, and the Grand Prize Balloon. Shops and other events still land-only.
 
 7. **Lucky Ticket** — Our Lucky Card is a golden carnival ticket that not only triples roulette odds but also gives +1 coin on the next blue.
 
@@ -77,13 +77,13 @@ These keep the MP7 structure 100% faithful while making the game feel like *our*
 ## Immediate Next Steps (small pieces)
 - Core data model (done in this pass)
 - BoardData space rebalance + stamp/minigame_balloon types — **Done** (this slice): 3 stamp kinds on the walked lap, 5-coin and 10-coin balloons on the walked lap. The Funhouse Cut still skips spaces 20–25, so those indices are not used for stamps or balloons.
-- Economy: bundle buy + move balloon — **TODO**. Stamp jackpot — **Done** (30 coins, held stamps clear, coins available the same move).
+- Economy: bundle buy + move balloon — **Done** (10 coins, up to 5, discard the unpaid remainder, balloon moves). Stamp jackpot — **Done** (30 coins, held stamps clear, coins available the same move, including a purchase on that same hop).
 - Items: expand defs + effects for new MP7 items
-- Turn loop: tight squeeze, pity, pack weighting — **TODO**. Passing logic for stamps + minigame balloons, and the minigame flag — **Done**.
+- Turn loop: tight squeeze, pity, pack weighting — **TODO**. Passing logic for stamps, minigame balloons, the Grand Prize Balloon, and the minigame flag — **Done**.
 - Minigame registry: pack support + multipliers
 - Character select or new "Pack Select" moment
 - Bonus stars: stamp kind is in the ranking math when `stampsCollected > 0`. Finale reveal of Stamp Star — **TODO**.
 - Shop: richer stock matching the list
-- Our touches wired into events/happenings (move balloon, fizzy pity)
+- Our touches wired into events/happenings — Balloon Breeze (green space moves the Grand Prize Balloon) **Done**. Fizzy pity still **TODO**.
 
 Once these land, run a full 10-turn autoplay and critic against MP7 bar for the new mechanics.

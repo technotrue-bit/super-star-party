@@ -453,7 +453,7 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
       [palette.mint, "Blue — +3 coins"],
       [palette.lava, "Red — −3 coins"],
       [palette.berry, "Purple — Happening!"],
-      [palette.sun, "Gold — Buy a Star (20 coins)"],
+      [palette.sun, "Prize Balloon — 10 coins a star, up to 5"],
       [palette.bubble, "Cyan — Gumball Shop"],
       [palette.lavaDeep, "Crimson — Grumpus!"],
       [palette.heroPip, "Gold ticket — Stamp"],
@@ -478,7 +478,7 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
     const starsP = document.createElement("p");
     starsP.style.margin = "0";
     starsP.innerHTML =
-      "Everyone starts with <b>10 coins</b>. Land on a <b>Star space</b> (⭐) and pay <b>20 coins</b> to buy <b>1 star</b>. Stars decide the winner!";
+      "Everyone starts with <b>10 coins</b>. Pass or land on the <b>Grand Prize Balloon</b> to buy up to <b>5 stars</b> at <b>10 coins</b> each. Unpaid stars in a bundle are discarded, then the balloon pops and moves. Stars decide the winner!";
     rules.appendChild(starsP);
 
     const mini = document.createElement("h4");

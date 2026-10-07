@@ -92,19 +92,20 @@ function roundedRectLoop(
 
 // ---- Fizzy Fairground space data ---------------------------------------------
 // 28 outer spaces — MP7 + our carnival touches.
-// 7 blue, 6 red, 4 green (happenings), 2 star (Prize Balloon spots), 2 shop,
-// 2 grumpus, 3 stamp (one each of Shy Guy / Goomba / Koopa), 2 minigame balloons
-// (5 coins and 10 coins).
+// 9 blue, 6 red, 4 green (happenings), 2 shop, 2 grumpus, 3 stamp
+// (one each of Shy Guy / Goomba / Koopa), 2 minigame balloons (5 and 10 coins).
+// The Grand Prize Balloon is not a space type. It starts on space 4 and
+// moves (match.starBalloonPos) after a purchase.
 //
 // The Funhouse Cut (stepOn) jumps from the space before 20 straight to 26, so
-// indices 20–25 are not on the walked lap. Stamps and balloons live on spaces
-// the dice actually hops: shy at 3 (just before the first star, so a jackpot
-// can fund that star the same move), goomba at 11, koopa at 27, balloons at
-// 5 (5 coins) and 16 (10 coins).
+// indices 20–25 are not on the walked lap. Stamps and minigame balloons live
+// on spaces the dice actually hops: shy at 3 (one hop before the balloon's
+// starting spot, so a jackpot can fund that purchase the same move), goomba
+// at 11, koopa at 27, balloons at 5 (5 coins) and 16 (10 coins).
 const TYPES: SpaceType[] = [
-  "blue", "blue", "green", "stamp", "star", "minigame_balloon", "red",
+  "blue", "blue", "green", "stamp", "blue", "minigame_balloon", "red",
   "green", "blue", "red", "shop", "stamp", "green", "red",
-  "blue", "star", "minigame_balloon", "grumpus", "blue", "red", "green",
+  "blue", "blue", "minigame_balloon", "grumpus", "blue", "red", "green",
   "shop", "blue", "red", "grumpus", "blue", "red", "stamp",
 ];
 
@@ -131,7 +132,7 @@ const NAMES: string[] = [
   "Gumball Alley",
   "Whimsy Whirl",
   "Shy Stamp Stand", // shy stamp — one hop before the star
-  "Starlight Stage", // star
+  "Starlight Stage", // Grand Prize Balloon starts here
   "Fizzy Five Balloon", // 5-coin minigame balloon
   "Dunk Tank Drop",
   "Fortune Teller's Twist",
@@ -142,7 +143,7 @@ const NAMES: string[] = [
   "Mirror Maze Mischief",
   "Lava Pop Pit",
   "Lemonade Landing",
-  "Golden Gazebo", // star
+  "Golden Gazebo",
   "Grand Ten Balloon", // 10-coin minigame balloon
   "Grumpus Grove", // grumpus
   "Ferris Fling Way",

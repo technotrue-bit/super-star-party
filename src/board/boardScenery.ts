@@ -577,6 +577,72 @@ export function buildSpaceBalloon(kit: BoardTextures, coins: 5 | 10, phase: numb
   };
 }
 
+/**
+ * The Grand Prize Balloon: one big gold balloon with a spinning star on top.
+ * The board scene parents it and slides it to match.starBalloonPos.
+ */
+export function buildGrandPrizeBalloon(kit: BoardTextures): Prop {
+  const root = new THREE.Group();
+  const bob = new THREE.Group();
+
+  const string = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.025, 0.025, 0.85, 6),
+    toonMat(kit, palette.ink)
+  );
+  string.position.y = 0.62;
+  bob.add(string);
+
+  const balloon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.52, 16, 14),
+    toonMat(kit, palette.sun)
+  );
+  balloon.position.y = 1.42;
+  balloon.castShadow = true;
+  bob.add(balloon);
+  const shell = outline(balloon, 1.06);
+  shell.position.copy(balloon.position);
+  bob.add(shell);
+
+  const band = new THREE.Mesh(
+    new THREE.TorusGeometry(0.4, 0.045, 8, 20),
+    toonMat(kit, palette.candy)
+  );
+  band.position.y = 1.42;
+  band.rotation.x = Math.PI / 2;
+  bob.add(band);
+
+  const knot = new THREE.Mesh(
+    new THREE.ConeGeometry(0.1, 0.16, 6),
+    toonMat(kit, palette.sunDeep)
+  );
+  knot.position.y = 0.96;
+  knot.rotation.x = Math.PI;
+  bob.add(knot);
+
+  const starGeo = new THREE.ExtrudeGeometry(starShape5, {
+    depth: 0.08,
+    bevelEnabled: true,
+    bevelThickness: 0.02,
+    bevelSize: 0.02,
+    bevelSegments: 1,
+  });
+  const star = new THREE.Mesh(starGeo, toonMat(kit, palette.white));
+  star.scale.setScalar(0.32);
+  star.position.y = 2.12;
+  star.castShadow = true;
+  bob.add(star);
+
+  root.add(bob);
+  return {
+    root,
+    update(t: number) {
+      bob.position.y = Math.sin(t * B.balloonSway) * 0.1;
+      bob.rotation.z = Math.sin(t * B.balloonSway * 0.8) * 0.06;
+      star.rotation.y = t * B.starSpinSpeed;
+    },
+  };
+}
+
 /** Grumpy face disc that sits on grumpus space disks. */
 export function buildGrumpyFace(kit: BoardTextures): THREE.Object3D {
   const disc = new THREE.Mesh(

@@ -212,7 +212,7 @@ const howToImpl: HowToState & Screen = {
     spaceChips.appendChild(this._chip(palette.mint, "+3 coins"));
     spaceChips.appendChild(this._chip(palette.lava, "−3 coins"));
     spaceChips.appendChild(this._chip(palette.berry, "Happening!"));
-    spaceChips.appendChild(this._chip(palette.sun, "Buy a Star"));
+    spaceChips.appendChild(this._chip(palette.sun, "Prize Balloon — buy stars"));
     spaceChips.appendChild(this._chip(palette.bubble, "Gumball Shop"));
     spaceChips.appendChild(this._chip(palette.lavaDeep, "Grumpus!"));
     spaceChips.appendChild(this._chip(palette.heroPip, "Stamp — collect it"));
@@ -226,7 +226,7 @@ const howToImpl: HowToState & Screen = {
         "⭐",
         palette.sun,
         "COINS & STARS",
-        "Everyone starts with <b>10 coins</b>. Hit the <b>Star space</b> (⭐) and pay <b>20 coins</b> to buy <b>1 star</b>. Stars decide the winner — grab as many as you can before the 10 rounds end!"
+        "Everyone starts with <b>10 coins</b>. Pass or land on the <b>Grand Prize Balloon</b> and buy up to <b>5 stars</b> at <b>10 coins</b> each. If you can't pay for the whole bundle, you get what you can afford and the rest pops away. The balloon then pops and floats to a new spot. Stars decide the winner!"
       )
     );
 

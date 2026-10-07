@@ -576,10 +576,21 @@ const boardScreenImpl: BoardScreenState & Screen = {
       })
     );
     this._unsubs.push(
-      bus.on("star:buy", ({ player }) => {
+      bus.on("star:buy", ({ player, spent }) => {
+        if (spent <= 0) return;
         const pos = charPos(player);
         const sc = projectToScreen(pos);
-        if (sc) ui.showFloatingNumber(sc.x, sc.y - 30, -settings.starCost);
+        if (sc) ui.showFloatingNumber(sc.x, sc.y - 30, -spent);
+      })
+    );
+    this._unsubs.push(
+      bus.on("star:balloon_moved", ({ from, to }) => {
+        const burst = (index: number, count: number): void => {
+          const sc = projectToScreen(board.spaceWorldPos(index));
+          if (sc) ui.confettiBurst(sc.x, sc.y, { count, sound: null });
+        };
+        burst(from, 46);
+        burst(to, 32);
       })
     );
 
@@ -855,6 +866,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
       this._mapBtn.classList.toggle("ssp-map-fab--on", myTurn && !this._mapLook?.isOpen());
     }
     if (this._mapLook?.isOpen()) {
+      this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
       this._board?.update(dt);
       return;
     }
@@ -862,6 +874,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._t = (this._t ?? 0) + dt;
     const t = this._t;
 
+    this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
     this._board?.update(dt);
     for (const ch of this._chars ?? []) ch.update(dt);
 
