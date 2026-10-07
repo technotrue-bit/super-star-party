@@ -153,6 +153,25 @@ export function movePrizeBalloon(byId: number): number {
   return next;
 }
 
+/**
+ * Carnival Squeeze (MP7 Tight Squeeze, our 2-coin group hug).
+ *
+ * Call when a player has just *ended* a move on `arriverId`'s space.
+ * Passing through does not pay. Every active player already standing there
+ * is paid, and so is the arriver — three or four on one tile all get
+ * `settings.squeezeCoins`. A lone player gets nothing. Payment order follows
+ * player id. No rng.
+ */
+export function carnivalSqueeze(arriverId: number): number[] {
+  const arriver = match.players[arriverId];
+  if (!arriver?.active) return [];
+  const ids = match.players.filter((p) => p.active && p.space === arriver.space).map((p) => p.id);
+  if (ids.length < 2) return [];
+  for (const id of ids) addCoins(id, settings.squeezeCoins);
+  bus.emit("squeeze:hug", { space: arriver.space, players: ids, coins: settings.squeezeCoins });
+  return ids;
+}
+
 /** Current star count for a player (0 for unknown ids). */
 export function playerStars(playerId: number): number {
   return match.players[playerId]?.stars ?? 0;

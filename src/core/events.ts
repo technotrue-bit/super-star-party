@@ -19,6 +19,9 @@ export interface SSPEventMap {
   "stamp:collected": { player: number; kind: string; total: number };
   "stamp:jackpot": { player: number; amount: number };
   "balloon:popped": { player: number; coins: number; listed: number };
+  /** Everyone standing on the space, including the player who just ended there. */
+  "squeeze:hug": { space: number; players: number[]; coins: number };
+  "pity:gift": { player: number; item: string };
   "minigame:start": { id: string; name: string };
   "minigame:end": { id: string; winner: number; coins: number };
   "results:show": { ranking: number[] };

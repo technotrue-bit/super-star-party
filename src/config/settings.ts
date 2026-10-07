@@ -17,6 +17,8 @@ export const settings = {
   redCoin: 3, // coins lost on red space
   minigameWinCoins: 10, // minigame winner payout
   stampJackpot: 30, // coins when a player completes the 3-stamp set
+  squeezeCoins: 2, // Carnival Squeeze: coins for each player on a shared landing space
+  pityLastTurns: 5, // Fizzy Barker visits last place while this many turns remain
   bonusStars: 2, // end-of-match bonus stars (minigame star + coin star)
 
   // ---- movement ----

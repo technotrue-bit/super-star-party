@@ -13,6 +13,7 @@ import { rng } from "../core/rng";
 import { audio } from "../audio/audioEngine";
 import { fizzyFairground } from "../board/boardData";
 import { addCoins } from "./economy";
+import { canPlaceTrap, placeTrap } from "./traps";
 import type { TrapKind } from "../core/game";
 
 export interface ItemDef {
@@ -235,6 +236,87 @@ export function buyItem(playerId: number, key: string): boolean {
   player.items.push(key);
   audio.sfx.play("shop.buy");
   return true;
+}
+
+export interface ShopDecision {
+  key: string;
+  /** Set when the purchase was an orb and it was thrown onto this space. */
+  placedOn?: number;
+}
+
+/**
+ * One automatic shop visit for a CPU or an autoplay human.
+ * Buys a single affordable item the player does not already hold, chosen
+ * with rng (so the visit is a real decision and a seeded run replays).
+ * Orb items are included only when a legal space exists, and are thrown
+ * immediately — the same placement rules as the stall's picker — so the
+ * visit never opens a modal. No candidate means they leave without buying
+ * and without drawing from rng.
+ */
+export function decideShopPurchase(playerId: number): ShopDecision | null {
+  const player = match.players[playerId];
+  if (!player) return null;
+  const shopSpaces = fizzyFairground.spaces.filter((s) => s.type === "shop").map((s) => s.index);
+  const legal = fizzyFairground.spaces
+    .filter((s) => canPlaceTrap(playerId, s.index, match.starBalloonPos, shopSpaces))
+    .map((s) => s.index);
+  const candidates: string[] = [];
+  for (const key of ITEM_ORDER) {
+    const def = ITEM_DEFS[key];
+    if (!def) continue;
+    if (def.lateGame && !starCannonAvailable()) continue;
+    if (player.items.includes(key)) continue;
+    if (player.coins < def.price) continue;
+    if (def.places && legal.length === 0) continue;
+    candidates.push(key);
+  }
+  if (candidates.length === 0) return null;
+  const key = rng.pick(candidates);
+  const def = ITEM_DEFS[key];
+  if (!def || !buyItem(playerId, key)) return null;
+  if (!def.places) return { key };
+  const held = match.players[playerId]?.items;
+  const at = held?.lastIndexOf(key) ?? -1;
+  if (held && at >= 0) held.splice(at, 1);
+  const spot = rng.pick(legal);
+  if (!placeTrap(playerId, spot, def.places)) {
+    addCoins(playerId, def.price);
+    return null;
+  }
+  return { key, placedOn: spot };
+}
+
+/**
+ * Bag items Fizzy Barker may hand over. Orbs are thrown, not held, so they
+ * are not consolation gifts. The shop treats a held key as owned (one of
+ * each); the Barker follows that same rule. There is no numeric bag size.
+ * Returns the keys this player can still receive. Does not draw from rng.
+ */
+export function pityPool(playerId: number): string[] {
+  const player = match.players[playerId];
+  if (!player) return [];
+  const pool: string[] = [];
+  for (const key of ITEM_ORDER) {
+    const def = ITEM_DEFS[key];
+    if (!def || def.places) continue;
+    if (def.lateGame && !starCannonAvailable()) continue;
+    if (player.items.includes(key)) continue;
+    pool.push(key);
+  }
+  return pool;
+}
+
+/**
+ * Give one random bag item the player does not already hold.
+ * Returns the key, or null when every bag item is already held (no rng draw).
+ */
+export function grantFizzyPity(playerId: number): string | null {
+  const player = match.players[playerId];
+  const pool = pityPool(playerId);
+  if (!player || pool.length === 0) return null;
+  const key = rng.pick(pool);
+  player.items.push(key);
+  return key;
 }
 
 /* ------------------------------------------------------------------ */
