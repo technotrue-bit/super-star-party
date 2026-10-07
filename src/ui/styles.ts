@@ -121,7 +121,7 @@ body {
   position: absolute; inset: 0; z-index: 60;
   background: ${palette.overlay};
   display: flex; align-items: center; justify-content: center;
-  padding: 20px;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
   opacity: 0; transition: opacity 180ms ease-out;
 }
 .ssp-popup--show { opacity: 1; }
@@ -129,7 +129,7 @@ body {
   background: linear-gradient(180deg, ${palette.white} 0%, ${palette.cream} 55%, ${palette.creamShadow} 100%);
   border: 5px solid ${palette.ink}; border-radius: 28px;
   padding: 24px 28px;
-  max-width: min(88vw, 440px); max-height: 82vh; overflow-y: auto;
+  max-width: min(88vw, 440px); max-height: min(82dvh, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px)); overflow-y: auto;
   box-shadow: 0 9px 0 ${palette.ink};
   color: ${palette.ink}; text-align: center;
   transform: rotate(-2deg) scale(.72);
@@ -266,6 +266,23 @@ body {
 }
 .ssp-hud-banner--show { transform: translateX(-50%) scale(1); opacity: 1; }
 .ssp-hud-banner--out { transform: translateX(-50%) scale(1.12) !important; opacity: 0 !important; }
+
+/* Phone: 2-up chips that clear the pause button and the Dynamic Island. */
+@media (max-width: 520px) {
+  .ssp-hud {
+    justify-content: flex-start;
+    padding: calc(env(safe-area-inset-top, 0px) + 8px) calc(env(safe-area-inset-right, 0px) + 70px) 0 calc(env(safe-area-inset-left, 0px) + 8px);
+    gap: 6px;
+  }
+  .ssp-hud-chip {
+    flex: 1 1 calc(50% - 8px);
+    max-width: none;
+    min-height: 48px;
+  }
+  .ssp-hud-chip__name { max-width: 88px; font-size: 14px; }
+  .ssp-hud-star { font-size: 13px; }
+  .ssp-hud-mini { font-size: 12px; }
+}
 
 /* ---------------------- confetti ---------------------- */
 .ssp-confetti { position: absolute; inset: 0; z-index: 90; overflow: hidden; }

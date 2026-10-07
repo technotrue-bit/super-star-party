@@ -4,8 +4,17 @@
  * data model every system reads/writes. Keep fields stable.
  */
 import { rng } from "./rng";
+import { resetMinigameTracking } from "../minigames/registry";
 
-export type SpaceType = "blue" | "red" | "green" | "star" | "shop" | "grumpus";
+export type SpaceType =
+  | "blue"
+  | "red"
+  | "green"
+  | "star"              // Prize Balloon (movable Star Balloon)
+  | "shop"
+  | "grumpus"
+  | "stamp"             // collect Shy Guy / Goomba / Koopa stamp
+  | "minigame_balloon"; // passing/landing pays 5 or 10 and flags a minigame
 
 export interface SpaceDef {
   index: number;
@@ -25,6 +34,10 @@ export interface PlayerState {
   minigameWins: number;
   items: string[]; // item keys
   active: boolean;
+  /** Minigame pack chosen by this player (for roulette weighting). */
+  pack?: string;
+  /** Collected stamps for the Stamp Star bonus and 30-coin jackpots. */
+  stamps: string[]; // "shy" | "goomba" | "koopa"
 }
 
 export type Phase =
@@ -36,6 +49,33 @@ export type Phase =
   | "results"
   | "ended";
 
+export type TrapKind =
+  | "coin10"
+  | "coin20"
+  | "star_steal"
+  | "wreck"
+  | "duel"
+  | "snag"
+  | "swap"
+  | "tree"
+  | "circus"
+  | "star_shift";
+
+export interface SpaceTrap {
+  space: number;
+  kind: TrapKind;
+  ownerId: number;
+  /** Coins grown on a Money Tree. Paid to the owner when they land. */
+  grown?: number;
+  /** Turns a Mini Circus has left. Counts down once per full round. */
+  turnsLeft?: number;
+}
+
+export interface DuelState {
+  challengerId: number;
+  victimId: number;
+}
+
 export interface MatchState {
   seed: number;
   turn: number; // 1-based
@@ -45,6 +85,18 @@ export interface MatchState {
   players: PlayerState[];
   lastDice: number[];
   events: string[]; // happening event ids fired this match (no repeats)
+  /** Current position of the movable Prize Balloon (Star Balloon). */
+  starBalloonPos: number;
+  /** True if any player popped a Minigame Balloon this round (triggers minigame after all moves). */
+  minigameTriggeredThisRound: boolean;
+  /** Player IDs in the order they take turns this round. Set by initial dice roll. */
+  turnOrder: number[];
+  /** The dice rolls used to determine turn order (for display). */
+  orderRolls: number[];
+  /** Orbs sitting on spaces, waiting for someone else to land. */
+  traps: SpaceTrap[];
+  /** Set when a Duel Orb fires. Cleared when the 1v1 minigame returns. */
+  duel?: DuelState;
 }
 
 function makePlayer(id: number, kind: string, name: string): PlayerState {
@@ -58,6 +110,8 @@ function makePlayer(id: number, kind: string, name: string): PlayerState {
     minigameWins: 0,
     items: [],
     active: true,
+    pack: undefined,
+    stamps: [],
   };
 }
 
@@ -71,6 +125,11 @@ export const match: MatchState = {
   players: [],
   lastDice: [],
   events: [],
+  starBalloonPos: 0,
+  minigameTriggeredThisRound: false,
+  turnOrder: [0, 1, 2, 3],
+  orderRolls: [],
+  traps: [],
 };
 
 /** Start a fresh match. Kinds = character keys, e.g. ["pip","bounce",...]. */
@@ -86,6 +145,16 @@ export function startMatch(kinds: string[], names: string[], totalTurns = 10, se
   match.lastDice = [];
   match.events = [];
   match.players = kinds.map((k, i) => makePlayer(i, k, names[i] ?? `P${i + 1}`));
+  // Initialize movable Prize Balloon to the first star space (will be overridden by board setup)
+  match.starBalloonPos = 4; // reasonable default near first star in current layout
+  match.minigameTriggeredThisRound = false;
+  match.turnOrder = [0, 1, 2, 3];
+  match.orderRolls = [];
+  match.traps = [];
+  match.duel = undefined;
+
+  // Reset minigame pack tracking for a fresh match (MP7 no-repeat within pack)
+  resetMinigameTracking();
 }
 
 /** Deep snapshot for the debug API / critics. */
@@ -102,4 +171,45 @@ export function ranking(): number[] {
     return b.minigameWins - a.minigameWins;
   });
   return copy.map((p) => p.id);
+}
+
+/**
+ * Mario Party style: All players roll one die at the start of the match.
+ * Highest roll goes first. Ties trigger rerolls among the tied players only.
+ * This is fully deterministic via the match rng.
+ * Sets match.turnOrder and match.currentPlayer.
+ */
+export function rollForTurnOrder(): void {
+  const n = match.players.length;
+  if (n === 0) return;
+
+  const rolls: number[] = new Array(n).fill(0);
+  let order = Array.from({ length: n }, (_, i) => i);
+
+  // Initial rolls
+  for (let i = 0; i < n; i++) {
+    rolls[i] = rng.int(1, 6);
+  }
+
+  // Resolve ties by rerolling only the tied group (repeat until unique max)
+  let maxRoll = Math.max(...rolls);
+  let leaders = order.filter((i) => rolls[i] === maxRoll);
+
+  while (leaders.length > 1) {
+    // Reroll only the leaders
+    for (const i of leaders) {
+      rolls[i] = rng.int(1, 6);
+    }
+    maxRoll = Math.max(...rolls);
+    leaders = order.filter((i) => rolls[i] === maxRoll);
+  }
+
+  // Sort the order so the winner is first, then the rest in their original relative order
+  // (or we can just put winner first and keep the others stable)
+  const winner = leaders[0];
+  order = [winner, ...order.filter((i) => i !== winner)];
+
+  match.orderRolls = rolls;
+  match.turnOrder = order;
+  match.currentPlayer = winner;
 }

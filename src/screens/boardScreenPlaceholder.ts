@@ -13,7 +13,7 @@ import * as THREE from "three";
 import { world } from "../main";
 import { palette } from "../config/palette";
 import { settings } from "../config/settings";
-import { match, startMatch } from "../core/game";
+import { match, startMatch, rollForTurnOrder } from "../core/game";
 import { rng, ease } from "../core/rng";
 import { bus } from "../core/events";
 import { roster } from "../characters/roster";
@@ -31,6 +31,8 @@ import type { PauseOverlayHandle } from "./pauseMenu";
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
 import { openShop } from "./shopScreen";
+import { onViewportChange, viewportSize } from "../ui/viewport";
+import { createMapLook, type MapLook } from "../ui/mapLook";
 
 /* ------------------------------------------------------------------ */
 /*  Scoped styles (injected once; every color from the palette)        */
@@ -51,7 +53,7 @@ function injectBoardStyles(): void {
 .ssp-roll-wrap { position:fixed; left:50%; bottom:calc(22px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); z-index:89; }
 .ssp-roll-pulse { animation:sspRollPulse 1.15s ease-in-out infinite; }
 @keyframes sspRollPulse { 0%,100% { filter:brightness(1); } 50% { filter:brightness(1.18); } }
-.ssp-item-bar { position:fixed; left:50%; bottom:118px; transform:translateX(-50%); display:flex; gap:10px; z-index:63; }
+.ssp-item-bar { position:fixed; left:50%; bottom:calc(118px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); display:flex; gap:10px; z-index:63; max-width:96vw; flex-wrap:wrap; justify-content:center; }
 .ssp-die { position:fixed; left:50%; top:32%; transform:translateX(-50%); width:104px; height:104px; border-radius:24px; background:${palette.cream}; border:5px solid ${palette.ink}; box-shadow:7px 7px 0 ${palette.ink}; display:flex; align-items:center; justify-content:center; z-index:90; }
 .ssp-die__face { font-size:52px; font-weight:700; color:${palette.ink}; user-select:none; line-height:1; }
 .ssp-die--tumble { animation:sspDieTumble .8s ease-in-out infinite; }
@@ -66,9 +68,12 @@ function injectBoardStyles(): void {
 }
 .ssp-die--slam { animation:sspDieSlam .34s cubic-bezier(.2,1.6,.4,1); }
 @keyframes sspDieSlam { 0% { transform:translateX(-50%) scale(1.45) rotate(8deg); } 60% { transform:translateX(-50%) scale(0.94); } 100% { transform:translateX(-50%) scale(1); } }
-.ssp-pause-fab { position:fixed; top:14px; right:14px; z-index:65; width:54px; height:54px; border-radius:50%; font-size:24px; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg, rgba(255,255,255,.4) 0%, rgba(255,255,255,0) 40%), linear-gradient(180deg, ${palette.cream} 0%, ${palette.creamShadow} 100%); border:4px solid ${palette.ink}; color:${palette.ink}; box-shadow:0 5px 0 ${palette.ink}; cursor:pointer; transition:transform .1s cubic-bezier(.34,1.56,.64,1), box-shadow .1s ease-out; }
+.ssp-pause-fab { position:fixed; top:calc(8px + env(safe-area-inset-top, 0px)); right:calc(8px + env(safe-area-inset-right, 0px)); z-index:65; width:54px; height:54px; border-radius:50%; font-size:24px; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg, rgba(255,255,255,.4) 0%, rgba(255,255,255,0) 40%), linear-gradient(180deg, ${palette.cream} 0%, ${palette.creamShadow} 100%); border:4px solid ${palette.ink}; color:${palette.ink}; box-shadow:0 5px 0 ${palette.ink}; cursor:pointer; touch-action:manipulation; transition:transform .1s cubic-bezier(.34,1.56,.64,1), box-shadow .1s ease-out; }
 .ssp-pause-fab:hover { transform:scale(1.08); }
 .ssp-pause-fab:active { transform:scale(0.94) translateY(3px); box-shadow:0 2px 0 ${palette.ink}; }
+.ssp-map-fab { position:fixed; top:calc(70px + env(safe-area-inset-top, 0px)); right:calc(8px + env(safe-area-inset-right, 0px)); z-index:65; width:54px; height:54px; border-radius:50%; font-size:26px; display:none; align-items:center; justify-content:center; background:linear-gradient(180deg, rgba(255,255,255,.4) 0%, rgba(255,255,255,0) 40%), linear-gradient(180deg, ${palette.cream} 0%, ${palette.creamShadow} 100%); border:4px solid ${palette.ink}; color:${palette.ink}; box-shadow:0 5px 0 ${palette.ink}; cursor:pointer; touch-action:manipulation; }
+.ssp-map-fab--on { display:flex; }
+.ssp-map-fab:active { transform:scale(0.94) translateY(3px); box-shadow:0 2px 0 ${palette.ink}; }
 .ssp-flash { position:fixed; inset:0; pointer-events:none; z-index:99999; opacity:0; }
 .ssp-podium { display:flex; flex-direction:column; gap:8px; max-height:44vh; overflow-y:auto; text-align:left; font-size:16px; }
 .ssp-podium__row { background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:14px; padding:8px 12px; box-shadow:0 3px 0 ${palette.ink}; }
@@ -108,7 +113,8 @@ interface CamFit {
  */
 function computeCameraFit(): CamFit {
   const b = boardBounds();
-  const aspect = window.innerWidth / window.innerHeight;
+  const { w, h } = viewportSize();
+  const aspect = w / h;
   const portrait = aspect < 1;
   const cam = settings.matchCamera;
 
@@ -190,9 +196,14 @@ interface BoardScreenState {
   _cam?: CamFit;
   _camHold?: { base: THREE.Vector3; look: THREE.Vector3; fov: number } | null;
   _punch?: Punch | null;
+  _followPos?: THREE.Vector3;
+  _followLook?: THREE.Vector3;
   _t?: number;
   _onResize?: () => void;
+  _offResize?: () => void;
   _pauseBtn?: { el: HTMLButtonElement; destroy: () => void };
+  _mapBtn?: HTMLButtonElement;
+  _mapLook?: MapLook;
   _pause?: PauseOverlayHandle;
   _onPauseKey?: (e: KeyboardEvent) => void;
   _unfreezeAutoplay?: boolean;
@@ -223,8 +234,8 @@ function projectToScreen(pos: THREE.Vector3): { x: number; y: number } | null {
   }
 
   return {
-    x: (v.x * 0.5 + 0.5) * window.innerWidth,
-    y: (-v.y * 0.5 + 0.5) * window.innerHeight,
+    x: (v.x * 0.5 + 0.5) * viewportSize().w,
+    y: (-v.y * 0.5 + 0.5) * viewportSize().h,
   };
 }
 
@@ -288,6 +299,11 @@ const boardScreenImpl: BoardScreenState & Screen = {
     }
     bus.emit("match:start", { seed: match.seed, players: match.players.map((p) => p.id) });
 
+    // Roll for turn order (Mario Party style) — only on fresh start
+    if (match.orderRolls.length === 0) {
+      rollForTurnOrder();
+    }
+
     // ---- board ----
     const board = buildBoardScene(fizzyFairground);
     this._board = board;
@@ -303,7 +319,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
 
     // North-side party camera in landscape: the disk icons (designed to read
     // upright from the south) get a 180deg in-plane flip so they stay upright.
-    if (window.innerWidth / window.innerHeight >= 1) {
+    if (viewportSize().w / viewportSize().h >= 1) {
       for (let i = 0; i < fizzyFairground.spaces.length; i++) {
         for (const c of board.spaceMesh(i).children) {
           if (c instanceof THREE.Mesh && Math.abs(c.rotation.y - Math.PI / 2) < 1e-4) {
@@ -353,6 +369,24 @@ const boardScreenImpl: BoardScreenState & Screen = {
     });
     document.body.appendChild(pauseBtn.el);
     this._pauseBtn = pauseBtn;
+
+    const mapBtn = document.createElement("button");
+    mapBtn.type = "button";
+    mapBtn.className = "ssp-map-fab";
+    mapBtn.textContent = "🔍";
+    mapBtn.setAttribute("aria-label", "Look at the map");
+    mapBtn.addEventListener("click", () => {
+      if (this._mapLook?.isOpen()) this._mapLook.close();
+      else this._mapLook?.open();
+    });
+    document.body.appendChild(mapBtn);
+    this._mapBtn = mapBtn;
+    if (world.camera) {
+      this._mapLook = createMapLook({
+        camera: world.camera,
+        bounds: boardBounds(),
+      });
+    }
 
     // ---- pause overlay (lives over the board, freezes on open) ----
     this._pause = createPauseOverlay({
@@ -432,6 +466,12 @@ const boardScreenImpl: BoardScreenState & Screen = {
           /* WAAPI unavailable — die still lands */
         }
       },
+      hover() {
+        // 2D fallback: just show the ? card (no floating 3D)
+        die.style.display = "flex";
+        dieFace.textContent = "?";
+        die.classList.remove("ssp-die--slam");
+      },
     };
 
     // ---- Grumpus lava flash overlay ----
@@ -472,13 +512,19 @@ const boardScreenImpl: BoardScreenState & Screen = {
     // ---- camera: fit for the current aspect, then drive the loop ----
     this._cam = computeCameraFit();
     const cam = world.camera!;
+    cam.fov = 45;
+    cam.updateProjectionMatrix();
     cam.position.copy(this._cam.base);
     cam.lookAt(this._cam.look);
+
+    // init smooth follow targets
+    this._followPos = this._cam.base.clone();
+    this._followLook = this._cam.look.clone();
 
     const onResize = (): void => {
       if (this._cam) this._cam = computeCameraFit();
     };
-    window.addEventListener("resize", onResize);
+    this._offResize = onViewportChange(onResize);
     this._onResize = onResize;
 
     // ---- feedback wiring: route HUD banners through the queue, ----
@@ -537,7 +583,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
       })
     );
 
-    // ---- turn loop ----
+    // ---- turn loop (created but not started yet) ----
     this._loop = createTurnLoop({
       board,
       chars: this._chars,
@@ -551,10 +597,6 @@ const boardScreenImpl: BoardScreenState & Screen = {
         const dist = dir.length();
         dir.normalize();
         this._punch = {
-          // Commit to the shot. The portrait frustum is only about +/-9 world units
-          // wide at board depth, so a 35%-of-the-way aim left left-side rolls hugging
-          // the frame edge (or outside it); aiming AT the target and pulling in harder
-          // frames the die centred and roughly twice as large.
           pos: this._cam.base.clone().add(dir.multiplyScalar(dist * 0.30)),
           look: target.clone(),
           t: 0,
@@ -562,7 +604,6 @@ const boardScreenImpl: BoardScreenState & Screen = {
       },
       ceremony: {
         focusCamera: (target: THREE.Vector3, intensity: number) => {
-          // Punch toward target; intensity scales the punch distance.
           if (!this._cam) return;
           const dir = this._cam.base.clone().sub(target);
           dir.normalize();
@@ -597,7 +638,6 @@ const boardScreenImpl: BoardScreenState & Screen = {
           stingFlash(color);
         },
         shakeScreen: (amp: number, duration: number) => {
-          // DOM-based screen shake: jitter the renderer canvas with decaying amp.
           const canvas = world.renderer?.domElement;
           if (!canvas) return;
           const dur = Math.round(duration * 1000);
@@ -606,7 +646,6 @@ const boardScreenImpl: BoardScreenState & Screen = {
           let seed = 0x5eed >>> 0;
           for (let i = 0; i <= steps; i++) {
             const decay = 1 - i / steps;
-            // Simple LCG for shake offsets (presentation only).
             seed = (seed * 1664525 + 1013904223) >>> 0;
             const sx = ((seed / 4294967296) - 0.5) * 2 * amp * decay;
             seed = (seed * 1664525 + 1013904223) >>> 0;
@@ -616,9 +655,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
           keyframes.push({ transform: "translate(0,0)" });
           try {
             canvas.animate(keyframes, { duration: dur, easing: "ease-out", fill: "both" });
-          } catch {
-            // WAAPI unavailable — shake is a nice-to-have.
-          }
+          } catch {}
         },
         sparkle: (x: number, y: number, count: number, color: string) => {
           emitSparkle(x, y, count, color);
@@ -628,7 +665,6 @@ const boardScreenImpl: BoardScreenState & Screen = {
           const geo = new THREE.ExtrudeGeometry(starShape5(), {
             depth: 0.18, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.06, bevelSegments: 2,
           });
-          // Main star — scaled up + additive blend for MP7-scale spectacle.
           const mat = new THREE.MeshBasicMaterial({
             color: palette.sun, transparent: true, opacity: 1,
             depthWrite: false, side: THREE.DoubleSide,
@@ -647,7 +683,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
           group.add(star, shell);
           group.position.copy(startPos);
           group.position.y = 0.9; // lifted off the space
-          world.scene.add(group);
+          world.scene?.add(group);
           (boardScreenImpl._starTravels = boardScreenImpl._starTravels ?? []).push({
             group, geo, mat, elapsed: 0, duration,
             start: startPos.clone(), end: endPos.clone(), sparkleCooldown: 0,
@@ -697,7 +733,38 @@ const boardScreenImpl: BoardScreenState & Screen = {
         }, 640);
       },
     });
-    this._loop.start();
+
+    // Mario Party "roll to see who goes first" — show the rolls with suspense
+    // The match and first turn only start after the order ceremony finishes.
+    if (match.orderRolls.length > 0 && match.turn === 1) {
+      const order = match.turnOrder;
+      const rolls = match.orderRolls;
+
+      queuedHud.showBanner("ROLLING FOR TURN ORDER!", { durationMs: 1200, style: "default" });
+
+      let delay = 1400;
+      order.forEach((pid) => {
+        const p = match.players[pid];
+        if (!p) return;
+        const roll = rolls[pid] || 1;
+        setTimeout(() => {
+          queuedHud.showBanner(`${p.name} rolled ${roll}!`, { durationMs: 850, style: "default" });
+        }, delay);
+        delay += 900;
+      });
+
+      setTimeout(() => {
+        const first = match.players[order[0]];
+        if (first) {
+          queuedHud.showBanner(`${first.name} GOES FIRST!`, { durationMs: 1500, style: "default" });
+        }
+        // The match now officially begins. The first player in the determined order gets their turn.
+        this._loop?.start();
+      }, delay + 150);
+    } else {
+      // Not a fresh match start (e.g. returning from minigame)
+      this._loop?.start();
+    }
 
     // ?shop=1 opens the Gumball Shop on demand for inspection — the shop
     // stays open indefinitely (no auto-resolve) so the critic can reach it.
@@ -707,16 +774,18 @@ const boardScreenImpl: BoardScreenState & Screen = {
     }
   },
 
+
   exit() {
     for (const off of this._unsubs ?? []) off();
     this._unsubs = [];
     ui.clearFeedback();
     this._loop?.dispose();
     this._loop = undefined;
-    if (this._onResize) {
-      window.removeEventListener("resize", this._onResize);
-      this._onResize = undefined;
+    if (this._offResize) {
+      this._offResize();
+      this._offResize = undefined;
     }
+    this._onResize = undefined;
     for (const ch of this._chars ?? []) {
       world.scene?.remove(ch.group);
       ch.dispose();
@@ -749,6 +818,10 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._pause = undefined;
     this._pauseBtn?.destroy();
     this._pauseBtn = undefined;
+    this._mapLook?.destroy();
+    this._mapLook = undefined;
+    this._mapBtn?.remove();
+    this._mapBtn = undefined;
     ui.clearScreen();
     audio.music.stop(0.3);
     // Clean up vignette overlay.
@@ -777,6 +850,14 @@ const boardScreenImpl: BoardScreenState & Screen = {
     if (this._pause?.isOpen()) {
       return;
     }
+    if (this._mapBtn) {
+      const myTurn = match.currentPlayer === 0 && (match.phase === "dice" || match.phase === "moving");
+      this._mapBtn.classList.toggle("ssp-map-fab--on", myTurn && !this._mapLook?.isOpen());
+    }
+    if (this._mapLook?.isOpen()) {
+      this._board?.update(dt);
+      return;
+    }
 
     this._t = (this._t ?? 0) + dt;
     const t = this._t;
@@ -784,31 +865,69 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._board?.update(dt);
     for (const ch of this._chars ?? []) ch.update(dt);
 
-    // ---- party camera: static MP7-style frame + slow breathing + punch ----
+    // ---- party camera: smooth follow on active player, overview, or slow minigame pan ----
     const cam = world.camera;
-    if (cam && this._cam) {
-      const base = this._cam.base;
-      const look = this._cam.look;
-      const pos = base.clone();
-      pos.y += Math.sin(t * 0.23) * 0.14;
-      pos.z += Math.cos(t * 0.17) * 0.09;
-      const lk = look.clone();
-      lk.z += Math.sin(t * 0.21) * 0.3;
+    if (cam && this._cam && this._followPos && this._followLook) {
+      const phase = match.phase;
+      const currentPid = match.currentPlayer;
 
+      let idealPos: THREE.Vector3;
+      let idealLook: THREE.Vector3;
+
+      if ((phase === "dice" || phase === "moving" || phase === "space-effect") && match.players[currentPid]) {
+        // Follow the active player — compute ideal target each frame
+        const off = PLAYER_OFFSETS[currentPid] ?? [0, 0];
+        const v = this._board?.spaceWorldPos(match.players[currentPid]?.space ?? 0) || new THREE.Vector3();
+        const playerPos = v.clone();
+        playerPos.x += off[0];
+        playerPos.z += off[1];
+
+        idealPos = playerPos.clone();
+        idealPos.y += 18; // high angle
+        idealPos.z -= 12; // pull back
+        idealLook = playerPos.clone();
+        idealLook.y += 2;
+      } else if (phase === "minigame") {
+        // Slow graceful pan around the map center (while board still visible briefly)
+        const center = new THREE.Vector3(0, 8, 0);
+        const radius = 38;
+        const angle = t * 0.25;
+        idealPos = new THREE.Vector3(
+          Math.cos(angle) * radius,
+          22 + Math.sin(t * 0.4) * 2,
+          Math.sin(angle) * radius * 0.7
+        );
+        idealLook = center;
+      } else {
+        // Default centered overview (idle / between turns)
+        idealPos = this._cam.base.clone();
+        idealPos.y += Math.sin(t * 0.23) * 0.14;
+        idealPos.z += Math.cos(t * 0.17) * 0.09;
+        idealLook = this._cam.look.clone();
+        idealLook.z += Math.sin(t * 0.21) * 0.3;
+      }
+
+      // Smooth lerp the persistent follow target toward the ideal (prevents stutter/clip from discrete player hops)
+      const followSpeed = 1 - Math.exp(-11 * dt); // responsive but silky (tune 9-14)
+      this._followPos.lerp(idealPos, followSpeed);
+      this._followLook.lerp(idealLook, followSpeed * 0.85);
+
+      let pos = this._followPos.clone();
+      let lk = this._followLook.clone();
+
+      // Dice punch still takes priority (committed shot during roll)
       if (this._punch) {
         const p = this._punch;
         p.t += dt;
         let k: number;
         if (p.t < 0.45) {
           const q = p.t / 0.45;
-          k = 1 - Math.pow(1 - q, 3); // ease-out in
+          k = 1 - Math.pow(1 - q, 3);
         } else if (p.t < 1.55) {
-          // Hold the shot long enough to read the die's settled face: the die lands
-          // at the end of the roll suspense and used to lose the camera ~0.15s later.
           k = 1;
         } else {
           const q = Math.min(1, (p.t - 1.55) / 0.45);
-          k = 1 - (1 - Math.pow(1 - q, 3)); // ease-out back
+          k = 1 - (1 - Math.pow(1 - q, 3));
         }
         pos.lerpVectors(pos, p.pos, k);
         lk.lerpVectors(lk, p.look, k);

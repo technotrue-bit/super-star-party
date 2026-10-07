@@ -13,6 +13,7 @@ import { screens } from "./screens/screenManager";
 import { installDebugAPI, tickFrame, autoplayTick, isAutoplay } from "./core/debug";
 import { bus } from "./core/events";
 import { audio, unlock } from "./audio/audioEngine";
+import { fitAppToViewport, onViewportChange, viewportSize } from "./ui/viewport";
 
 export const world = {
   renderer: null as THREE.WebGLRenderer | null,
@@ -29,7 +30,8 @@ function boot(): void {
     powerPreference: "high-performance",
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, settings.maxDpr));
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  const boot = viewportSize();
+  renderer.setSize(boot.w, boot.h, false);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.NoToneMapping; // cel look: keep raw colors
@@ -38,7 +40,7 @@ function boot(): void {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(palette.ink);
 
-  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 400);
+  const camera = new THREE.PerspectiveCamera(45, boot.w / boot.h, 0.1, 400);
 
   // Basic lights — screens may add their own; these guarantee nothing is black.
   const hemi = new THREE.HemisphereLight(0xffffff, 0x2b1d4e, 1.1);
@@ -98,12 +100,16 @@ function boot(): void {
     screens.goto(screen);
   });
 
-  // Resize handling.
-  window.addEventListener("resize", () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
+  // Resize to the visible phone viewport (Safari toolbar), not the layout viewport.
+  const fit = () => {
+    fitAppToViewport();
+    const { w, h } = viewportSize();
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  });
+    renderer.setSize(w, h, false);
+  };
+  onViewportChange(fit);
+  fit();
 
   installDebugAPI();
 

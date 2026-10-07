@@ -35,7 +35,12 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
 
   const bodyMat = new THREE.MeshToonMaterial({ map: celGradient, color: kind.color });
   const inkMat = new THREE.MeshBasicMaterial({ color: palette.ink, side: THREE.BackSide });
-  const faceMat = new THREE.MeshToonMaterial({ map: makeFaceTexture(faceSpecs[kind.key]), color: palette.white });
+  const faceMat = new THREE.MeshBasicMaterial({
+    map: makeFaceTexture(faceSpecs[kind.key]),
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
   const handMat = new THREE.MeshToonMaterial({ map: celGradient, color: HAND_COLORS[kind.key] ?? palette.cream });
   const legMat = new THREE.MeshToonMaterial({ map: celGradient, color: darken(kind.color, 0.38) });
 
@@ -97,9 +102,12 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
   const buildFace = (radius: number, y: number, z: number, parent: THREE.Object3D): THREE.Group => {
     const g = new THREE.Group();
     g.position.set(0, y, z);
-    const geo = new THREE.SphereGeometry(radius, 20, 14);
-    geo.scale(1, 0.85, 0.5);
-    addMesh(g, geo, faceMat, [0, 0, 0]);
+    // A card, not a stretched sphere. The old squashed sphere smeared the
+    // eyes into a stripe that disappeared at phone size.
+    const card = new THREE.PlaneGeometry(radius * 2.2, radius * 1.55);
+    const m = addMesh(g, card, faceMat, [0, 0, 0]);
+    m.castShadow = false;
+    m.receiveShadow = false;
     parent.add(g);
     return g;
   };
@@ -146,7 +154,7 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
       group.add(star);
       parts.head = star;
       parts.star = star;
-      parts.face = buildFace(0.24, 0.1, 0.3, star);
+      parts.face = buildFace(0.28, 0.06, 0.34, star);
       parts.armL = buildArm('L', [-0.38, 0.7, 0]);
       parts.armR = buildArm('R', [0.38, 0.7, 0]);
       parts.legL = buildLeg('L', [-0.16, 0.1, 0.05]);
@@ -164,7 +172,7 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
       inkClone(fl, outline);
       inkClone(fr, outline);
       parts.head = buildHead(0.3, 1.0);
-      parts.face = buildFace(0.2, 0.02, 0.31, parts.head);
+      parts.face = buildFace(0.26, 0.02, 0.32, parts.head);
       const ears = new THREE.Group();
       ears.position.set(0, 1.3, 0);
       const earGeo = new THREE.SphereGeometry(1, 12, 10);
@@ -185,7 +193,7 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
       // Green imp: mischievous tilts, pointy triangular ears, wobbling antenna.
       parts.body = buildBody(0.4, 0.95, 0.42, 0.12);
       parts.head = buildHead(0.26, 0.92, -0.1);
-      parts.face = buildFace(0.18, 0.02, 0.27, parts.head);
+      parts.face = buildFace(0.22, 0.02, 0.28, parts.head);
       const ears = new THREE.Group();
       ears.position.set(0, 1.0, 0);
       const earGeo = new THREE.CylinderGeometry(0.02, 0.12, 0.2, 3, 1);
@@ -218,7 +226,7 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
       // Pink elephant: sturdy body, big flappy ears, curling trunk.
       parts.body = buildBody(0.55, 0.95, 0.56);
       parts.head = buildHead(0.38, 1.1);
-      parts.face = buildFace(0.24, 0.04, 0.38, parts.head);
+      parts.face = buildFace(0.3, 0.06, 0.4, parts.head);
       const ears = new THREE.Group();
       ears.position.set(0, 1.15, 0);
       const earGeo = new THREE.SphereGeometry(1, 16, 12);

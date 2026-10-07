@@ -37,7 +37,9 @@ import { ITEM_DEFS, canUseItem, useItem } from "./items";
 import { openShop } from "../screens/shopScreen";
 import { tryPickMinigame } from "../minigames/registry";
 import { setPendingMinigame } from "../minigames/framework";
+import { getMinigameDescription, showMinigamePreview, skipNextMinigamePreScreen } from "../screens/minigameScreen";
 import { screens } from "../screens/screenManager";
+import { consumeTrap, resolveTrap, trapAt, payCircusToll, growTrees, ageCircuses } from "./traps";
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -49,6 +51,20 @@ const HUMAN = 0;
 /** Board constants (Fizzy Fairground). */
 const N = fizzyFairground.spaces.length;
 const SC = fizzyFairground.shortcut;
+const JUNCTIONS = fizzyFairground.junctions ?? [];
+
+function loopOf(space: number): number[] {
+  return fizzyFairground.loops.find((loop) => loop.includes(space)) ?? fizzyFairground.loops[0];
+}
+
+/** Next space on the same lane, with the Funhouse Cut still applied. */
+function stepOn(space: number): number {
+  const loop = loopOf(space);
+  const i = loop.indexOf(space);
+  const next = loop[(i + 1) % loop.length];
+  if (SC && next === SC.from) return SC.to;
+  return next;
+}
 
 /** Per-player stand offsets on a shared space (MP7-style 2x2 grid). */
 export const PLAYER_OFFSETS: ReadonlyArray<[number, number]> = [
@@ -59,6 +75,33 @@ export const PLAYER_OFFSETS: ReadonlyArray<[number, number]> = [
 ];
 
 const wrap = (i: number): number => ((i % N) + N) % N;
+
+/** Fewest hops from `from` to the star, honouring junctions (BFS over the graph). */
+function hopsToStar(from: number): number {
+  const star = match.starBalloonPos;
+  if (from === star) return 0;
+  const seen = new Set<number>([from]);
+  let frontier: number[] = [from];
+  let d = 0;
+  while (frontier.length > 0 && d < 200) {
+    d += 1;
+    const next: number[] = [];
+    for (const s of frontier) {
+      const cands = [stepOn(s)];
+      const j = JUNCTIONS.find((jj) => jj.from === s);
+      if (j) cands.push(j.to);
+      for (const c of cands) {
+        if (c === star) return d;
+        if (!seen.has(c)) {
+          seen.add(c);
+          next.push(c);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return 99;
+}
 
 export type LoopPhase =
   | "announce"
@@ -79,6 +122,8 @@ export interface DiceView {
   hide(): void;
   tumble(): void;
   setFace(face: number): void;
+  /** Show the die floating above the given player, slowly spinning while waiting for ROLL. */
+  hover(pid: number): void;
 }
 
 
@@ -206,6 +251,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     // results
     resultSteps: Array<() => void>;
     resultTimer: number;
+    /** Set when a player passes a Mini Circus. Tolls 1 coin per later land. */
+    circusToll: { ownerId: number; turnsLeft: number } | null;
   }
 
   const S: LoopState = {
@@ -241,6 +288,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     starCeremonyStepped6: false,
     resultSteps: [],
     resultTimer: 0,
+    circusToll: null,
   };
 
   let stingerTO: number | null = null;
@@ -334,7 +382,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     S.rollsNeeded = 1;
     S.rolling = false;
     S.betweenRolls = 0;
-    dice.hide();
+    // Die appears floating above the current player's token, slowly spinning
+    // until the player (or CPU timer) presses ROLL.
+    dice.hover(pid);
     rebuildItemBar(pid);
     rollButton.setVisible(true);
     if (pid === HUMAN) {
@@ -359,12 +409,18 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     if (queued.length > 0) {
       for (const t of queued) S.moveQueue.push(wrap(t));
     } else {
+      // Standing ON a junction: the first hop is a lane choice, not automatic.
+      const standing = JUNCTIONS.find((j) => j.from === player.space);
+      if (standing && total > 0) {
+        offerJunction(pid, total, after);
+        return;
+      }
       let cur = player.space;
       for (let i = 0; i < total; i++) {
-        let nxt = wrap(cur + 1);
-        if (SC && nxt === SC.from) nxt = SC.to; // Funhouse Cut!
+        const nxt = stepOn(cur);
         S.moveQueue.push(nxt);
         cur = nxt;
+        if (JUNCTIONS.some((j) => j.from === nxt) && i < total - 1) break;
       }
     }
     if (S.moveQueue.length === 0) {
@@ -399,6 +455,45 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     }
   };
 
+  const offerJunction = (pid: number, hopsLeft = 0, after: "effect" | "done" = "effect"): void => {
+    const here = match.players[pid]?.space ?? 0;
+    const branch = JUNCTIONS.find((j) => j.from === here);
+    if (!branch || hopsLeft <= 0) {
+      finishTurn();
+      return;
+    }
+    const stay = stepOn(here);
+    const pick = (to: number): void => {
+      startMoving([to], after, 0);
+      if (hopsLeft > 1) {
+        const rest: number[] = [];
+        let cur = to;
+        for (let i = 1; i < hopsLeft; i++) {
+          cur = stepOn(cur);
+          rest.push(cur);
+        }
+        S.moveQueue.push(...rest);
+      }
+    };
+    if (pid !== HUMAN || isAutoplay()) {
+      pick(hopsToStar(branch.to) < hopsToStar(stay) ? branch.to : stay);
+      return;
+    }
+    const content = document.createElement("div");
+    content.style.cssText = "display:flex;flex-direction:column;gap:10px;";
+    const pop = ui.popup({
+      title: "WHICH LANE?",
+      body: branch.label,
+      content,
+      closeOnEsc: false,
+      sound: null,
+      buttons: [
+        { label: "STAY", kind: "ghost", onClick: () => { pop.destroy(); pick(stay); } },
+        { label: "BRANCH", kind: "gold", onClick: () => { pop.destroy(); pick(branch.to); } },
+      ],
+    });
+  };
+
   const enterSpaceEffect = (pid: number): void => {
     S.phase = "space-effect";
     match.phase = "space-effect";
@@ -410,6 +505,36 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     }
     const type = board.spaceType(player.space);
     const pos = board.spaceWorldPos(player.space);
+    const trap = trapAt(player.space);
+    if (trap) {
+      if (trap.kind === "circus" && trap.ownerId !== pid) {
+        S.circusToll = { ownerId: trap.ownerId, turnsLeft: trap.turnsLeft ?? 3 };
+        hud.showBanner("Circus toll! 1 coin a space.", { durationMs: 1400 });
+      } else if (trap.kind === "tree" && trap.ownerId === pid && (trap.grown ?? 0) > 0) {
+        const result = resolveTrap(pid, trap);
+        consumeTrap(player.space);
+        hud.showBanner(result.message, { durationMs: 1600 });
+        refreshHud();
+      } else if (trap.kind !== "tree" && trap.kind !== "circus" && trap.ownerId !== pid) {
+        const result = resolveTrap(pid, trap);
+        consumeTrap(player.space);
+        hud.showBanner(result.message, { durationMs: 1600 });
+        if (result.swapped) {
+          const owner = match.players[trap.ownerId];
+          const victim = match.players[pid];
+          if (owner && victim) {
+            const op = board.spaceWorldPos(owner.space);
+            const vp = board.spaceWorldPos(victim.space);
+            chars[trap.ownerId]?.group.position.set(op.x, 0, op.z);
+            chars[pid]?.group.position.set(vp.x, 0, vp.z);
+          }
+        }
+        refreshHud();
+      }
+    }
+    if (S.circusToll && S.circusToll.ownerId !== pid) {
+      if (payCircusToll(pid, S.circusToll.ownerId)) refreshHud();
+    }
     switch (type) {
       case "blue": {
         let gained = settings.blueCoin;
@@ -479,9 +604,18 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   const nextTurn = (): void => {
     if (match.players.length === 0) return;
-    match.currentPlayer = (match.currentPlayer + 1) % match.players.length;
-    if (match.currentPlayer === 0) minigameRound();
-    else beginTurn();
+
+    const order = match.turnOrder.length === match.players.length ? match.turnOrder : [0,1,2,3];
+    const idx = order.indexOf(match.currentPlayer);
+    const nextIdx = (idx + 1) % order.length;
+    match.currentPlayer = order[nextIdx];
+
+    // After a full lap of the turn order, do the minigame round
+    if (nextIdx === 0) {
+      minigameRound();
+    } else {
+      beginTurn();
+    }
   };
 
   /* ---------------- dice ---------------- */
@@ -502,7 +636,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     S.diceFaces.push(face);
     S.rolling = true;
     S.diceT = settings.diceSuspense;
-    dice.show();
+    // Position (or re-position) the die above the player so the "roll on the board"
+    // animation starts from the floating hover spot.
+    dice.hover(pid);
     dice.tumble();
     audio.sfx.play("dice.roll");
     bus.emit("dice:roll", { player: pid, face });
@@ -891,11 +1027,21 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   /* ---------------- minigame round ---------------- */
 
   const minigameRound = (): void => {
+    growTrees();
+    ageCircuses();
+    if (S.circusToll) {
+      S.circusToll.turnsLeft -= 1;
+      if (S.circusToll.turnsLeft <= 0) S.circusToll = null;
+    }
     S.phase = "minigame-round";
     match.phase = "minigame";
     rollButton.setVisible(false);
     refreshHud();
-    const mg = tryPickMinigame();
+    // Pass player packs (MP7). For now default everyone to "midway" so existing minigames still work.
+    // Real pack choice will come from character select / startMatch.
+    const defaultPacks: Record<number, string> = {};
+    match.players.forEach((_, i) => { defaultPacks[i] = "midway"; });
+    const mg = tryPickMinigame(defaultPacks);
     if (!mg) {
       // No minigames registered yet — toast and carry on.
       ui.toast("Minigames arrive in Wave 3!", { durationMs: 2200 });
@@ -907,15 +1053,33 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       }
       return;
     }
-    // A minigame is available: hand off to the minigame screen. The round
-    // bookkeeping (turn++) happens HERE so it survives the screen switch —
-    // exiting this screen disposes this loop, and the minigame runs on its
-    // own screen. On return, the freshly created loop's start() sees
-    // resumeFromMinigame and continues the round (results or next turn).
+    // A minigame is available.
+    // Show the pre-screen overlay *while the board is still the active screen*
+    // so the slow graceful camera pan (phase "minigame") continues underneath
+    // the "MINI GAME TIME!" card exactly as requested. Only after the user
+    // clicks START do we switch screens and let the players "jump in".
+    console.log('[turnLoop] minigameRound triggered for turn', match.turn, 'mg=', mg.id);
     match.turn += 1;
     resumeFromMinigame = true;
     setPendingMinigame(mg);
-    screens.goto("minigame");
+
+    const desc = (mg as any).description || getMinigameDescription(mg.id, mg.name);
+    showMinigamePreview(mg.name, desc).then((started) => {
+      console.log('[turnLoop] pre-screen resolved started=', started);
+      if (!started) {
+        // User cancelled (click outside / Escape) — clear flags and resume turns.
+        resumeFromMinigame = false;
+        setPendingMinigame(null);
+        pause(0.2, beginTurn);
+        return;
+      }
+      // User clicked START while the board was panning.
+      // Mark so minigame.enter() skips the preview card (already understood)
+      // and goes straight to buildArenaAndStart().
+      skipNextMinigamePreScreen();
+      console.log('[turnLoop] calling goto minigame after START');
+      screens.goto("minigame");
+    });
   };
 
   /* ---------------- results ---------------- */
@@ -1052,7 +1216,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
             if (S.afterMove === "effect") enterSpaceEffect(pid);
             else finishTurn();
           } else {
-            startHop(pid);
+            const branch = JUNCTIONS.find((j) => j.from === S.hopTo);
+            const hopsLeft = S.moveQueue.length - S.moveIdx;
+            if (branch && hopsLeft > 0) offerJunction(pid, hopsLeft);
+            else startHop(pid);
           }
         }
         break;

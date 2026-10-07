@@ -85,6 +85,8 @@ const DISK_RIM: Record<SpaceType, string> = {
   star: palette.sunDeep,
   shop: palette.bubbleDeep,
   grumpus: palette.lavaDeep,
+  stamp: palette.heroPip,      // our touch
+  minigame_balloon: palette.candy, // our touch
 };
 
 /** Capsule (rounded strip) shape along +X, length `len`, width `w`. */
@@ -155,11 +157,21 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
     mesh.receiveShadow = true;
     group.add(mesh);
   };
-  for (let i = 0; i < n; i++) {
-    const a = pos2(i);
-    const b = pos2(i + 1);
+  // One CLOSED track per lane, joined at each junction. Drawing the spaces as
+  // one 44-long chain wrapped the last outer space into the first inner one and
+  // threw two long diagonals straight across the board (the "crazy and laney"
+  // look). Rings now close on themselves and the lanes meet at the junctions.
+  const drawPath = (a: THREE.Vector2, b: THREE.Vector2): void => {
     addPathSegment(a, b, B.pathWidth + 0.34, 0.02, palette.pathEdge);
     addPathSegment(a, b, B.pathWidth, 0.05, palette.path);
+  };
+  for (const loop of def.loops) {
+    for (let i = 0; i < loop.length; i++) {
+      drawPath(pos2(loop[i]), pos2(loop[(i + 1) % loop.length]));
+    }
+  }
+  for (const j of def.junctions ?? []) {
+    drawPath(pos2(j.from), pos2(j.to));
   }
   if (def.shortcut) {
     const a = pos2(def.shortcut.from);

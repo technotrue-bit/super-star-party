@@ -253,10 +253,10 @@ class FinaleScreen implements Screen {
     }
     const standings = document.createElement("div");
     standings.style.cssText = `
-      position:fixed;left:50%;top:18px;transform:translateX(-50%) translateY(-120px);
+      position:fixed;left:50%;top:calc(12px + env(safe-area-inset-top, 0px));transform:translateX(-50%) translateY(-120px);
       background:${palette.cream};border:5px solid ${palette.ink};border-radius:22px;
       padding:14px 22px;box-shadow:0 7px 0 ${palette.ink};z-index:92;pointer-events:none;
-      font-family:'Fredoka',sans-serif;min-width:260px;
+      font-family:'Fredoka',sans-serif;min-width:min(260px, 92vw);max-width:92vw;
       transition:transform 0.5s cubic-bezier(.34,1.56,.64,1);
     `;
     standings.innerHTML = `<div style="text-align:center;font-weight:700;font-size:18px;color:${palette.ink};margin-bottom:8px;">FINAL STANDINGS</div>${standingsRows.join("")}`;
@@ -294,8 +294,8 @@ class FinaleScreen implements Screen {
     // controls container
     const controls = document.createElement("div");
     controls.style.cssText = `
-      position:fixed;left:50%;bottom:40px;transform:translateX(-50%);z-index:97;
-      display:flex;gap:16px;opacity:0;transition:opacity 0.4s ease-out;
+      position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom, 0px));transform:translateX(-50%);z-index:97;
+      display:flex;gap:16px;flex-wrap:wrap;justify-content:center;max-width:94vw;opacity:0;transition:opacity 0.4s ease-out;
     `;
     document.body.appendChild(controls);
     this._controlsEl = controls;

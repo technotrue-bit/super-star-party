@@ -22,3 +22,7 @@ _test_*.cjs
 *vitebuild*.log
 tools/critic/_*
 tools/check-files.mjs
+# Windows device-name landmine left in the repo root
+/nul
+vision-*.png
+tools/probe-*.json

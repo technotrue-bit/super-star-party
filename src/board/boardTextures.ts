@@ -197,6 +197,8 @@ const DISK_BASE: Record<SpaceType, string> = {
   star: palette.sun,
   shop: palette.bubble,
   grumpus: palette.lavaDeep,
+  stamp: palette.heroPip,          // carnival stamp
+  minigame_balloon: palette.candy, // balloon pop
 };
 
 function diskTexture(type: SpaceType): THREE.CanvasTexture {

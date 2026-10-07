@@ -4,12 +4,14 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <meta name="theme-color" content="#2B1D4E" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Star Party" />
+    <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="description" content="SUPER STAR PARTY — a bright mischievous party-board game. 100% procedural." />
     <title>SUPER STAR PARTY</title>
     <style>
@@ -19,17 +21,23 @@
         padding: 0;
         width: 100%;
         height: 100%;
+        height: 100dvh;
         overflow: hidden;
         background: #2b1d4e;
+        color-scheme: dark;
         overscroll-behavior: none;
         -webkit-user-select: none;
         user-select: none;
+        -webkit-touch-callout: none;
         -webkit-tap-highlight-color: transparent;
         touch-action: none;
       }
       #app {
         position: fixed;
         inset: 0;
+        width: 100%;
+        height: 100%;
+        height: 100dvh;
       }
       canvas {
         display: block;

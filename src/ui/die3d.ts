@@ -28,6 +28,7 @@ import { buildKit, type BoardTextures } from "../board/boardTextures";
 import { outline } from "../board/boardScenery";
 import type { BoardScene } from "../board/boardScene";
 import type { DiceView } from "../game/turnLoop";
+import { PLAYER_OFFSETS } from "../game/turnLoop";
 
 /* ---------------- geometry / timing ---------------- */
 
@@ -189,13 +190,15 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
   scene.add(flashMesh);
   (globalThis as any).__FLASH = flashMesh;
 
-  let state: "hidden" | "tumbling" | "landing" | "resting" = "hidden";
+  let state: "hidden" | "tumbling" | "landing" | "resting" | "hovering" = "hidden";
   let timer = 0;
   let spinAxis = new THREE.Vector3(1, 0, 0);
   let spinSpeed = 8;
   let driftAngle = 0;
   let targetQuat = new THREE.Quaternion();
   const landPos = new THREE.Vector3();
+  const startPos = new THREE.Vector3();
+  let hoverBase: THREE.Vector3 | null = null;
 
   // Private animation rng — a fresh mulberry32 stream, never the gameplay `rng`.
   const animRng = mulberry32(0xd1ce);
@@ -227,14 +230,33 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
   } /* close: if (camera && isPerspectiveCamera) */
 
     if (state === "hidden") return;
+
+    if (state === "hovering") {
+      if (hoverBase) {
+        timer += dt;
+        // slow, readable spin while waiting for the player to press ROLL
+        group.rotation.y = timer * 1.9;
+        // gentle life-like bob
+        group.position.y = hoverBase.y + Math.sin(timer * 2.6) * 0.17;
+        // tiny friendly tilt
+        group.rotation.x = Math.sin(timer * 1.4) * 0.03;
+      }
+      return;
+    }
+
     if (state === "tumbling") {
       timer += dt;
       const p = Math.min(1, timer / TUMBLE_DUR);
       const arc = 4 * p * (1 - p); // parabola: 0 -> 1 (apex) -> 0
       const drift = Math.sin(p * Math.PI) * DRIFT;
-      group.position.x = landPos.x + Math.cos(driftAngle) * drift;
-      group.position.z = landPos.z + Math.sin(driftAngle) * drift;
-      group.position.y = GROUND_Y + 0.4 + arc * APEAK;
+
+      // Fly from the hover position (above player) toward the board landing spot
+      // while tumbling. This makes the die "roll on the board" after the player presses.
+      const moveT = Math.min(1, p * 1.05);
+      const horiz = startPos.clone().lerp(landPos, moveT);
+      group.position.x = horiz.x + Math.cos(driftAngle) * drift;
+      group.position.z = horiz.z + Math.sin(driftAngle) * drift;
+      group.position.y = landPos.y + 0.4 + arc * APEAK;
       // body-fixed tumble spin (post-multiply = local axis)
       _spinQ.setFromAxisAngle(spinAxis, spinSpeed * dt);
       group.quaternion.multiply(_spinQ);
@@ -268,6 +290,8 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
   const hide = (): void => {
     if ((globalThis as any).__SSP_HOLD_DIE) return; // debug: keep die visible for pixel capture
     state = "hidden";
+    hoverBase = null;
+    startPos.set(0, -1000, 0);
     group.visible = false;
     group.position.set(0, -1000, 0); // park under the world
   };
@@ -278,8 +302,25 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
     const pid = match.currentPlayer;
     const space = match.players[pid]?.space ?? 0;
     const base = board.spaceWorldPos(space).clone();
+    const off = PLAYER_OFFSETS[pid] ?? [0, 0];
+    base.x += off[0];
+    base.z += off[1];
     landPos.set(base.x + LAND_OFFSET.x, GROUND_Y, base.z + LAND_OFFSET.z);
-    group.position.set(landPos.x, GROUND_Y + 0.4, landPos.z);
+
+    // If the die was hovering above the player, start the "roll on the board"
+    // animation from that high position so it flies down while tumbling.
+    const wasHovering = hoverBase !== null && group.position.y > 4.0;
+    if (wasHovering && hoverBase) {
+      // keep current high position as start; the update will lerp it toward landPos
+      // add a little extra upward pop for a nice throw feel
+      group.position.y = Math.max(group.position.y, hoverBase.y + 0.8);
+    } else {
+      group.position.set(landPos.x, GROUND_Y + 0.4, landPos.z);
+    }
+    hoverBase = null;
+
+    startPos.copy(group.position);
+
     // start from a clean spin origin; jitter is body-fixed
     group.quaternion.identity();
     spinAxis = randomAxis(animRng);
@@ -291,6 +332,31 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
     targetQuat.copy(FACE_QUAT[n] ?? FACE_QUAT[1]);
     state = "landing";
     timer = 0;
+    hoverBase = null;
+  };
+
+  const hover = (pid: number): void => {
+    state = "hovering";
+    timer = 0;
+    hoverBase = null;
+    const player = match.players[pid];
+    if (!player) {
+      group.position.set(0, 6.5, 0);
+      group.quaternion.identity();
+      group.visible = true;
+      return;
+    }
+    const space = player.space ?? 0;
+    const base = board.spaceWorldPos(space).clone();
+    const off = PLAYER_OFFSETS[pid] ?? [0, 0];
+    base.x += off[0];
+    base.z += off[1];
+    const hoverY = 6.8; // nicely above the token, in camera view during follow
+    group.position.set(base.x, hoverY, base.z);
+    group.quaternion.identity();
+    group.scale.set(1, 1, 1);
+    group.visible = true;
+    hoverBase = new THREE.Vector3(base.x, hoverY, base.z);
   };
 
   const flash = (color: string): void => {
@@ -319,6 +385,7 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
     hide,
     tumble,
     setFace,
+    hover,
     flash,
     update,
     dispose: () => {

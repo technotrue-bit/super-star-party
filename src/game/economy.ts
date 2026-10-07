@@ -15,7 +15,7 @@ import { bus } from "../core/events";
 import { audio } from "../audio/audioEngine";
 import { settings } from "../config/settings";
 
-export type BonusStarKind = "mini" | "coin";
+export type BonusStarKind = "mini" | "coin" | "stamp";
 
 export interface BonusStarAward {
   star: BonusStarKind;
@@ -78,7 +78,18 @@ export function tryBuyStar(playerId: number): boolean {
   p.stars += 1;
   bus.emit("star:buy", { player: playerId, star: p.stars, total: p.coins });
   audio.sfx.play("star.get", { volume: 1 });
+  // Our touch: after purchase, move the Prize Balloon to a new random spot (not current)
+  movePrizeBalloon(playerId);
   return true;
+}
+
+/** Move the Prize Balloon (Star Balloon) to a new location after purchase. Carnival re-inflate touch. */
+export function movePrizeBalloon(buyerId: number): void {
+  const current = match.starBalloonPos;
+  const candidates = [4, 15]; // the two classic star space indices
+  const others = candidates.filter((i) => i !== current);
+  match.starBalloonPos = others.length > 0 ? rng.pick(others) : candidates[0];
+  bus.emit("star:balloon_moved", { from: current, to: match.starBalloonPos, by: buyerId });
 }
 
 /** Current star count for a player (0 for unknown ids). */
@@ -164,9 +175,14 @@ export function computeBonusStars(): BonusStarAward[] {
     coin = runnersUp.length > 0 ? pickAmong(runnersUp) : mini; // degenerate 1-player match
   }
 
+  // Our touch: third bonus star — Stamp Star for most stamps collected
+  const stampIds = leaders((p) => (p as any).stamps?.length ?? 0);
+  const stamp = pickAmong(stampIds);
+
   return [
     { star: "mini", playerId: mini },
     { star: "coin", playerId: coin },
+    { star: "stamp", playerId: stamp },
   ];
 }
 
@@ -217,4 +233,27 @@ export function finalRanking(): FinalRankEntry[] {
 function sameScore(a: FinalRankEntry, b: FinalRankEntry): boolean {
   if (a.stars !== b.stars || a.coins !== b.coins) return false;
   return (match.players[a.playerId]?.minigameWins ?? 0) === (match.players[b.playerId]?.minigameWins ?? 0);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Stamp jackpot (our carnival touch + MP7 stamp rule)               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Award 30 coins if the player just collected their 3rd distinct stamp.
+ * Can be called from turn loop on landing/passing a stamp space.
+ * Returns true if jackpot paid.
+ */
+export function awardStampJackpot(playerId: number): boolean {
+  const p = match.players[playerId];
+  if (!p) return false;
+  const distinct = new Set(p.stamps);
+  if (distinct.size >= 3) {
+    addCoins(playerId, 30);
+    bus.emit("stamp:jackpot", { player: playerId, amount: 30 });
+    audio.sfx.play("coin.gain", { pitch: 10 });
+    audio.sfx.play("crowd.cheer");
+    return true;
+  }
+  return false;
 }
