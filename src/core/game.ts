@@ -16,12 +16,27 @@ export type SpaceType =
   | "stamp"             // collect Shy Guy / Goomba / Koopa stamp
   | "minigame_balloon"; // passing/landing pays 5 or 10 and flags a minigame
 
+/** The three carnival stamps. A full set pays the Carnival Jackpot. */
+export type StampKind = "shy" | "goomba" | "koopa";
+
+export const STAMP_KINDS: readonly StampKind[] = ["shy", "goomba", "koopa"];
+
+export const STAMP_LABEL: Record<StampKind, string> = {
+  shy: "Shy Guy",
+  goomba: "Goomba",
+  koopa: "Koopa",
+};
+
 export interface SpaceDef {
   index: number;
   type: SpaceType;
   name: string; // e.g. "Fizzy Fountain", "Gumball Shop"
   x: number;
   y: number;
+  /** Which stamp this space grants. Set on stamp spaces. */
+  stamp?: StampKind;
+  /** Coin price shown on a minigame balloon (5 or 10). Paid on pass and land. */
+  balloonCoins?: 5 | 10;
 }
 
 export interface PlayerState {
@@ -36,8 +51,16 @@ export interface PlayerState {
   active: boolean;
   /** Minigame pack chosen by this player (for roulette weighting). */
   pack?: string;
-  /** Collected stamps for the Stamp Star bonus and 30-coin jackpots. */
-  stamps: string[]; // "shy" | "goomba" | "koopa"
+  /**
+   * Stamps currently held toward the next Carnival Jackpot.
+   * Cleared when the three-stamp set pays out.
+   */
+  stamps: StampKind[];
+  /**
+   * Lifetime new stamps gained, including sets cashed in.
+   * Stamp Star reads this so a jackpot does not wipe the bonus tally.
+   */
+  stampsCollected: number;
 }
 
 export type Phase =
@@ -112,6 +135,7 @@ function makePlayer(id: number, kind: string, name: string): PlayerState {
     active: true,
     pack: undefined,
     stamps: [],
+    stampsCollected: 0,
   };
 }
 

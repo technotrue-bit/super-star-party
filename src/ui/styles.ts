@@ -243,6 +243,15 @@ body {
 }
 .ssp-hud-star { color: ${palette.sun}; font-size: 11px; text-shadow: 0 1px 0 ${palette.ink}; line-height: 1; }
 .ssp-hud-mini { color: ${palette.mint}; font-size: 9px; text-shadow: 0 1px 0 ${palette.ink}; line-height: 1; }
+.ssp-hud-stamps { display: inline-flex; gap: 2px; margin-left: 2px; flex: none; }
+.ssp-hud-stamp {
+  width: 7px; height: 7px; border-radius: 2px; box-sizing: border-box;
+  border: 1.5px solid ${palette.ink}; background: ${palette.creamShadow}; opacity: 0.35;
+}
+.ssp-hud-stamp--on { opacity: 1; }
+.ssp-hud-stamp--shy.ssp-hud-stamp--on { background: ${palette.lava}; }
+.ssp-hud-stamp--goomba.ssp-hud-stamp--on { background: ${palette.wood}; }
+.ssp-hud-stamp--koopa.ssp-hud-stamp--on { background: ${palette.mint}; }
 .ssp-hud-chip--active {
   box-shadow: 0 0 0 3px ${palette.sun}, 0 6px 0 ${palette.ink}, 0 0 18px rgba(255,210,63,.85);
   transform: scale(1.06);

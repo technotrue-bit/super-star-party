@@ -196,7 +196,7 @@ const howToImpl: HowToState & Screen = {
         "🎯",
         palette.sun,
         "THE GOAL",
-        "Race around the <b>Fizzy Fairground</b> — a 28-space carnival loop. Collect <b>coins</b>, buy <b>stars</b>, and play <b>minigames</b>. After 10 rounds, bonus stars go to the player with the most minigame wins AND the player with the most coins. Most total stars wins!"
+        "Race around the <b>Fizzy Fairground</b> — a 28-space carnival loop. Collect <b>coins</b>, buy <b>stars</b>, grab <b>stamps</b>, and pop <b>minigame balloons</b>. Most stars wins!"
       )
     );
 
@@ -215,6 +215,8 @@ const howToImpl: HowToState & Screen = {
     spaceChips.appendChild(this._chip(palette.sun, "Buy a Star"));
     spaceChips.appendChild(this._chip(palette.bubble, "Gumball Shop"));
     spaceChips.appendChild(this._chip(palette.lavaDeep, "Grumpus!"));
+    spaceChips.appendChild(this._chip(palette.heroPip, "Stamp — collect it"));
+    spaceChips.appendChild(this._chip(palette.candy, "Balloon — pay 5 or 10"));
     spaceCard.appendChild(spaceChips);
     cards.appendChild(spaceCard);
 
@@ -234,7 +236,7 @@ const howToImpl: HowToState & Screen = {
         "🎮",
         palette.candy,
         "MINIGAMES",
-        "After every round, all four players enter a <b>minigame</b>. The winner earns <b>+10 coins</b>. At the end, the player with the most minigame wins takes the <b>Mini Star</b> bonus!"
+        "Pass or land on a <b>Minigame Balloon</b> and you pay its price (<b>5</b> or <b>10</b> coins). If anyone pops one, everybody plays a minigame after the round. No pop, no minigame. The winner earns <b>+10 coins</b>."
       )
     );
 
@@ -259,7 +261,7 @@ const howToImpl: HowToState & Screen = {
         "🏆",
         palette.candy,
         "BONUS STARS",
-        "When the 10 rounds are over, <b>2 bonus stars</b> are awarded: <b>Mini Star</b> (most minigame wins) and <b>Coin Star</b> (most coins). One player can't win both — ties broken fairly. Then the winner is crowned!"
+        "Stamp spaces hand out a <b>Shy Guy</b>, <b>Goomba</b>, or <b>Koopa</b> stamp (passing counts). Hold all three and the <b>Carnival Jackpot</b> pays <b>30 coins</b> on the spot — enough to buy a star later that same move. At the end, <b>Mini Star</b> and <b>Coin Star</b> still go to the most minigame wins and the most coins."
       )
     );
 

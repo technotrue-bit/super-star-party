@@ -8,6 +8,7 @@
 import { injectStyles } from "./styles";
 import { root } from "./root";
 import { playerAvatar } from "./avatar";
+import { STAMP_KINDS, STAMP_LABEL, type StampKind } from "../core/game";
 
 /**
  * Single-banner-channel hook. When kit.ts wires this, every HUD banner is routed
@@ -29,6 +30,8 @@ export interface HudPlayerState {
   coins?: number;
   stars?: number;
   minigameWins?: number;
+  /** Stamp kinds currently held (Shy Guy / Goomba / Koopa). */
+  stamps?: string[];
   active?: boolean;
   color?: string;
 }
@@ -49,6 +52,7 @@ interface ChipRec {
   coinsEl: HTMLElement;
   starsEl: HTMLElement;
   winsEl: HTMLElement;
+  stampPips: HTMLElement[];
   lastCoins: number;
 }
 
@@ -96,7 +100,18 @@ function makeChip(p: HudPlayerState, idx: number): ChipRec {
   const winsEl = document.createElement("span");
   winsEl.setAttribute("aria-label", "minigame wins");
 
-  stats.append(coinIcon, coinsEl, starIcon, starsEl, miniIcon, winsEl);
+  const stamps = document.createElement("span");
+  stamps.className = "ssp-hud-stamps";
+  stamps.setAttribute("aria-label", "stamps");
+  const stampPips = STAMP_KINDS.map((kind) => {
+    const pip = document.createElement("span");
+    pip.className = `ssp-hud-stamp ssp-hud-stamp--${kind}`;
+    pip.title = `${STAMP_LABEL[kind]} stamp`;
+    stamps.appendChild(pip);
+    return pip;
+  });
+
+  stats.append(coinIcon, coinsEl, starIcon, starsEl, miniIcon, winsEl, stamps);
   info.append(nameEl, stats);
   chip.append(avatar, info);
 
@@ -108,6 +123,7 @@ function makeChip(p: HudPlayerState, idx: number): ChipRec {
     coinsEl,
     starsEl,
     winsEl,
+    stampPips,
     lastCoins: -1,
   };
 }
@@ -152,6 +168,12 @@ export function hud(): HudHandle {
       rec.coinsEl.textContent = String(Math.max(0, Math.round(p.coins ?? 0)));
       rec.starsEl.textContent = String(Math.max(0, Math.round(p.stars ?? 0)));
       rec.winsEl.textContent = String(Math.max(0, Math.round(p.minigameWins ?? 0)));
+
+      const held = new Set(p.stamps ?? []);
+      rec.stampPips.forEach((pip, i) => {
+        const kind: StampKind = STAMP_KINDS[i];
+        pip.classList.toggle("ssp-hud-stamp--on", held.has(kind));
+      });
 
       rec.chip.classList.toggle("ssp-hud-chip--active", p.active === true);
 

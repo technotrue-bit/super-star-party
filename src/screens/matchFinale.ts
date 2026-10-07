@@ -450,7 +450,7 @@ class FinaleScreen implements Screen {
     if (!award) return;
     const player = match.players[award.playerId];
     const color = characterColor(player?.kind ?? "pip");
-    const starLabel = award.star === "mini" ? "MINIGAME STAR" : "COIN STAR";
+    const starLabel = award.star === "mini" ? "MINIGAME STAR" : award.star === "stamp" ? "STAMP STAR" : "COIN STAR";
 
     audio.sfx.play("pop", { volume: 0.8 });
 

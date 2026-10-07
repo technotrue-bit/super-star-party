@@ -16,7 +16,9 @@ export interface SSPEventMap {
   "star:buy": { player: number; star: number; total: number };
   "star:balloon_moved": { from: number; to: number; by: number };
   "happening:event": { player: number; eventId: string; label: string };
+  "stamp:collected": { player: number; kind: string; total: number };
   "stamp:jackpot": { player: number; amount: number };
+  "balloon:popped": { player: number; coins: number; listed: number };
   "minigame:start": { id: string; name: string };
   "minigame:end": { id: string; winner: number; coins: number };
   "results:show": { ranking: number[] };
