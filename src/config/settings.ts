@@ -11,7 +11,8 @@ export const settings = {
   // ---- match ----
   totalTurns: 10, // rounds of dice-roll + minigame
   players: 4,
-  starCost: 20, // coins to buy a star
+  starCost: 10, // coins per star from the Grand Prize Balloon
+  starBundleMax: 5, // most stars one visit to the balloon can ask for
   blueCoin: 3, // coins gained on blue space
   redCoin: 3, // coins lost on red space
   minigameWinCoins: 10, // minigame winner payout

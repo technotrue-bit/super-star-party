@@ -6,7 +6,7 @@
 import { match } from "../core/game";
 import type { SpaceTrap, TrapKind } from "../core/game";
 import { rng } from "../core/rng";
-import { addCoins } from "./economy";
+import { addCoins, movePrizeBalloon } from "./economy";
 
 export interface TrapResult {
   kind: TrapKind;
@@ -157,13 +157,13 @@ export function resolveTrap(victimId: number, trap: SpaceTrap): TrapResult {
   }
 
   if (trap.kind === "star_shift") {
-    const stars = match.players.length
-      ? [4, 15].filter((i) => i !== match.starBalloonPos)
-      : [4];
-    const next = stars.length ? rng.pick(stars) : 4;
     const from = match.starBalloonPos;
-    match.starBalloonPos = next;
-    return { ...base, starShifted: true, message: `The star jumps from space ${from + 1} to ${next + 1}!` };
+    const next = movePrizeBalloon(trap.ownerId);
+    return {
+      ...base,
+      starShifted: true,
+      message: `The Grand Prize Balloon pops off space ${from + 1} and reinflates at ${next + 1}!`,
+    };
   }
 
   match.duel = { challengerId: trap.ownerId, victimId };

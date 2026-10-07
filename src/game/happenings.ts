@@ -18,7 +18,7 @@ import { bus } from "../core/events";
 import { match, type PlayerState } from "../core/game";
 import { audio } from "../audio/audioEngine";
 import { fizzyFairground } from "../board/boardData";
-import { addCoins } from "./economy";
+import { addCoins, movePrizeBalloon } from "./economy";
 
 /** What the turn loop needs to apply after a happening resolves. */
 export interface HappeningOutcome {
@@ -36,22 +36,10 @@ export interface HappeningOutcome {
 /* ------------------------------------------------------------------ */
 
 const BOARD_SIZE = fizzyFairground.spaces.length; // 28-space Fizzy Fairground
-const STAR_SPACES: number[] = fizzyFairground.spaces
-  .filter((s) => s.type === "star")
-  .map((s) => s.index);
 
 /** Wrap a space index into [0, BOARD_SIZE). */
 function wrap(n: number): number {
   return ((n % BOARD_SIZE) + BOARD_SIZE) % BOARD_SIZE;
-}
-
-/** Nearest star space strictly ahead of `from` (wrapping). Always found: 2 stars on the loop. */
-function nextStarAhead(from: number): number | undefined {
-  for (let step = 1; step <= BOARD_SIZE; step++) {
-    const idx = wrap(from + step);
-    if (STAR_SPACES.includes(idx)) return idx;
-  }
-  return undefined;
 }
 
 function emitHappening(playerId: number, eventId: string, label: string): void {
@@ -106,7 +94,7 @@ export function consumeDoubleBlue(playerId: number): boolean {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Green-space events (no repeats until all 9 used, then reshuffle)   */
+/*  Green-space events (no repeats until all used, then reshuffle)      */
 /* ------------------------------------------------------------------ */
 
 const GREEN_EVENTS: readonly string[] = [
@@ -119,6 +107,7 @@ const GREEN_EVENTS: readonly string[] = [
   "banana_peel",
   "express_pass",
   "star_dance",
+  "balloon_breeze",
 ];
 
 /** Pick the next green event: rng.pick among ids not yet used this match. */
@@ -264,16 +253,17 @@ export function resolveGreen(playerId: number, spaceIndex: number): HappeningOut
       };
     }
     case "star_dance": {
-      const target = nextStarAhead(s);
+      const target = match.starBalloonPos;
       addCoins(playerId, 3);
-      if (target !== undefined) {
+      const spot = fizzyFairground.spaces[wrap(target)];
+      if (target !== s && spot) {
         audio.sfx.play("happening.magic");
         audio.sfx.play("crowd.aah");
         audio.sfx.play("whoosh");
         emitHappening(playerId, eventId, "Star Dance!");
         return {
           label: "Star Dance!",
-          message: `The stars call you! +3 coins, and you float to ${fizzyFairground.spaces[target].name}!`,
+          message: `The Grand Prize Balloon calls you! +3 coins, and you float to ${spot.name}!`,
           coinsDelta: 3,
           moveTo: target,
           banner: "STAR DANCE!",
@@ -283,9 +273,24 @@ export function resolveGreen(playerId: number, spaceIndex: number): HappeningOut
       emitHappening(playerId, eventId, "Star Dance!");
       return {
         label: "Star Dance!",
-        message: "The stars call... but the stage is empty. Still, +3 coins!",
+        message: "You are already under the Grand Prize Balloon. Still, +3 coins!",
         coinsDelta: 3,
         banner: "STAR DANCE!",
+      };
+    }
+    case "balloon_breeze": {
+      const from = match.starBalloonPos;
+      const to = movePrizeBalloon(playerId);
+      const fromName = fizzyFairground.spaces[wrap(from)]?.name ?? "the midway";
+      const toName = fizzyFairground.spaces[wrap(to)]?.name ?? "a new spot";
+      audio.sfx.play("happening.magic");
+      audio.sfx.play("whoosh");
+      emitHappening(playerId, eventId, "Balloon Breeze!");
+      return {
+        label: "Balloon Breeze!",
+        message: `A gust pops the Grand Prize Balloon off ${fromName} and it reinflates at ${toName}!`,
+        coinsDelta: 0,
+        banner: "BALLOON BREEZE!",
       };
     }
     default: {

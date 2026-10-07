@@ -273,6 +273,45 @@ const whoosh: SfxDef = {
   },
 };
 
+/** Inhale, then a crack — the Grand Prize Balloon popping and catching its breath. */
+const balloonGasp: SfxDef = {
+  build: (ctx, out, t, o) => {
+    const stops: StopFn[] = [];
+    const p = semitone(o.pitch);
+    stops.push(
+      noise(ctx, out, t, 0.2, {
+        type: "bandpass",
+        freq: 380,
+        sweepTo: 1700,
+        q: 1.5,
+        vol: o.vol * 0.32,
+        attack: 0.05,
+      }),
+    );
+    stops.push(
+      tone(ctx, out, t, 260 * p, 0.16, {
+        type: "sine",
+        vol: o.vol * 0.2,
+        slideTo: 540 * p,
+        slideTime: 0.14,
+        decay: 0.12,
+      }),
+    );
+    const popAt = t + 0.18;
+    stops.push(
+      tone(ctx, out, popAt, 640 * p, 0.06, {
+        type: "sine",
+        vol: o.vol * 0.48,
+        slideTo: 120 * p,
+        slideTime: 0.04,
+        decay: 0.04,
+      }),
+    );
+    stops.push(noise(ctx, out, popAt, 0.07, { type: "highpass", freq: 1600, vol: o.vol * 0.3 }));
+    return () => stops.forEach((s) => s());
+  },
+};
+
 const pop: SfxDef = {
   build: (ctx, out, t, o) => {
     const stops: StopFn[] = [];
@@ -630,6 +669,7 @@ export const SFX: Record<string, SfxDef> = {
   boing,
   whoosh,
   pop,
+  "balloon.gasp": balloonGasp,
   "fanfare.win": fanfareWin,
   "fanfare.lose": fanfareLose,
   "minigame.go": minigameGo,

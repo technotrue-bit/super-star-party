@@ -32,7 +32,7 @@ const state = () =>
       die: (window.__DIE_STATE ?? "n/a"),
       coins: ps.map((p) => p.coins),
       stars: ps.map((p) => p.stars),
-      positions: ps.map((p) => p.pos),
+      positions: ps.map((p) => p.space),
       current: m.current ?? m.turnOwner ?? null,
       history: (m.minigameHistory ?? m.history ?? []).length,
     };
@@ -61,7 +61,7 @@ page.on("console", (m) => { if (m.type() === "error") errors.push(m.text().slice
 page.on("pageerror", (e) => errors.push("PAGEERROR: " + String(e).slice(0, 160)));
 
 console.log("1. boot");
-await page.goto("http://localhost:5177/?audio=1", { waitUntil: "domcontentloaded" });
+await page.goto("http://localhost:5177/?audio=1&speed=8", { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(2500);
 let st = await state();
 console.log("   screen:", st.screen, "| canvas:", await page.evaluate(() => {
@@ -100,7 +100,7 @@ console.log(`   die state seen: ${sawDie} | token moved: ${moved}`);
 console.log(`   positions: ${JSON.stringify(before)} -> ${JSON.stringify(st.positions)}`);
 await page.screenshot({ path: `${OUT}/04-rolled.png` });
 
-console.log("5. autoplay a full match (speed 3)");
+console.log("5. autoplay a full match (speed 8, click START MINI GAME)");
 await page.evaluate(() => window.__SSP__?.autoplay?.(true));
 const seenScreens = new Set();
 const seenMinigames = new Set();
@@ -108,7 +108,19 @@ const seenPhases = new Set();
 const minigames = new Set();
 const t0 = Date.now();
 let reachedFinale = false;
+let lastBalloon = null;
+let minigameClicks = 0;
 while (Date.now() - t0 < 240000) {
+  const clickedStart = await page.evaluate(() => {
+    const btn = document.querySelector("#mg-start-btn");
+    if (!btn) return false;
+    btn.click();
+    return true;
+  });
+  if (clickedStart) {
+    minigameClicks += 1;
+    console.log("  clicked START MINI GAME");
+  }
   const s = await page.evaluate(() => {
     const st = window.__SSP__?.state?.() ?? {};
     const m = st.match ?? {};
@@ -121,14 +133,20 @@ while (Date.now() - t0 < 240000) {
       mg: (last && (last.id ?? last.minigame ?? last.game)) ?? null,
       coins: (m.players ?? []).map((p) => p.coins),
       stars: (m.players ?? []).map((p) => p.stars),
+      starBalloonPos: m.starBalloonPos,
     };
   });
   if (s.screen) seenScreens.add(s.screen);
   if (s.phase) seenPhases.add(s.phase);
   if (s.mg) minigames.add(s.mg);
+  if (s.starBalloonPos !== lastBalloon) {
+    console.log(`   balloon ${lastBalloon} -> ${s.starBalloonPos} | stars ${JSON.stringify(s.stars)} | coins ${JSON.stringify(s.coins)} | turn ${s.round}`);
+    lastBalloon = s.starBalloonPos;
+  }
   if (s.screen === "finale") { reachedFinale = true; break; }
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(400);
 }
+console.log(`   START MINI GAME clicks: ${minigameClicks}`);
 st = await state();
 const mins = ((Date.now() - t0) / 60000).toFixed(1);
 console.log(`   ran ${mins} min of match time`);
