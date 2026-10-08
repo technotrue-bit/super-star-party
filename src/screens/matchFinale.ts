@@ -9,15 +9,6 @@
  * Determinism: presentation randomness comes from its own mulberry32 stream
  * (seed 0xf100a1) — never Math.random(), never the gameplay rng. exit() removes
  * every DOM node, 3D object, listener, and timer it created; re-entering works.
- *
- * Timeline (controls at 15s):
- *   0.0-1.2s   Camera swoop to podium view
- *   1.2-2.4s   Standings count-up: stars + coins animate from 0 to match totals
- *   3.2s       Minigame Star
- *   5.8s       Coin Star
- *   8.4s       Stamp Star, only when someone collected a stamp
- *   10.8s      Winner banner + podium poses + sustained confetti/sparkles
- *   15.0s      Controls appear (PLAY AGAIN / BACK TO TITLE)
  */
 import * as THREE from "three";
 import { world } from "../main";
