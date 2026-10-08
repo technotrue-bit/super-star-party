@@ -7,12 +7,12 @@
  * and lands as a fresh pile anyone can grab (mischievous, comeback-friendly
  * theft). 30 seconds, most coins wins, ties go to the lower player id.
  *
- * Determinism: ALL gameplay — movement integration, steering, pickup tests,
- * CPU decisions/knocks, pile spawns/respawns, and therefore every ctx.rng()
- * draw — runs inside a fixed-step simulation (whole 1/60s steps, identical
- * to the proven bumper_balls pattern). update(dt) only accumulates real dt
- * and runs fixed steps; every rng draw is gated on the integer step index,
- * so seeded runs replay byte-identically regardless of frame timing.
+ * Determinism: ALL gameplay — movement, steering, pickup tests, CPU
+ * decisions/knocks, pile spawns, and therefore every ctx.rng() draw — runs
+ * inside a fixed-step simulation (whole 1/60s steps). Character contact is
+ * a Rapier step at that same rate when the WASM chunk has loaded; otherwise
+ * the hand-rolled circles run. update(dt) only accumulates real dt. Seeded
+ * runs replay identically regardless of frame timing.
  *
  * Time budget: the framework force-finishes at settings.minigameTimeLimit
  * (30s); this game calls finish() at TIME_CAP = 30 in the same step the
@@ -26,6 +26,7 @@ import { characterColor } from "../../characters/roster";
 import { celGradient } from "../../characters/cel";
 import { palette, hex } from "../../config/palette";
 import { buildCoinField, ARENA_R, type FieldHandle } from "./field";
+import { createBallArena, type BallArena, type XzBody } from "../../physics/contact";
 
 /* --------------------- presentation rng (visual only) --------------- */
 
@@ -89,6 +90,7 @@ interface Body {
   moving: boolean;
   animHoldT: number; // squash/jump hold — don't re-apply move anim during it
   brain: CpuBrain;
+  sim?: XzBody;
 }
 
 interface CpuBrain {
@@ -224,6 +226,7 @@ interface RoundState {
      draw order is identical across runs regardless of frame timing. */
   simTime: number; // accumulated fixed-step time (s)
   stepIndex: number; // current simulation step
+  physics: BallArena | null;
 }
 
 /* --------------------------- tiny helpers --------------------------- */
@@ -1120,6 +1123,7 @@ export const coinGrabMinigame: Minigame = {
       prng: mulberry32(12345),
       simTime: 0,
       stepIndex: 0,
+      physics: null,
     };
     ctx.scene.add(state.dyn);
 
@@ -1161,6 +1165,17 @@ export const coinGrabMinigame: Minigame = {
         createRadiusIndicator(state, indicatorColor, x, z, prng)
       );
     });
+
+    state.physics = createBallArena({
+      wallInner: WALL_CLAMP + CHAR_R,
+      ballRestitution: 0.8,
+      wallRestitution: 0.8,
+    });
+    if (state.physics) {
+      for (const b of state.bodies) {
+        b.sim = state.physics.addBall(b.id, b.x, b.z, CHAR_R);
+      }
+    }
 
     state.field = buildCoinField(
       ctx.scene,
@@ -1241,6 +1256,8 @@ export const coinGrabMinigame: Minigame = {
     const state = round;
     if (!state) return;
     window.removeEventListener("pointerup", state.onPointerUp);
+    state.physics?.dispose();
+    state.physics = null;
     state.field?.dispose();
     state.field = null;
     for (const b of state.bodies) {
@@ -1334,33 +1351,72 @@ function stepFixed(state: RoundState, dt: number): void {
       }
     }
 
-    b.x += b.vx * dt;
-    b.z += b.vz * dt;
+    if (state.physics && b.sim) {
+      b.sim.setVelocity(b.vx, b.vz);
+    } else {
+      b.x += b.vx * dt;
+      b.z += b.vz * dt;
 
-    /* ---- rim wall: clamp + reflect ---- */
-    const d = Math.hypot(b.x, b.z);
-    if (d > WALL_CLAMP && d > 1e-6) {
-      const nx = b.x / d;
-      const nz = b.z / d;
-      b.x = nx * WALL_CLAMP;
-      b.z = nz * WALL_CLAMP;
-      const rv = b.vx * nx + b.vz * nz;
-      if (rv > 0) {
-        b.vx -= 1.8 * rv * nx;
-        b.vz -= 1.8 * rv * nz;
-        b.vx *= 0.96;
-        b.vz *= 0.96;
-        bumpJuice(state, b);
+      /* ---- rim wall: clamp + reflect ---- */
+      const d = Math.hypot(b.x, b.z);
+      if (d > WALL_CLAMP && d > 1e-6) {
+        const nx = b.x / d;
+        const nz = b.z / d;
+        b.x = nx * WALL_CLAMP;
+        b.z = nz * WALL_CLAMP;
+        const rv = b.vx * nx + b.vz * nz;
+        if (rv > 0) {
+          b.vx -= 1.8 * rv * nx;
+          b.vz -= 1.8 * rv * nz;
+          b.vx *= 0.96;
+          b.vz *= 0.96;
+          bumpJuice(state, b);
+        }
       }
-    }
 
-    b.holder.position.x = b.x;
-    b.holder.position.z = b.z;
-    applyMoveAnim(state, b);
+      b.holder.position.x = b.x;
+      b.holder.position.z = b.z;
+      applyMoveAnim(state, b);
+    }
   }
 
-  /* ---- circle-circle collisions + bump-to-knock theft ---- */
-  for (let i = 0; i < state.bodies.length; i++) {
+  if (state.physics) {
+    const hits = state.physics.step();
+    for (const b of state.bodies) {
+      if (!b.sim) continue;
+      const pose = b.sim.pose();
+      b.x = pose.x;
+      b.z = pose.z;
+      b.vx = pose.vx;
+      b.vz = pose.vz;
+      b.holder.position.x = b.x;
+      b.holder.position.z = b.z;
+      applyMoveAnim(state, b);
+    }
+    for (const hit of hits) {
+      if (hit.approach <= 0) continue;
+      if (hit.b < 0) {
+        const body = state.bodies.find((p) => p.id === hit.a);
+        if (body) bumpJuice(state, body);
+        continue;
+      }
+      const a = state.bodies.find((p) => p.id === hit.a);
+      const b = state.bodies.find((p) => p.id === hit.b);
+      if (!a || !b) continue;
+      bumpJuice(state, a);
+      bumpJuice(state, b);
+      if (hit.approach > KNOCK_MIN_IMPULSE) {
+        const va = a.vx * hit.nx + a.vz * hit.nz;
+        const vb = b.vx * hit.nx + b.vz * hit.nz;
+        const victim = vb < va - 0.35 ? b : va < vb - 0.35 ? a : a.coins >= b.coins ? a : b;
+        const bumper = victim === a ? b : a;
+        if (victim.coins > 0 && ctx.rng() < KNOCK_P) knockCoin(state, victim, bumper);
+      }
+    }
+  }
+
+  /* ---- circle-circle collisions when Rapier is not loaded ---- */
+  if (!state.physics) for (let i = 0; i < state.bodies.length; i++) {
     const a = state.bodies[i];
     for (let j = i + 1; j < state.bodies.length; j++) {
       const b = state.bodies[j];

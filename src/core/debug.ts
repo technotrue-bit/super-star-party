@@ -34,6 +34,7 @@ import {
   setMinigameCoinMultiplier as saveCoinMultiplier,
 } from "../minigames/packRules";
 import { effectsPassCount, getEffectsQuality, setEffectsQuality as applyEffectsQuality } from "../render/postFx";
+import { rapierStatus, runContactScenario as runRapierContactScenario } from "../physics/contact";
 
 export interface SSPDebug {
   state(): Record<string, unknown>;
@@ -99,6 +100,15 @@ export interface SSPDebug {
   collectLuckyBlue(playerId: number): number;
   /** Lucky Card holders for the next roulette, then the flag clears. */
   takeLuckyPlayers(): number[];
+  /** Rapier chunk status and how many bodies the live contact world holds. */
+  rapier(): { loaded: boolean; failed: boolean; contactBodies: number; contactsSeen: number };
+  /**
+   * Two balls on a throwaway world. Loads the chunk if a contact minigame
+   * has not already. Returns whether they met and bounced apart.
+   */
+  runContactScenario(): Promise<{ contacted: boolean; separated: boolean; minGap: number }>;
+  /** Open one minigame directly. Starts a match first when the board is empty. */
+  openMinigame(id: string): void;
 }
 
 let autoplayOn = false;
@@ -166,6 +176,7 @@ export function installDebugAPI(): void {
         frameMs: Math.round(frameMs),
         effectsQuality: getEffectsQuality(),
         effectsPasses: effectsPassCount(),
+        rapier: rapierStatus(),
       };
     },
     goto(screen: string) {
@@ -294,6 +305,15 @@ export function installDebugAPI(): void {
     },
     takeLuckyPlayers() {
       return takeLuckyPlayers();
+    },
+    rapier() {
+      return rapierStatus();
+    },
+    runContactScenario() {
+      return runRapierContactScenario();
+    },
+    openMinigame(id: string) {
+      void import("../screens/minigameScreen").then((mod) => mod.launchMinigame(id));
     },
   };
   (window as unknown as { __SSP__: SSPDebug }).__SSP__ = api;

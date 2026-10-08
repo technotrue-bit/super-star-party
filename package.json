@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "0.21.0",
     "@fontsource/fredoka": "^5.2.5",
     "postprocessing": "^6.39.5",
     "three": "^0.182.0",

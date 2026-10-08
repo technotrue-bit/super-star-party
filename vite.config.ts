@@ -29,7 +29,7 @@ export default defineConfig({
   plugins: [bvhThreeFacade()],
   optimizeDeps: {
     // Serve the package as source so the facade alias applies in dev too.
-    exclude: ["three-mesh-bvh"],
+    exclude: ["three-mesh-bvh", "@dimforge/rapier3d-compat"],
   },
   server: {
     host: true, // reachable over LAN/Tailscale for phone testing
