@@ -694,6 +694,10 @@ function simulateStep(st: State, step: number): void {
     }
   }
 
+  // Coins fired this step wait until the next step, matching a charge that
+  // resolves before the following basket tick.
+  const coinsAtStart = st.coins.length;
+
   // ---- CPU thinking (players 1..3): decisions at fixed simTime intervals ----
   const tAThink = arriveTime(MUZZLE_Y, VY);
   for (let pid = 1; pid < 4; pid++) {
@@ -720,15 +724,33 @@ function simulateStep(st: State, step: number): void {
           P.aimError = err;
           P.landError = (ctx.rng() * 2 - 1) * CPU_LAND_ERR;
           P.aimSlop = slop;
-          P.charging = true;
-          P.chargeT = CHARGE;
+          // Fire on this sim step. Waiting out CHARGE on frame delta let a
+          // slow frame move the baskets before the re-check, so two seeded
+          // runs could disagree. CHARGE is shorter than the sim step, so the
+          // baskets are still the ones this decision just measured.
+          const tA = arriveTime(MUZZLE_Y, VY);
+          let bestNow = Infinity;
+          for (const b of st.baskets) {
+            if (b.lane !== P.lane) continue;
+            const d = Math.abs(b.x - b.speed * tA - P.aimError);
+            if (d < bestNow) bestNow = d;
+          }
+          if (bestNow <= 0.84 + P.aimSlop) {
+            P.ammo -= 1;
+            if (P.ammoPips[P.ammo]) P.ammoPips[P.ammo].visible = false;
+            P.cpuShots += 1;
+            fireCoin(st, P.id);
+          } else {
+            P.cpuAborts += 1;
+          }
         }
       }
     }
   }
 
   // ---- coins: analytic rim-crossing resolve, then integrate ----
-  for (const c of st.coins) {
+  for (let ci = 0; ci < coinsAtStart; ci++) {
+    const c = st.coins[ci];
     if (!c.resolved) {
       if (c.y <= CATCH_Y || arriveTime(c.y, c.vy) <= step) {
         resolveCoin(st, c);
@@ -890,7 +912,7 @@ const coinCannon: Minigame = {
 
     // ---- charge-up -> fire (dt-based, no RNG — responsive for human) ----
     for (const P of st.players) {
-      if (!P.charging) continue;
+      if (P.id !== 0 || !P.charging) continue;
       P.chargeT -= dt;
       const frac = 1 - Math.max(0, P.chargeT) / CHARGE;
       P.glow.visible = true;

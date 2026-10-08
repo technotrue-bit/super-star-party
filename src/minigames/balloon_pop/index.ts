@@ -51,7 +51,7 @@ const SPARKLE_COLORS = [palette.sun, palette.mint, palette.bubble, palette.candy
 
 /* --------------------- fixed-step simulation ---------------------- */
 const FIXED_DT = 1 / 60; // simulation step (s)
-const MAX_STEPS_PER_FRAME = 5; // catch-up cap (avoids spiral-of-death)
+const MAX_STEPS_PER_FRAME = 12; // maxDelta 1/20 × speed 4 = 0.2s. Dropping below that lets the 30s screen limit beat the sim.
 
 // Landscape / portrait arena + camera layouts (portrait compacts the spread
 // so all four columns stay on screen).

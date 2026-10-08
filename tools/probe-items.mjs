@@ -40,18 +40,22 @@ const fail = (msg) => {
 };
 
 await page.goto(`${BASE}/?audio=0&seed=7`, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__SSP__ && window.__SSP__.itemState, null, { timeout: 20000 });
+await page.waitForFunction(() => window.__SSP__?.state?.().screen === "title", null, { timeout: 20000 });
 
 console.log("1. shop stock");
 await page.evaluate(() => {
   const ssp = window.__SSP__;
   ssp.seed(7);
   ssp.startMatch(["pip", "bounce", "glimmer", "tusk"], ["Pip", "Bounce", "Glimmer", "Tusk"]);
+});
+await page.waitForFunction(() => {
+  const s = window.__SSP__.state();
+  return s.screen === "board" && !s.isWiping;
+});
+const shop = await page.evaluate((expected) => {
+  const ssp = window.__SSP__;
   ssp.fundPlayer(0, 80);
   ssp.openShop(0);
-});
-await page.waitForSelector("[data-shop='true']");
-const shop = await page.evaluate((expected) => {
   const rows = [];
   for (const item of expected) {
     const card = document.querySelector(`[data-item="${item.key}"]`);
@@ -65,6 +69,7 @@ const shop = await page.evaluate((expected) => {
       buyH: btn ? btn.offsetHeight : 0,
     });
   }
+  document.querySelector("[data-shop-close]")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   return rows;
 }, EXPECTED);
 console.log("   cards", JSON.stringify(shop));
@@ -75,7 +80,6 @@ for (const row of shop) {
   if (row.price !== String(spec.price)) fail(`${row.key} shop price ${row.price}`);
   if (row.buyH < 44) fail(`${row.key} buy button is ${row.buyH}px`);
 }
-await page.click("[data-shop-close]");
 await page.waitForSelector("[data-shop='true']", { state: "detached" });
 
 console.log("2. acquire and use, twice");

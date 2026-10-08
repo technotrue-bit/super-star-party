@@ -24,7 +24,7 @@ import { celGradient } from "../../characters/cel";
 import { audio } from "../../audio/audioEngine";
 
 const FIXED_DT = 1 / 60;
-const MAX_STEPS_PER_FRAME = 5;
+const MAX_STEPS_PER_FRAME = 12; // maxDelta 1/20 × speed 4 = 0.2s. Dropping below that lets the 30s screen limit beat the sim.
 
 const MATCH_DURATION = 8;
 const SOLO_PUSH_PER_TAP = 0.705; /* re-centred for the 2.2x surge: at 0.94 the solo's mean ran ahead of the trio's and it won 16/16 */
