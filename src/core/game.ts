@@ -53,7 +53,7 @@ export interface PlayerItemFx {
   lucky: boolean;
   /** Next blue space pays one extra coin. */
   luckyBlue: boolean;
-  /** Bowser Suit: skip this player's upcoming turn. */
+  /** Grumpus Coat: skip this player's upcoming turn. */
   skipTurn: boolean;
 }
 

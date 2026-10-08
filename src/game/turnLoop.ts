@@ -421,7 +421,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       player.itemFx.skipTurn = false;
       bus.emit("turn:start", { turn: match.turn, player: pid });
       hud.showBanner(`${player.name} LOSES A TURN!`, { durationMs: 1400 });
-      ui.toast("The Bowser Suit ate their turn!", { durationMs: 1800 });
+      ui.toast("The Grumpus Coat ate their turn!", { durationMs: 1800 });
       chars[pid]?.anim.sad();
       audio.sfx.play("sad");
       refreshHud();
@@ -973,10 +973,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     };
     S.poisonAutoCommit = () => finish(true);
     const useBtn = ui.button({
-      label: "☠️ POISON −2",
+      label: "🍋 SOUR −2",
       kind: "danger",
       size: "md",
-      ariaLabel: "Use Poison Mushroom to subtract 2 from this roll",
+      ariaLabel: "Use Sour Mushroom to subtract 2 from this roll",
       onClick: () => finish(true),
     });
     useBtn.el.setAttribute("data-poison", "use");
@@ -991,7 +991,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     row.append(useBtn.el, skipBtn.el);
     const roller = match.players[rollerId];
     S.poisonPopup = ui.popup({
-      title: "POISON MUSHROOM",
+      title: "SOUR MUSHROOM",
       body: `${roller?.name ?? "They"} rolled ${raw}. Subtract 2 before they move?`,
       content: row,
       sound: null,

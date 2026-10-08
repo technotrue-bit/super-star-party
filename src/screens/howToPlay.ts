@@ -246,7 +246,7 @@ const howToImpl: HowToState & Screen = {
       "🍄",
       palette.mint,
       "ITEMS & THE GUMBALL SHOP",
-      "Pass or land on a shop space (🛒) to buy. You choose on big touch buttons; computers buy one item they can afford and use one before they roll. Poison Mushroom waits until a rival has rolled. Lucky Card triples your pack's roulette odds and pays +1 on your next blue. In the last 5 turns, Fizzy Barker gives last place one free bag item."
+      "Pass or land on a shop space (🛒) to buy. You choose on big touch buttons; computers buy one item they can afford and use one before they roll. Sour Mushroom waits until a rival has rolled. Lucky Card triples your pack's roulette odds and pays +1 on your next blue. In the last 5 turns, Fizzy Barker gives last place one free bag item."
     );
     const itemChips = document.createElement("div");
     itemChips.className = "ssp-howto-card__space";

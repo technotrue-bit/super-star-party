@@ -11,19 +11,19 @@ import { chromium } from "@playwright/test";
 const BASE = process.env.SSP_BASE ?? "http://localhost:5177";
 
 const EXPECTED = [
-  { key: "dash_mushroom", name: "Dash Mushroom", price: 5, kind: "dash", value: 3 },
-  { key: "golden_dash", name: "Golden Dash Mushroom", price: 10, kind: "dash", value: 5 },
-  { key: "poison_mushroom", name: "Poison Mushroom", price: 5, kind: "poison" },
+  { key: "dash_mushroom", name: "Zip Mushroom", price: 5, kind: "dash", value: 3 },
+  { key: "golden_dash", name: "Golden Zip Mushroom", price: 10, kind: "dash", value: 5 },
+  { key: "poison_mushroom", name: "Sour Mushroom", price: 5, kind: "poison" },
   { key: "double_dice", name: "Double Dice", price: 8, kind: "dice" },
-  { key: "warp_pipe", name: "Warp Pipe", price: 10, kind: "swappos" },
+  { key: "warp_pipe", name: "Funhouse Hatch", price: 10, kind: "swappos" },
   { key: "dueling_glove", name: "Dueling Glove", price: 12, kind: "duel" },
   { key: "lucky_card", name: "Lucky Card", price: 8, kind: "lucky" },
-  { key: "mecha_fly", name: "Mecha Fly Guy", price: 12, kind: "steal" },
+  { key: "mecha_fly", name: "Cogfly", price: 12, kind: "steal" },
   { key: "swap_card", name: "Swap Card", price: 8, kind: "trade" },
-  { key: "boo_bell", name: "Boo Bell", price: 20, kind: "star" },
+  { key: "boo_bell", name: "Wisp Bell", price: 20, kind: "star" },
   { key: "genie_lamp", name: "Genie Lamp", price: 15, kind: "genie" },
-  { key: "chomp_call", name: "Chomp Call", price: 15, kind: "chomp" },
-  { key: "bowser_suit", name: "Bowser Suit", price: 25, kind: "bowser" },
+  { key: "chomp_call", name: "Balloon Tug", price: 15, kind: "chomp" },
+  { key: "bowser_suit", name: "Grumpus Coat", price: 25, kind: "bowser" },
 ];
 
 const errors = [];

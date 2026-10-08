@@ -14,7 +14,7 @@
 - Passing or landing on balloons and shops triggers immediately — **Done**: Minigame balloons, stamp spaces, the Grand Prize Balloon, and shops pay, grant, or sell on pass and on land. Red, blue, green, and grumpus spaces still resolve on land only. A human shop visit waits for a choice. CPUs and `__SSP__.autoplay(true)` buy one affordable item they do not already hold (or leave without buying) with no modal, so a pass never stalls. Automatic visits pick that item with `rng` and throw orbs onto a legal space themselves.
 - If two players end on same space → Tight Squeeze Bonus — **Done**: Carnival Squeeze. When a move *ends* on a space another active player already occupies, every active player on that space (the arriver and whoever was already there — 3 or 4 included) gains `settings.squeezeCoins` (2). Passing through does not pay. The moment is a "GROUP HUG!" banner, a toast, a squash, and the procedural `hug` sting. The coins are in hand before the landing effect, so they can fund a star or a shop on that same tile.
 - If anyone popped a Minigame Balloon → minigame after all moved — **Done**: `match.minigameTriggeredThisRound` is set when a balloon is passed or landed, and the round-end check starts a minigame only then (otherwise the round rolls on). Roulette-slice boost for the popper is still **TODO**.
-- Last 5 turns: Toad (→ "Fizzy Barker") gives pity item to last place — **Done**: At the *start* of a player's turn, before the die, while `turnsLeft() <= settings.pityLastTurns` (5, counting the current turn), if `ranking()` lists them last they receive one bag item they do not already hold. `ranking()` is stars, then coins, then minigame wins; a full tie keeps player order, so the highest id is last. One player, not every tied player. The pool is every bag item in `src/game/items.ts` the player does not already hold — the original carnival bag plus the MP7 list below — and Star Cannon only while it is in season. Orbs are thrown rather than carried, so they are not gifts. The shop's one-of-each rule is the inventory limit (there is no numeric bag size); if they already hold every bag item, the Barker says the bag is full and gives nothing. The line is "Aw, tough luck kid, here's a [item] on the house!" Start-of-turn, once per that turn, so the gift can be used before the roll and a player who leaves last place mid-round does not still collect it. A Bowser Suit skip happens before this gift, so a lost turn does not also collect pity.
+- Last 5 turns: Toad (→ "Fizzy Barker") gives pity item to last place — **Done**: At the *start* of a player's turn, before the die, while `turnsLeft() <= settings.pityLastTurns` (5, counting the current turn), if `ranking()` lists them last they receive one bag item they do not already hold. `ranking()` is stars, then coins, then minigame wins; a full tie keeps player order, so the highest id is last. One player, not every tied player. The pool is every bag item in `src/game/items.ts` the player does not already hold — the original carnival bag plus the MP7 list below — and Star Cannon only while it is in season. Orbs are thrown rather than carried, so they are not gifts. The shop's one-of-each rule is the inventory limit (there is no numeric bag size); if they already hold every bag item, the Barker says the bag is full and gives nothing. The line is "Aw, tough luck kid, here's a [item] on the house!" Start-of-turn, once per that turn, so the gift can be used before the roll and a player who leaves last place mid-round does not still collect it. A Grumpus Coat skip happens before this gift, so a lost turn does not also collect pity.
 
 ### Spaces and Balloons
 - Star Balloon: 10 coins per Star. Bundles up to 5. If can't pay whole bundle, discard rest. After purchase, balloon moves to new spot. — **Done**: Grand Prize Balloon at `match.starBalloonPos` (starts on space 4). 10 coins each, bundle of 1–5. Unpaid stars in the chosen bundle are discarded. Any purchase moves the balloon to a new walkable space via `rng` (Funhouse Cut gaps are excluded), with a pop, gasp, and confetti. CPUs and autoplay buy as many as they can afford, up to 5.
@@ -37,19 +37,32 @@
 
 | Item | Cost | Effect | Where |
 | --- | --- | --- | --- |
-| Dash Mushroom | 5 | Move +3 after the face | Shop, Fizzy Barker |
-| Golden Dash Mushroom | 10 | Move +5 after the face | Shop, Fizzy Barker |
-| Poison Mushroom | 5 | −2 to a rival's move, after they roll | Shop, Fizzy Barker. Human prompt; CPUs and autoplay spend it |
+| Zip Mushroom | 5 | Move +3 after the face | Shop, Fizzy Barker |
+| Golden Zip Mushroom | 10 | Move +5 after the face | Shop, Fizzy Barker |
+| Sour Mushroom | 5 | −2 to a rival's move, after they roll | Shop, Fizzy Barker. Human prompt; CPUs and autoplay spend it |
 | Double Dice | 8 | Two dice, move the total | Shop, Fizzy Barker |
-| Warp Pipe (Warp Box / Pipe) | 10 | Swap spaces with a chosen rival, then roll | Shop, Fizzy Barker |
+| Funhouse Hatch | 10 | Swap spaces with a chosen rival, then roll | Shop, Fizzy Barker |
 | Dueling Glove | 12 | Direct duel (two d6). Winner takes up to 10 of the loser's coins. No full minigame yet | Shop, Fizzy Barker |
 | Lucky Card | 8 | Triple roulette odds until the next dealt minigame, and +1 on the next blue | Shop, Fizzy Barker |
-| Mecha Fly Guy | 12 | Steal one random item from a chosen rival | Shop, Fizzy Barker |
+| Cogfly | 12 | Steal one random item from a chosen rival | Shop, Fizzy Barker |
 | Swap Card | 8 | Trade one of your other items for one of theirs | Shop, Fizzy Barker |
-| Boo Bell | 20 | Steal one star from a chosen rival who has one | Shop, Fizzy Barker |
+| Wisp Bell | 20 | Steal one star from a chosen rival who has one | Shop, Fizzy Barker |
 | Genie Lamp | 15 | Warp onto the Grand Prize Balloon and resolve the landing, so you can buy | Shop, Fizzy Barker |
-| Chomp Call | 15 | Drag the Grand Prize Balloon onto your space, then you may buy before the roll | Shop, Fizzy Barker |
-| Bowser Suit | 25 | Steal every star the rival holds. If they have not moved yet this round, they lose that turn | Shop, Fizzy Barker |
+| Balloon Tug | 15 | Drag the Grand Prize Balloon onto your space, then you may buy before the roll | Shop, Fizzy Barker |
+| Grumpus Coat | 25 | Steal every star the rival holds. If they have not moved yet this round, they lose that turn | Shop, Fizzy Barker |
+
+Published names are original to the Fizzy Fairground. The MP7 labels below are design references only; they do not appear in the shop, how-to, pause menu, banners, or icons.
+
+| MP7 reference | Super Star Party |
+| --- | --- |
+| Dash Mushroom | Zip Mushroom |
+| Golden Dash Mushroom | Golden Zip Mushroom |
+| Poison Mushroom | Sour Mushroom |
+| Warp Pipe (Warp Box) | Funhouse Hatch |
+| Mecha Fly Guy | Cogfly |
+| Boo Bell | Wisp Bell |
+| Chomp Call | Balloon Tug |
+| Bowser Suit | Grumpus Coat |
 
 **Still in the bag**: Mushroom (roll twice, 5), Warp Whistle (teleport to a happening ahead, 8, does not resolve the landing), Zappy (5 coins from the nearest rival ahead, 10), the thrown orbs, and Star Cannon (20, last 5 turns). Star Cannon now resolves the landing too, so the blast can buy a star. Orbs are not Barker gifts. Item state is on `window.__SSP__.state().items` and `itemState()`.
 
@@ -69,7 +82,7 @@
 
 3. **Stamp Star** (third bonus star) — awarded to the player who collected the most (or all three) Shy Guy, Goomba, Koopa stamps. Collecting all three on one turn triggers the 30-coin "Carnival Jackpot" fanfare immediately. — **Partial**: jackpot fanfare (banner + crowd cheer) fires when the held set completes, including mid-move. `finalRanking` counts a Stamp Star from `stampsCollected` when anyone collected at least one. The finale ceremony still announces only Mini Star and Coin Star (**TODO**).
 
-4. **Fizzy Barker Pity** — **Done**: In the last 5 turns, at the start of the last-place player's turn, the Barker gives one random bag item already in `src/game/items.ts`, including Golden Dash Mushroom and the rest of the MP7 bag. "Aw, tough luck kid, here's a [item] on the house!" Star Cannon is still the only gift gated to the last 5 turns.
+4. **Fizzy Barker Pity** — **Done**: In the last 5 turns, at the start of the last-place player's turn, the Barker gives one random bag item already in `src/game/items.ts`, including Golden Zip Mushroom and the rest of the fairground bag. "Aw, tough luck kid, here's a [item] on the house!" Star Cannon is still the only gift gated to the last 5 turns.
 
 5. **Carnival Squeeze** — **Done**: Tight Squeeze Bonus is 2 coins for everyone on the space (not only a pair) and plays the procedural `hug` sting plus a GROUP HUG banner.
 

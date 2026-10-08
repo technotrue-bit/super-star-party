@@ -3,9 +3,10 @@
  * Wave 2 (items + shop). Owned by the items builder.
  *
  * Gumball stock is the original carnival bag (Mushroom, Warp Whistle, Zappy,
- * orbs, late-game Star Cannon) plus the MP7 list: dash mushrooms, poison,
- * double dice, warp pipe, dueling glove, Lucky Card, Mecha Fly Guy, swap
- * card, Boo Bell, genie lamp, chomp call, and Bowser Suit.
+ * orbs, late-game Star Cannon) plus the fairground list: Zip Mushroom,
+ * Golden Zip Mushroom, Sour Mushroom, double dice, Funhouse Hatch, dueling
+ * glove, Lucky Card, Cogfly, swap card, Wisp Bell, genie lamp, Balloon Tug,
+ * and Grumpus Coat.
  * All coin changes go through economy.addCoins; all randomness through rng.
  * Dice stay outcome-first: dash and poison edit the movement total after
  * the face is chosen. The turn loop imports the pinned shapes below.
@@ -52,24 +53,24 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
   },
   dash_mushroom: {
     key: "dash_mushroom",
-    name: "Dash Mushroom",
+    name: "Zip Mushroom",
     desc: "The die stays honest. Your move is +3.",
     price: 5,
-    icon: "🍄",
+    icon: "💨",
   },
   golden_dash: {
     key: "golden_dash",
-    name: "Golden Dash Mushroom",
+    name: "Golden Zip Mushroom",
     desc: "The die stays honest. Your move is +5.",
     price: 10,
-    icon: "🌟",
+    icon: "✨",
   },
   poison_mushroom: {
     key: "poison_mushroom",
-    name: "Poison Mushroom",
+    name: "Sour Mushroom",
     desc: "After a rival rolls, their move is −2.",
     price: 5,
-    icon: "☠️",
+    icon: "🍋",
   },
   double_dice: {
     key: "double_dice",
@@ -87,10 +88,10 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
   },
   warp_pipe: {
     key: "warp_pipe",
-    name: "Warp Pipe",
+    name: "Funhouse Hatch",
     desc: "Swap places with a rival you choose, then roll.",
     price: 10,
-    icon: "🚪",
+    icon: "🪞",
   },
   zappy: {
     key: "zappy",
@@ -115,10 +116,10 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
   },
   mecha_fly: {
     key: "mecha_fly",
-    name: "Mecha Fly Guy",
+    name: "Cogfly",
     desc: "Steal one item from a rival you choose.",
     price: 12,
-    icon: "🪰",
+    icon: "⚙️",
   },
   swap_card: {
     key: "swap_card",
@@ -129,10 +130,10 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
   },
   boo_bell: {
     key: "boo_bell",
-    name: "Boo Bell",
+    name: "Wisp Bell",
     desc: "Steal one star from a rival you choose.",
     price: 20,
-    icon: "👻",
+    icon: "🔔",
   },
   genie_lamp: {
     key: "genie_lamp",
@@ -143,17 +144,17 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
   },
   chomp_call: {
     key: "chomp_call",
-    name: "Chomp Call",
-    desc: "Chain Chomp drags the Grand Prize Balloon to you.",
+    name: "Balloon Tug",
+    desc: "The midway tug drags the Grand Prize Balloon to you.",
     price: 15,
-    icon: "🔗",
+    icon: "🪝",
   },
   bowser_suit: {
     key: "bowser_suit",
-    name: "Bowser Suit",
-    desc: "Stomp a rival and take their stars. If they have not moved, they lose the turn.",
+    name: "Grumpus Coat",
+    desc: "Take a rival's stars. If they have not moved, they lose the turn.",
     price: 25,
-    icon: "🐲",
+    icon: "🧥",
   },
   orb_coin10: {
     key: "orb_coin10",
@@ -729,15 +730,15 @@ export function useItem(
 
   if (key === "poison_mushroom") {
     const targets = itemTargets(playerId, key);
-    if (targetId === undefined || !targets.includes(targetId)) return failItem("Nobody to poison.");
+    if (targetId === undefined || !targets.includes(targetId)) return failItem("Nobody to sour.");
     const rival = match.players[targetId];
-    if (!rival) return failItem("Nobody to poison.");
+    if (!rival) return failItem("Nobody to sour.");
     consumeOne(player, key);
     rival.itemFx.rollPenalty += POISON_PENALTY;
     audio.sfx.play("sad");
     return {
       ok: true,
-      label: "POISON!",
+      label: "SOUR!",
       message: `${rival.name}'s move is −${POISON_PENALTY}!`,
       targetId,
     };
@@ -787,7 +788,7 @@ export function useItem(
   if (key === "dash_mushroom" || key === "golden_dash") {
     const bonus = key === "dash_mushroom" ? DASH_BONUS : GOLDEN_DASH_BONUS;
     player.itemFx.rollBonus += bonus;
-    const label = key === "dash_mushroom" ? "DASH MUSHROOM!" : "GOLDEN DASH!";
+    const label = key === "dash_mushroom" ? "ZIP MUSHROOM!" : "GOLDEN ZIP!";
     return { ok: true, label, message: `Your move is +${bonus} after the roll!` };
   }
 
@@ -800,14 +801,14 @@ export function useItem(
 
   if (key === "warp_pipe") {
     const rival = match.players[target as number];
-    if (!rival) return { ok: true, label: "WARP PIPE!", message: "The pipe echoes." };
+    if (!rival) return { ok: true, label: "FUNHOUSE HATCH!", message: "The hatch echoes." };
     const mine = player.space;
     player.space = rival.space;
     rival.space = mine;
     audio.sfx.play("whoosh");
     return {
       ok: true,
-      label: "WARP PIPE!",
+      label: "FUNHOUSE HATCH!",
       message: `Swapped places with ${rival.name}!`,
       swappedWith: rival.id,
       targetId: rival.id,
@@ -864,7 +865,7 @@ export function useItem(
   if (key === "mecha_fly") {
     const rival = match.players[target as number];
     if (!rival || rival.items.length === 0) {
-      return { ok: true, label: "MECHA FLY GUY!", message: "The fly buzzes home empty." };
+      return { ok: true, label: "COGFLY!", message: "The cogfly buzzes home empty." };
     }
     const stolen = rng.pick(rival.items);
     consumeOne(rival, stolen);
@@ -873,7 +874,7 @@ export function useItem(
     const name = ITEM_DEFS[stolen]?.name ?? stolen;
     return {
       ok: true,
-      label: "MECHA FLY GUY!",
+      label: "COGFLY!",
       message: `Snatched ${rival.name}'s ${name}!`,
       targetId: rival.id,
     };
@@ -885,8 +886,8 @@ export function useItem(
     audio.sfx.play(n > 0 ? "happening.magic" : "sad");
     return {
       ok: true,
-      label: "BOO BELL!",
-      message: n > 0 ? `Boo steals a star from ${rival?.name ?? "them"}!` : "Boo finds no star.",
+      label: "WISP BELL!",
+      message: n > 0 ? `A wisp steals a star from ${rival?.name ?? "them"}!` : "The wisp finds no star.",
       targetId: rival?.id,
     };
   }
@@ -914,15 +915,15 @@ export function useItem(
     }
     return {
       ok: true,
-      label: "CHOMP CALL!",
-      message: "Chain Chomp drags the Grand Prize Balloon to you!",
+      label: "BALLOON TUG!",
+      message: "The tug hauls the Grand Prize Balloon to you!",
       chomp: true,
     };
   }
 
   if (key === "bowser_suit") {
     const rival = match.players[target as number];
-    if (!rival) return { ok: true, label: "BOWSER SUIT!", message: "The suit roars at nobody." };
+    if (!rival) return { ok: true, label: "GRUMPUS COAT!", message: "The coat roars at nobody." };
     const stolen = stealStars(rival.id, playerId, rival.stars);
     const skipped = !hasMovedThisRound(rival.id);
     if (skipped) rival.itemFx.skipTurn = true;
@@ -931,7 +932,7 @@ export function useItem(
     const turnBit = skipped ? `${rival.name} loses the turn!` : `${rival.name} already moved.`;
     return {
       ok: true,
-      label: "BOWSER SUIT!",
+      label: "GRUMPUS COAT!",
       message: `${starBit}. ${turnBit}`,
       targetId: rival.id,
     };
