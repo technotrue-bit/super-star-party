@@ -11,12 +11,14 @@ are not part of the game.
 - Open http://localhost:5177/ with `?screen=showcase` (or `?screen=title`).
 - `window.__SSP__.state()` returns the full live snapshot:
   { screen, match: {phase, players, turn...}, audio: {track, levels},
-    rngSeed, autoplay, fps, frameMs }
+    rngSeed, autoplay, fps, frameMs, effectsQuality, effectsPasses }
 - `window.__SSP__.goto(s)` — jump to any screen.
 - `window.__SSP__.advance(n)` — step the game loop.
 - `window.__SSP__.audioLevels()` — live RMS/peak (0..1); music playing ⇒ rms
   meaningfully > 0.01; silence ⇒ ~0.
-- URL params: `?seed=N&screen=NAME&autoplay=1&audio=0&speed=2`.
+- URL params: `?seed=N&screen=NAME&autoplay=1&audio=0&speed=2&fx=off`.
+  `fx` is `off`, `low`, or `high`. Off does not request the postprocessing
+  chunk. `window.__SSP__.effectsQuality()` reads the live choice.
 
 ## 2. Deterministic capture harness (fastest, recommended)
 ```

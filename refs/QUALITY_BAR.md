@@ -17,6 +17,9 @@ source files do not belong in the repo.
 - Bright, saturated candy palette on cream/warm neutrals; deep violet-ink
   outlines and shadows give everything a printed-cartoon weight.
 - Cel shading: hard 2–3 band lighting, no muddy gradients, no photoreal PBR.
+- Optional post pass, toggled Off / Low / High in the pause menu: FXAA, a
+  light bloom on the brightest stars and coins (High), and a soft vignette.
+  Colors stay untonemapped. One merged effect pass. No SSAO, SSR, or DOF.
 - Every surface reads instantly: grass checkerboard, sandy path, red/white
   carnival tents, gold star iconography.
 - UI chrome: chunky rounded buttons, thick ink borders, hard drop shadows
@@ -66,6 +69,9 @@ source files do not belong in the repo.
 - Portrait and landscape both playable; touch targets ≥ 48px; safe-area
   aware; 60 fps on a phone-class GPU; no text smaller than readable at arm's
   length. Landscape is the primary board view; portrait reframes the camera.
+- Post effects default to Low on a phone or a low-DPR display (FXAA and
+  vignette, no bloom) and High on desktop. Off draws the scene directly and
+  does not load the effects library.
 
 ## Verdicts
 PASS = "this would ship in a Nintendo party game." FAIL = exactly ONE

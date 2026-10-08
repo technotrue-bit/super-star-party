@@ -20,6 +20,7 @@ import {
   setHumanPack as saveHumanPack,
   setMinigameCoinMultiplier as saveCoinMultiplier,
 } from "../minigames/packRules";
+import { effectsPassCount, getEffectsQuality, setEffectsQuality as applyEffectsQuality } from "../render/postFx";
 
 export interface SSPDebug {
   state(): Record<string, unknown>;
@@ -58,6 +59,13 @@ export interface SSPDebug {
   minigameRewardPreview(pack?: string): number;
   /** Pay the winner the scaled minigame pot. Returns the coins actually added. */
   grantMinigamePayout(winnerId?: number, pack?: string): number;
+  /** Current post look: "off", "low", or "high". */
+  effectsQuality(): string;
+  /**
+   * Switch the post look. Does not write localStorage (the pause menu does).
+   * Unknown values are ignored. Returns the quality now in effect.
+   */
+  setEffectsQuality(quality: string): string;
 }
 
 let autoplayOn = false;
@@ -122,6 +130,8 @@ export function installDebugAPI(): void {
         },
         fps: Math.round(fps),
         frameMs: Math.round(frameMs),
+        effectsQuality: getEffectsQuality(),
+        effectsPasses: effectsPassCount(),
       };
     },
     goto(screen: string) {
@@ -210,6 +220,12 @@ export function installDebugAPI(): void {
       const before = playerCoins(winnerId);
       minigamePayout(winnerId);
       return playerCoins(winnerId) - before;
+    },
+    effectsQuality() {
+      return getEffectsQuality();
+    },
+    setEffectsQuality(quality: string) {
+      return applyEffectsQuality(quality, false);
     },
   };
   (window as unknown as { __SSP__: SSPDebug }).__SSP__ = api;
