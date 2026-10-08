@@ -270,7 +270,7 @@ const howToImpl: HowToState & Screen = {
         "🏆",
         palette.candy,
         "BONUS STARS",
-        "Stamp spaces hand out a <b>Shy Guy</b>, <b>Goomba</b>, or <b>Koopa</b> stamp (passing counts). Hold all three and the <b>Carnival Jackpot</b> pays <b>30 coins</b> on the spot — enough to buy a star later that same move. At the end, <b>Mini Star</b> and <b>Coin Star</b> still go to the most minigame wins and the most coins."
+        "Stamp spaces hand out a <b>Fizz</b>, <b>Crumb</b>, or <b>Taffy</b> stamp (passing counts). Hold all three and the <b>Carnival Jackpot</b> pays <b>30 coins</b> on the spot — enough to buy a star later that same move. At the end, <b>Mini Star</b> and <b>Coin Star</b> still go to the most minigame wins and the most coins."
       )
     );
 

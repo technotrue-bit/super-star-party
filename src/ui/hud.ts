@@ -30,7 +30,7 @@ export interface HudPlayerState {
   coins?: number;
   stars?: number;
   minigameWins?: number;
-  /** Stamp kinds currently held (Shy Guy / Goomba / Koopa). */
+  /** Stamp kinds currently held (Fizz / Crumb / Taffy). */
   stamps?: string[];
   active?: boolean;
   color?: string;

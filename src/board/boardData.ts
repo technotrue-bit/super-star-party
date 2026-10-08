@@ -93,7 +93,7 @@ function roundedRectLoop(
 // ---- Fizzy Fairground space data ---------------------------------------------
 // 28 outer spaces — MP7 + our carnival touches.
 // 9 blue, 6 red, 4 green (happenings), 2 shop, 2 grumpus, 3 stamp
-// (one each of Shy Guy / Goomba / Koopa), 2 minigame balloons (5 and 10 coins).
+// (one each of Fizz / Crumb / Taffy), 2 minigame balloons (5 and 10 coins).
 // The Grand Prize Balloon is not a space type. It starts on space 4 and
 // moves (match.starBalloonPos) after a purchase.
 //
@@ -131,7 +131,7 @@ const NAMES: string[] = [
   "Fizzy Fountain", // 0 start, bottom-left corner
   "Gumball Alley",
   "Whimsy Whirl",
-  "Shy Stamp Stand", // shy stamp — one hop before the star
+  "Fizz Stamp Stand", // fizz stamp — one hop before the star
   "Starlight Stage", // Grand Prize Balloon starts here
   "Fizzy Five Balloon", // 5-coin minigame balloon
   "Dunk Tank Drop",
@@ -139,7 +139,7 @@ const NAMES: string[] = [
   "Popcorn Promenade",
   "Ring Toss Rage",
   "Gumball Emporium", // shop
-  "Goomba Gallery", // goomba stamp
+  "Crumb Gallery", // crumb stamp
   "Mirror Maze Mischief",
   "Lava Pop Pit",
   "Lemonade Landing",
@@ -155,7 +155,7 @@ const NAMES: string[] = [
   "Grumpus Gulch", // grumpus
   "Waffle Wharf",
   "Hot Pepper Plunge", // shortcut exit (red)
-  "Koopa Kiosk", // koopa stamp
+  "Taffy Kiosk", // taffy stamp
 ];
 
 const INNER_NAMES: string[] = [

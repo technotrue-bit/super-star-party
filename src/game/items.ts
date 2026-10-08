@@ -2,7 +2,7 @@
  * SUPER STAR PARTY — items: definitions, buying, inventory, use.
  * Wave 2 (items + shop). Owned by the items builder.
  *
- * Gumball stock is the original carnival bag (Mushroom, Warp Whistle, Zappy,
+ * Gumball stock is the original carnival bag (Mushroom, Midway Whistle, Zappy,
  * orbs, late-game Star Cannon) plus the fairground list: Zip Mushroom,
  * Golden Zip Mushroom, Sour Mushroom, double dice, Funhouse Hatch, dueling
  * glove, Lucky Card, Cogfly, swap card, Wisp Bell, genie lamp, Balloon Tug,
@@ -81,10 +81,10 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
   },
   warp_whistle: {
     key: "warp_whistle",
-    name: "Warp Whistle",
+    name: "Midway Whistle",
     desc: "Teleport to a random happening space ahead!",
     price: 8,
-    icon: "🌀",
+    icon: "🎺",
   },
   warp_pipe: {
     key: "warp_pipe",
@@ -796,7 +796,7 @@ export function useItem(
     const ahead = greenSpacesAhead(player.space);
     const moveTo = ahead.length > 0 ? rng.pick(ahead) : nearestGreen(player.space);
     audio.sfx.play("whoosh");
-    return { ok: true, label: "WARP WHISTLE!", message: "Whoosh!", moveTo };
+    return { ok: true, label: "MIDWAY WHISTLE!", message: "Whoosh!", moveTo };
   }
 
   if (key === "warp_pipe") {

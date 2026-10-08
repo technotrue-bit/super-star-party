@@ -14,7 +14,7 @@ export type SpaceType =
   | "star"              // disk style only; the balloon lives on match.starBalloonPos
   | "shop"
   | "grumpus"
-  | "stamp"             // collect Shy Guy / Goomba / Koopa stamp
+  | "stamp"             // collect a Fizz, Crumb, or Taffy stamp
   | "minigame_balloon"; // passing/landing pays 5 or 10 and flags a minigame
 
 /** The three carnival stamps. A full set pays the Carnival Jackpot. */
@@ -23,9 +23,9 @@ export type StampKind = "shy" | "goomba" | "koopa";
 export const STAMP_KINDS: readonly StampKind[] = ["shy", "goomba", "koopa"];
 
 export const STAMP_LABEL: Record<StampKind, string> = {
-  shy: "Shy Guy",
-  goomba: "Goomba",
-  koopa: "Koopa",
+  shy: "Fizz",
+  goomba: "Crumb",
+  koopa: "Taffy",
 };
 
 export interface SpaceDef {
@@ -214,7 +214,7 @@ export function startMatch(kinds: string[], names: string[], totalTurns = 10, se
   match.lastDice = [];
   match.events = [];
   match.players = kinds.map((k, i) => makePlayer(i, k, names[i] ?? `P${i + 1}`));
-  // Grand Prize Balloon starts one hop after the Shy Stamp Stand, so a
+  // Grand Prize Balloon starts one hop after the Fizz Stamp Stand, so a
   // jackpot collected on the way in can fund a purchase the same move.
   match.starBalloonPos = 4;
   match.minigameTriggeredThisRound = false;
