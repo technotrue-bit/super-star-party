@@ -210,6 +210,9 @@ export function installDebugAPI(): void {
         p.stars = i;
         p.minigameWins = i;
       });
+      if (new URLSearchParams(window.location.search).get("stamps") === "1" && match.players[0]) {
+        match.players[0].stampsCollected = 3;
+      }
       match.phase = "ended";
       match.turn = match.totalTurns;
       screens.goto("finale");
