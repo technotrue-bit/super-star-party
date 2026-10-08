@@ -29,6 +29,7 @@ import { palette } from "../config/palette";
 import { ui } from "../ui/kit";
 import { audio } from "../audio/audioEngine";
 import { getMusicGain, setMusicGain, getSfxGain, setSfxGain } from "../ui/sound";
+import { mountPackPicker } from "../ui/packPicker";
 
 /* ------------------------------------------------------------------ */
 /*  localStorage keys (MUST match src/screens/titleScreen.ts)          */
@@ -419,6 +420,8 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
     }
     speedRow.appendChild(btns);
     sub.appendChild(speedRow);
+
+    sub.appendChild(mountPackPicker().el);
 
     const note = document.createElement("p");
     note.className = "ssp-pause-note";

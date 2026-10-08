@@ -16,6 +16,7 @@ import { bus } from "../core/events";
 import { audio } from "../audio/audioEngine";
 import { settings } from "../config/settings";
 import { fizzyFairground } from "../board/boardData";
+import { getMinigameCoinMultiplier } from "../minigames/packRules";
 
 export type BonusStarKind = "mini" | "coin" | "stamp";
 
@@ -182,11 +183,36 @@ export function playerStars(playerId: number): number {
 /* ------------------------------------------------------------------ */
 
 /**
- * Award the minigame winner settings.minigameWinCoins (10) coins. Silent by
- * design — the minigame flow plays the winner fanfare itself.
+ * How many players own `pack`. One owner doubles the pot ("the pack owner
+ * gets double"). Two, three, or four owners pay ×2, ×3, or ×4. Nobody on
+ * that pack leaves the pot at ×1.
+ */
+export function packOwnerMultiplier(pack: string | null | undefined): number {
+  if (!pack) return 1;
+  const owners = match.players.reduce((n, p) => n + (p.pack === pack ? 1 : 0), 0);
+  if (owners <= 0) return 1;
+  if (owners === 1) return 2;
+  return Math.min(4, owners);
+}
+
+/**
+ * Coins a minigame win pays right now:
+ *   base (10) × host multiplier (×1–×4) × pack-owner multiplier.
+ * `pack` defaults to the minigame the roulette just dealt.
+ */
+export function minigameCoinAward(pack?: string | null): number {
+  const used = pack === undefined ? match.lastMinigamePack : pack;
+  return settings.minigameWinCoins * getMinigameCoinMultiplier() * packOwnerMultiplier(used);
+}
+
+/**
+ * Award the minigame winner their scaled coins. Silent by design — the
+ * minigame flow plays the winner fanfare itself. The screen reads the real
+ * coin delta, so a ×2 or ×3 host setting shows up on the results card
+ * without the screen knowing the formula.
  */
 export function minigamePayout(winnerId: number): void {
-  addCoins(winnerId, settings.minigameWinCoins, { silent: true });
+  addCoins(winnerId, minigameCoinAward(), { silent: true });
 }
 
 /* ------------------------------------------------------------------ */
