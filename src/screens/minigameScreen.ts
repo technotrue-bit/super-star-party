@@ -18,17 +18,13 @@
  * Robustness: with no pending minigame (or no match) enter() bails straight
  * back to the board, and an unresolvable minigame id does the same — the
  * turn loop's resume path keeps the match moving either way.
- *
- * Determinism: the only rng consumed here is the music-track pick at GO
- * (gameplay rng via src/core/rng). Countdown/results timing is dt-driven;
- * no Math.random/Date.now/performance.now anywhere in the flow.
  */
 import * as THREE from "three";
 import { world } from "../main";
 import { palette, hex } from "../config/palette";
 import { settings } from "../config/settings";
 import { match } from "../core/game";
-import { rng, mulberry32 } from "../core/rng";
+import { mulberry32 } from "../core/rng";
 import { bus } from "../core/events";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
@@ -475,6 +471,11 @@ export function skipNextMinigamePreScreen(): void {
   skipPreScreen = true;
 }
 
+function minigameDie(seed: number, turn: number) {
+  const mixed = (Math.imul(seed, 0x9e3779b1) ^ Math.imul(turn, 0x85ebca6b)) >>> 0;
+  return mulberry32(mixed || 1);
+}
+
 const minigameScreenImpl: MgScreenState & Screen = {
   id: "minigame",
 
@@ -686,7 +687,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           characters: self._chars ?? [],
           scene: world.scene!,
           camera: world.camera!,
-          rng: () => (match as any).rng ? (match as any).rng() : Math.random(),
+          rng: minigameDie(match.seed, match.turn),
           get time() { return (self as any)._playT ?? 0; },
           announce: (text, opts) => {
             ui.clearFeedback();
