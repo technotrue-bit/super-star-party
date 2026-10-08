@@ -718,6 +718,10 @@ const minigameScreenImpl: MgScreenState & Screen = {
           document.body.dataset.sspSteer = action;
           self._ctx?.input.key(action);
         },
+        onStick: (x, y) => {
+          if (self._phase !== "play") return;
+          self._ctx?.input.stick?.(x, y);
+        },
         onAction: () => {
           if (self._phase !== "play") return;
           document.body.dataset.sspAction = "1";

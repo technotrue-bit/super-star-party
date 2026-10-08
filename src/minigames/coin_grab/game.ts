@@ -19,7 +19,7 @@
  * limit is reached, so it always ranks itself before the safety net.
  */
 import * as THREE from "three";
-import { isLocalPlayer, type Minigame, type MinigameContext } from "../framework";
+import { isLocalPlayer, localPlayerIndex, stickGround, type Minigame, type MinigameContext } from "../framework";
 import { ease } from "../../core/rng";
 import { ui } from "../../ui/kit";
 import { characterColor } from "../../characters/roster";
@@ -108,6 +108,8 @@ interface HumanInput {
   idleT: number;
   keyDir: { x: number; z: number } | null;
   keyIdleT: number;
+  stickX: number; // analog stick, screen +x right, +y down
+  stickY: number;
   lastHopT: number;
 }
 
@@ -1036,6 +1038,15 @@ function updateCamera(state: RoundState, dt: number): void {
 
 /* ----------------------- critic telemetry mirror --------------------- */
 
+interface SeatDebug {
+  id: number;
+  controller: string;
+  body: { x: number; y: number; z: number };
+  model: { x: number; y: number; z: number };
+  alive: boolean;
+  screen: { x: number; y: number };
+}
+
 interface CGDebug {
   stepIndex: number;
   t: number;
@@ -1044,12 +1055,44 @@ interface CGDebug {
   shakeT: number;
   shakeStrength: number;
   hitStopSteps: number;
+  seats: SeatDebug[];
+}
+
+const seatScratch = new THREE.Vector3();
+function seatDebug(state: RoundState): SeatDebug[] {
+  const cam = state.ctx.camera;
+  cam.updateMatrixWorld();
+  const w = window.innerWidth || 1;
+  const h = window.innerHeight || 1;
+  return state.bodies.map((b) => {
+    const ch = state.ctx.characters[b.id];
+    if (ch) ch.group.getWorldPosition(seatScratch);
+    else seatScratch.set(b.x, 0, b.z);
+    const model = {
+      x: +seatScratch.x.toFixed(4),
+      y: +seatScratch.y.toFixed(4),
+      z: +seatScratch.z.toFixed(4),
+    };
+    seatScratch.project(cam);
+    const player = state.ctx.players.find((p) => p.id === b.id);
+    return {
+      id: b.id,
+      controller: player?.controller ?? "cpu",
+      body: { x: +b.x.toFixed(4), y: 0, z: +b.z.toFixed(4) },
+      model,
+      alive: true,
+      screen: {
+        x: +((seatScratch.x * 0.5 + 0.5) * w).toFixed(2),
+        y: +((-seatScratch.y * 0.5 + 0.5) * h).toFixed(2),
+      },
+    };
+  });
 }
 
 function cgDebug(): CGDebug {
   const w = window as unknown as { __CG__?: CGDebug };
   if (!w.__CG__) {
-    w.__CG__ = { stepIndex: 0, t: 0, chips: [0, 0, 0, 0], ranking: null, shakeT: 0, shakeStrength: 0, hitStopSteps: 0 };
+    w.__CG__ = { stepIndex: 0, t: 0, chips: [0, 0, 0, 0], ranking: null, shakeT: 0, shakeStrength: 0, hitStopSteps: 0, seats: [] };
   }
   return w.__CG__;
 }
@@ -1062,6 +1105,7 @@ function publishDebug(state: RoundState): void {
   d.shakeT = +state.shakeT.toFixed(4);
   d.shakeStrength = +state.shakeStrength.toFixed(4);
   d.hitStopSteps = state.hitStopSteps;
+  d.seats = seatDebug(state);
   if (state.ended && !d.ranking) {
     const ranking = [...state.bodies]
       .sort((a, b) => b.coins - a.coins || a.id - b.id)
@@ -1107,7 +1151,7 @@ export const coinGrabMinigame: Minigame = {
       rotShake: 0,
       rotPhase: 0,
       hitStopSteps: 0,
-      human: { held: false, tx: 0.5, ty: 0.5, idleT: 0, keyDir: null, keyIdleT: 0, lastHopT: -10 },
+      human: { held: false, tx: 0.5, ty: 0.5, idleT: 0, keyDir: null, keyIdleT: 0, stickX: 0, stickY: 0, lastHopT: -10 },
       camBase,
       raycaster: new THREE.Raycaster(),
       plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
@@ -1142,6 +1186,10 @@ export const coinGrabMinigame: Minigame = {
       if (ch) {
         ctx.scene.remove(ch.group); // reparent under the holder
         holder.add(ch.group);
+        // The lineup parks every avatar at (x, 0, 5.4). That offset would
+        // draw the model away from this body, so clear it and keep y.
+        ch.group.position.x = 0;
+        ch.group.position.z = 0;
         ch.setFacing(Math.atan2(-x, -z)); // face the fountain
         ch.anim.idle();
       }
@@ -1192,17 +1240,22 @@ export const coinGrabMinigame: Minigame = {
       state.human.idleT = 0;
       if (down) state.human.held = true;
     };
+    ctx.input.stick = (x, y): void => {
+      state.human.stickX = x;
+      state.human.stickY = y;
+    };
     ctx.input.key = (action: string): void => {
       if (action === "up") state.human.keyDir = { x: 0, z: -1 };
       else if (action === "down") state.human.keyDir = { x: 0, z: 1 };
       else if (action === "left") state.human.keyDir = { x: -1, z: 0 };
       else if (action === "right") state.human.keyDir = { x: 1, z: 0 };
       else if (action === "confirm") {
-        const b = state.bodies[0];
-        if (b && ctx.time - state.human.lastHopT > 0.6) {
+        const seat = localPlayerIndex(ctx.players);
+        const b = state.bodies[seat];
+        if (b && isLocalPlayer(ctx.players, b.id) && ctx.time - state.human.lastHopT > 0.6) {
           state.human.lastHopT = ctx.time;
           b.animHoldT = Math.max(b.animHoldT, 0.4);
-          ctx.characters[0]?.anim.jump();
+          ctx.characters[b.id]?.anim.jump();
           ctx.playSfx("hop", { volume: 0.45, pitch: 1.1 });
         }
         return;
@@ -1320,13 +1373,17 @@ function stepFixed(state: RoundState, dt: number): void {
   }
 
   /* ---- steer + integrate (id order: 0 human, 1-3 CPU) ---- */
+  const analog = stickGround(ctx.camera, state.human.stickX, state.human.stickY);
   for (const b of state.bodies) {
     b.animHoldT = Math.max(0, b.animHoldT - dt);
 
     let dir: { x: number; z: number } | null = null;
     let maxSpeed = HUMAN_SPEED;
     if (isLocalPlayer(ctx.players, b.id)) {
-      if (state.human.held) dir = pointerDir(state, b);
+      if (analog) {
+        dir = { x: analog.x, z: analog.z };
+        maxSpeed = HUMAN_SPEED * analog.mag;
+      } else if (state.human.held) dir = pointerDir(state, b);
       else if (state.human.keyDir) dir = state.human.keyDir;
     } else {
       b.brain.pickIn--;

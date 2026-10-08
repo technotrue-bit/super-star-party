@@ -126,9 +126,15 @@ export function buildArena(scene: THREE.Scene, spawnPoints: { x: number; z: numb
       // (progress derived from ARENA_R so it tracks any ring schedule.)
       const progress = Math.min(1, Math.max(0, 1 - ringR / ARENA_R));
       const pulse = 1 + 0.13 * Math.sin(t * 6.5) * (0.35 + 0.65 * progress);
-      // Thicken the rim as danger rises (visual "pin" signal)
+      // Thicken the rim as danger rises (visual "pin" signal).
+      // TorusGeometry sits in local XY with the tube along local Z.
+      // rotation.x = -PI/2 lays it on the floor, so local Z is world up.
+      // Scale both radius axes by ringR and keep the tube scale free of
+      // ringR — otherwise the ring is a flat vertical oval and the edge
+      // toward the top and bottom of the screen disappears.
       const rimThick = 0.17 + danger * 0.12;
-      ring.scale.set(ringR, pulse * rimThick / 0.17, ringR);
+      const thickness = (pulse * rimThick) / 0.17;
+      ring.scale.set(ringR, ringR, thickness);
       // Hot color: lerp sun -> lava, then push toward sunDeep at high danger
       const hotLerp = Math.min(1, danger * 1.15);
       tmp.copy(sunC).lerp(lavaC, hotLerp);
@@ -137,7 +143,7 @@ export function buildArena(scene: THREE.Scene, spawnPoints: { x: number; z: numb
 
       // Pin overlay: bright red rim when a player is pinned against it
       const pinPulse = 0.5 + 0.5 * Math.sin(t * 14);
-      pinRing.scale.set(ringR, pulse, ringR);
+      pinRing.scale.set(ringR, ringR, pulse);
       pinMat.opacity = danger > 0.25 ? (danger - 0.25) * 0.55 * pinPulse : 0;
 
       // Danger glow: rebuild the annulus geometry for a constant 0.3u width.

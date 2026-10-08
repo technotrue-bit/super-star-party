@@ -33,7 +33,8 @@
  *     ctx.input.pointer / ctx.input.key (the defaults are no-ops). The
  *     screen routes DOM pointer events (normalized 0..1 screen coords) and
  *     keyboard (actions: 'up'|'down'|'left'|'right'|'confirm') into them
- *     while the minigame is live.
+ *     while the minigame is live. Contact arenas can also assign
+ *     ctx.input.stick for the analog thumb stick (screen +x right, +y down).
  *   - Round lifecycle: setup() is called once per round on the SAME
  *     Minigame instance (loaded once and cached) — keep per-round state in
  *     setup/local closures, not module scope.
@@ -105,12 +106,57 @@ export function automatedSeatIds(
   return ids;
 }
 
+/** Thumb-stick deflection below this is no input. Full throw is about 1. */
+export const STICK_DEADZONE = 0.15;
+
+/**
+ * Camera-relative ground direction from a thumb stick.
+ * `x` is screen-right, `y` is screen-down, each about -1..1.
+ * Returns a ground vector whose length is the stick magnitude (analog speed),
+ * or null inside the deadzone. Does not draw from any rng.
+ */
+export function stickGround(
+  camera: THREE.Camera,
+  x: number,
+  y: number,
+): { x: number; z: number; mag: number } | null {
+  const mag = Math.min(1, Math.hypot(x, y));
+  if (mag < STICK_DEADZONE) return null;
+  camera.updateMatrixWorld();
+  const e = camera.matrixWorld.elements;
+  // Camera matrix columns: X right, Y up, Z backward.
+  let rx = e[0];
+  let rz = e[2];
+  let ux = e[4];
+  let uz = e[6];
+  const rl = Math.hypot(rx, rz);
+  const ul = Math.hypot(ux, uz);
+  if (rl < 1e-6 || ul < 1e-6) return null;
+  rx /= rl;
+  rz /= rl;
+  ux /= ul;
+  uz /= ul;
+  // Screen up is -y on the stick.
+  const wx = rx * x - ux * y;
+  const wz = rz * x - uz * y;
+  const len = Math.hypot(wx, wz);
+  if (len < 1e-6) return null;
+  const scale = mag / len;
+  return { x: wx * scale, z: wz * scale, mag };
+}
+
 /** Input entry points — minigames assign handlers in setup(). */
 export interface MinigameInput {
   /** Human pointer, screen coords normalized 0..1, down = press/release. */
   pointer(x: number, y: number, down: boolean): void;
   /** Human keyboard action: 'up' | 'down' | 'left' | 'right' | 'confirm'. */
   key(action: string): void;
+  /**
+   * Analog thumb stick, fed every frame while it is held.
+   * +x screen-right, +y screen-down, magnitude about 0..1.
+   * Minigames that only listen for the 4-direction key actions can omit it.
+   */
+  stick?(x: number, y: number): void;
 }
 
 export interface MinigameContext {
