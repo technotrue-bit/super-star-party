@@ -491,8 +491,9 @@ function minigameRoundIndex(): number {
 }
 
 function minigameDie(seed: number, turn: number, round: number) {
-  const mixed = (Math.imul(seed, 0x9e3779b1) ^ Math.imul(turn, 0x85ebca6b) ^ Math.imul(round, 0xc2b2ae35)) >>> 0;
-  return mulberry32(mixed || 1);
+  const mixed = (Math.imul(seed, 0x9e3779b1) ^ Math.imul(turn, 0x85ebca6b)) >>> 0;
+  const withRound = round === 0 ? mixed : (mixed ^ Math.imul(round, 0xc2b2ae35)) >>> 0;
+  return mulberry32(withRound || 1);
 }
 
 const minigameScreenImpl: MgScreenState & Screen = {
@@ -882,7 +883,6 @@ const minigameScreenImpl: MgScreenState & Screen = {
     });
   },
 
-  /** GO! — play begins: minigame music (chosen by genre) + minigame:start. */
   _beginPlay() {
     this._phase = "play";
     this._playT = 0;
