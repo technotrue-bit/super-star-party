@@ -25,7 +25,7 @@ async function trySeed(seed) {
     await page.waitForTimeout(250);
     const s = await page.evaluate(() => {
       const st = window.__SSP__?.state?.() ?? {};
-      const players = (st.players ?? []).map((p) => ({ stars: p.stars, coins: p.coins }));
+      const players = (st.match?.players ?? []).map((p) => ({ stars: p.stars, coins: p.coins }));
       const banners = Array.from(document.querySelectorAll(".ssp-fb-banner")).filter((e) => {
         const r = e.getBoundingClientRect();
         return r.width > 0 && getComputedStyle(e).opacity !== "0";

@@ -6,7 +6,7 @@
  *               arena: lights, party floor, the 4 live avatars, arena
  *               camera, minigame_intro, 3-2-1-GO countdown (minigame.count
  *               per tick, minigame.go + flash on GO), then the minigame
- *               runs with minigame_a/minigame_b (rng-picked).
+ *               runs with minigame_a/minigame_b (chosen by genre).
  *   update() -> countdown -> minigame.update(dt) -> on ctx.finish(ranking):
  *               RESULTS phase — payout (winner +10), minigame:end emit,
  *               fanfare + confetti + winner banner, characters cheer/sulk,
@@ -18,6 +18,14 @@
  * Robustness: with no pending minigame (or no match) enter() bails straight
  * back to the board, and an unresolvable minigame id does the same — the
  * turn loop's resume path keeps the match moving either way.
+ *
+ * Determinism: each minigame draws from a mulberry32 stream mixed from
+ * match.seed, match.turn, and that minigame's index within the turn.
+ * Index 0 is the first minigame, so its stream matches seed and turn alone.
+ * A second minigame on the same turn, such as a duel, gets the next index.
+ * The VS splash uses a separate stream mixed from the seed. Music follows
+ * genre. Countdown and results advance on dt. performance.now only times
+ * the coin-count tween. Gameplay does not call Math.random.
  */
 import * as THREE from "three";
 import { world } from "../main";
@@ -471,8 +479,19 @@ export function skipNextMinigamePreScreen(): void {
   skipPreScreen = true;
 }
 
-function minigameDie(seed: number, turn: number) {
-  const mixed = (Math.imul(seed, 0x9e3779b1) ^ Math.imul(turn, 0x85ebca6b)) >>> 0;
+let dieRound: { players: typeof match.players; turn: number; index: number } | null = null;
+
+function minigameRoundIndex(): number {
+  if (dieRound && dieRound.players === match.players && dieRound.turn === match.turn) {
+    dieRound.index += 1;
+    return dieRound.index;
+  }
+  dieRound = { players: match.players, turn: match.turn, index: 0 };
+  return 0;
+}
+
+function minigameDie(seed: number, turn: number, round: number) {
+  const mixed = (Math.imul(seed, 0x9e3779b1) ^ Math.imul(turn, 0x85ebca6b) ^ Math.imul(round, 0xc2b2ae35)) >>> 0;
   return mulberry32(mixed || 1);
 }
 
@@ -687,7 +706,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           characters: self._chars ?? [],
           scene: world.scene!,
           camera: world.camera!,
-          rng: minigameDie(match.seed, match.turn),
+          rng: minigameDie(match.seed, match.turn, minigameRoundIndex()),
           get time() { return (self as any)._playT ?? 0; },
           announce: (text, opts) => {
             ui.clearFeedback();
@@ -863,7 +882,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
     });
   },
 
-  /** GO! — play begins: minigame music (rng-picked) + minigame:start. */
+  /** GO! — play begins: minigame music (chosen by genre) + minigame:start. */
   _beginPlay() {
     this._phase = "play";
     this._playT = 0;

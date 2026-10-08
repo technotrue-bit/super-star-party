@@ -21,7 +21,7 @@ async function run(seed) {
     const s = await page.evaluate(() => {
       const pow = window.__POW__ ?? null;
       const st = window.__SSP__?.state?.() ?? {};
-      const players = (st.players ?? []).map((p) => (Array.isArray(p) ? { id: p[0], stars: p[1], coins: p[2] } : { id: p.id, stars: p.stars, coins: p.coins }));
+      const players = (st.match?.players ?? []).map((p) => (Array.isArray(p) ? { id: p[0], stars: p[1], coins: p[2] } : { id: p.id, stars: p.stars, coins: p.coins }));
       return { screen: st.screen, pow: pow ? { stepIndex: pow.stepIndex, crate: pow.crate, solo: pow.solo, endPath: pow.endPath, ranking: pow.ranking } : null, players };
     });
     if (s.screen === "minigame") started = true;
