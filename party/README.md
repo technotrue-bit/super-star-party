@@ -67,6 +67,10 @@ Deploy waits until both are true:
 1. Joey's free Cloudflare account is the one that will own the worker.
 2. Joey has said yes to deploy.
 
-Until then, do not run `wrangler deploy`, `npx wrangler deploy`,
-`partykit deploy`, or a local `wrangler dev` against a paid or remote
-session. Do not add a deploy step to CI.
+Until then, do not run `wrangler deploy`, `npx wrangler deploy`, or
+`partykit deploy`. Do not pass `--remote` or `--tunnel`. Do not add a
+deploy step to CI.
+
+`npx wrangler dev --config party/wrangler.toml --local` only simulates
+the worker on this machine. It is not an npm script, and CI does not
+run it.
