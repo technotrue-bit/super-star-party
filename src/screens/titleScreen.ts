@@ -23,6 +23,7 @@ import { buildBoardScene, type BoardScene } from "../board/boardScene";
 import { fizzyFairground } from "../board/boardData";
 import { getMusicGain, setMusicGain, getSfxGain, setSfxGain } from "../ui/sound";
 import { mountPackPicker } from "../ui/packPicker";
+import { setOnlineMatch } from "../net/mode";
 import type { Screen } from "./screenManager";
 
 /* ------------------------------------------------------------------ */
@@ -265,6 +266,7 @@ const titleImpl: TitleState & Screen = {
   enter() {
     injectTitleStyles();
     ui.clearScreen();
+    setOnlineMatch(false);
 
     this._t = 0;
     this._highlighted = 0;
@@ -354,6 +356,17 @@ const titleImpl: TitleState & Screen = {
     });
     playBtn.el.classList.add("ssp-title-btn");
 
+    const friendsBtn = ui.button({
+      label: "WITH FRIENDS",
+      kind: "primary",
+      size: "lg",
+      onClick: () => screens.goto("friends"),
+      sound: "pop",
+      ariaLabel: "Play with friends on two phones",
+    });
+    friendsBtn.el.classList.add("ssp-title-btn");
+    friendsBtn.el.dataset.party = "menu";
+
     const howBtn = ui.button({
       label: "HOW TO PLAY",
       kind: "primary",
@@ -374,7 +387,7 @@ const titleImpl: TitleState & Screen = {
     });
     setBtn.el.classList.add("ssp-title-btn");
 
-    this._buttons = [playBtn, howBtn, setBtn];
+    this._buttons = [playBtn, friendsBtn, howBtn, setBtn];
     for (const b of this._buttons) menu.appendChild(b.el);
     stage.appendChild(menu);
 
@@ -386,12 +399,14 @@ const titleImpl: TitleState & Screen = {
       if (this._settingsOpen) return;
       if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
         e.preventDefault();
-        this._highlighted = ((this._highlighted ?? 0) - 1 + 3) % 3;
+        const count = this._buttons?.length ?? 1;
+        this._highlighted = ((this._highlighted ?? 0) - 1 + count) % count;
         this._applyHighlight();
         audio.sfx.play("pop");
       } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
         e.preventDefault();
-        this._highlighted = ((this._highlighted ?? 0) + 1) % 3;
+        const count = this._buttons?.length ?? 1;
+        this._highlighted = ((this._highlighted ?? 0) + 1) % count;
         this._applyHighlight();
         audio.sfx.play("pop");
       } else if (e.key === "Enter" || e.key === " ") {

@@ -51,6 +51,8 @@ import {
 } from "../minigames/framework";
 import { minigameDescription } from "../minigames/registry";
 import { isContactMinigame, loadRapier } from "../physics/contact";
+import { cpuPlayout, setCpuPlayout } from "../net/mode";
+import { isHost, publishMinigame } from "../net/session";
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
 import { startResultsCeremony, type ResultsCeremony } from "./resultsCeremony";
@@ -747,7 +749,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
             kind: p.kind,
             name: p.name,
             color: characterColor(p.kind),
-            controller: p.controller,
+            controller: cpuPlayout() ? "cpu" : p.controller,
           })),
           characters: self._chars ?? [],
           scene: world.scene!,
@@ -760,6 +762,15 @@ const minigameScreenImpl: MgScreenState & Screen = {
           },
           playSfx: (name, opts) => audio.sfx.play(name, opts),
           finish: (ranking, coinWinners) => {
+            if (cpuPlayout() && isHost()) {
+              publishMinigame({
+                ranking: [...ranking],
+                coinWinners: coinWinners ? [...coinWinners] : undefined,
+                minigameDice: match.minigameDice
+                  ? { turn: match.minigameDice.turn, ids: [...match.minigameDice.ids] }
+                  : null,
+              });
+            }
             (self as any)._finished = true;
             (self as any)._ranking = ranking;
             (self as any)._coinWinners = coinWinners;
@@ -859,6 +870,14 @@ const minigameScreenImpl: MgScreenState & Screen = {
             this._finished = true;
             this._ranking = match.players.map((p) => p.id).sort((a, b) => a - b);
             this._coinWinners = undefined;
+            if (cpuPlayout() && isHost()) {
+              publishMinigame({
+                ranking: [...(this._ranking ?? [])],
+                minigameDice: match.minigameDice
+                  ? { turn: match.minigameDice.turn, ids: [...match.minigameDice.ids] }
+                  : null,
+              });
+            }
             console.warn("[minigames] time limit reached — forced finish");
           }
         }
@@ -959,6 +978,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
 
   exit() {
     this._active = false;
+    setCpuPlayout(false);
     // Destroy ceremony first (removes podium, DOM, restores characters).
     this._ceremony?.destroy();
     this._ceremony = null;

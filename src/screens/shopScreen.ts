@@ -279,7 +279,7 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
             const held = match.players[playerId]?.items;
             const at = held?.lastIndexOf(key) ?? -1;
             if (held && at >= 0) held.splice(at, 1);
-            showThrowPicker(def.places, def.name, def.price);
+            showThrowPicker(key, def.places, def.name, def.price);
             return;
           }
           ui.toast(`Got the ${def.name}!`, { durationMs: 1500, priority: "high" });
@@ -293,7 +293,7 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
     content.appendChild(grid);
     refreshAffordability();
 
-    const showThrowPicker = (kind: TrapKind, orbName: string, price: number): void => {
+    const showThrowPicker = (key: string, kind: TrapKind, orbName: string, price: number): void => {
       const shopSpaces = fizzyFairground.spaces.filter((s) => s.type === "shop").map((s) => s.index);
       const legal = fizzyFairground.spaces.filter((s) =>
         canPlaceTrap(playerId, s.index, match.starBalloonPos, shopSpaces),
@@ -307,6 +307,8 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
         addCoins(playerId, price);
         counter.tweenTo(coinsNow());
         ui.toast("Refunded.", { durationMs: 1200 });
+        const at = bought.lastIndexOf(key);
+        if (at >= 0) bought.splice(at, 1);
         close();
       };
       if (legal.length === 0) {

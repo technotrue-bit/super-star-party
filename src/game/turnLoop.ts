@@ -18,7 +18,7 @@
  * human's roll via the autoplay hook.
  */
 import * as THREE from "three";
-import { match, ranking, STAMP_LABEL } from "../core/game";
+import { match, playerController, ranking, STAMP_LABEL, type TrapKind } from "../core/game";
 import { decisions, isPending } from "./decisions";
 import { rng, ease } from "../core/rng";
 import { settings } from "../config/settings";
@@ -34,11 +34,14 @@ import type { Character } from "../characters/characterFactory";
 import type { HudHandle } from "../ui/hud";
 import type { ButtonHandle } from "../ui/button";
 import type { PopupHandle } from "../ui/popup";
-import { addCoins, tryBuyStars, sensibleStarCount, movePrizeBalloon, computeBonusStars, finalRanking, grantStamp, popMinigameBalloon, carnivalSqueeze, minigameCoinAward, type BonusStarKind } from "./economy";
+import { addCoins, awardMinigameResult, tryBuyStars, sensibleStarCount, movePrizeBalloon, computeBonusStars, finalRanking, grantStamp, popMinigameBalloon, carnivalSqueeze, minigameCoinAward, type BonusStarKind } from "./economy";
 import { resolveGreen, resolveGrumpus, consumeFreeStar, consumeDoubleBlue } from "./happenings";
 import {
   ITEM_DEFS,
+  buyItem,
   canUseItem,
+  decideShopPurchase,
+  pickAutoItem,
   useItem,
   turnsLeft,
   grantFizzyPity,
@@ -57,7 +60,16 @@ import { tryPickMinigame } from "../minigames/registry";
 import { setPendingMinigame } from "../minigames/framework";
 import { getMinigameDescription, showMinigamePreview, skipNextMinigamePreScreen } from "../screens/minigameScreen";
 import { screens } from "../screens/screenManager";
-import { consumeTrap, resolveTrap, trapAt, payCircusToll, growTrees, ageCircuses } from "./traps";
+import { consumeTrap, resolveTrap, trapAt, payCircusToll, growTrees, ageCircuses, placeTrap } from "./traps";
+import { onlineMatch, partyAssist, setCpuPlayout } from "../net/mode";
+import {
+  checkpoint,
+  isHost,
+  onOfficialMinigame,
+  peekChoice,
+  publishChoice,
+  shiftChoice,
+} from "../net/session";
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -291,6 +303,17 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     itemAutoCommit: (() => void) | null;
     poisonPopup: PopupHandle | null;
     poisonAutoCommit: (() => void) | null;
+    netDice: boolean;
+    netShop: { pid: number; done: () => void } | null;
+    netStar: { pid: number; commit: (count: number) => void; pass: () => void } | null;
+    netPoison: { holderId: number; finish: (use: boolean) => void } | null;
+    netPath: {
+      pid: number;
+      stay: number;
+      branch: number;
+      pick: (to: number) => void;
+      hops: (space: number) => number;
+    } | null;
     // results
     resultSteps: Array<() => void>;
     resultTimer: number;
@@ -339,6 +362,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     itemAutoCommit: null,
     poisonPopup: null,
     poisonAutoCommit: null,
+    netDice: false,
+    netShop: null,
+    netStar: null,
+    netPoison: null,
+    netPath: null,
     resultSteps: [],
     resultTimer: 0,
     circusToll: null,
@@ -351,6 +379,176 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const pause = (seconds: number, fn: () => void): void => {
     S.pauseT = seconds;
     S.pauseFn = fn;
+  };
+
+  /**
+   * Offline (including solo autoplay) stays on decisions.ts.
+   * Online humans are "human" or "assist". Remote seats wait.
+   * CPU is the local AI on every peer.
+   */
+  const netGate = (pid: number): "cpu" | "assist" | "remote" | "human" => {
+    if (!onlineMatch()) return "cpu";
+    const seat = playerController(pid);
+    if (seat === "cpu") return "cpu";
+    if (seat === "remote") return "remote";
+    if (partyAssist()) return "assist";
+    return "human";
+  };
+
+  const publishLocal = (pid: number, choice: Parameters<typeof publishChoice>[0]): void => {
+    if (onlineMatch() && playerController(pid) === "local") publishChoice(choice);
+  };
+
+  const replayShop = (
+    pid: number,
+    bought: string[],
+    traps: { space: number; kind: string }[],
+  ): void => {
+    let trapAtIndex = 0;
+    for (const key of bought) {
+      const def = ITEM_DEFS[key];
+      if (!buyItem(pid, key)) continue;
+      if (!def?.places) {
+        ui.toast(`Bought ${def?.name ?? key}!`, { durationMs: 1200 });
+        continue;
+      }
+      const held = match.players[pid]?.items;
+      const at = held?.lastIndexOf(key) ?? -1;
+      if (held && at >= 0) held.splice(at, 1);
+      const trap = traps[trapAtIndex];
+      trapAtIndex += 1;
+      if (trap) placeTrap(pid, trap.space, trap.kind as TrapKind);
+      ui.toast(`Set ${def.name}!`, { durationMs: 1200 });
+    }
+  };
+
+  let pumping = false;
+  /** Apply one queued remote choice. True when the caller should look again. */
+  const stepNet = (): boolean => {
+    if (S.netPoison) {
+      const wait = S.netPoison;
+      if (playerController(wait.holderId) === "cpu") {
+        S.netPoison = null;
+        wait.finish(true);
+        return true;
+      }
+      const msg = peekChoice();
+      if (!msg || msg.kind !== "poison" || msg.playerId !== wait.holderId) return false;
+      shiftChoice();
+      S.netPoison = null;
+      wait.finish(msg.auto ? true : msg.use);
+      return true;
+    }
+    if (S.netStar) {
+      const wait = S.netStar;
+      if (playerController(wait.pid) === "cpu") {
+        S.netStar = null;
+        wait.commit(sensibleStarCount(wait.pid));
+        return true;
+      }
+      const msg = peekChoice();
+      if (!msg || msg.kind !== "star" || msg.playerId !== wait.pid) return false;
+      shiftChoice();
+      S.netStar = null;
+      if (msg.auto) wait.commit(sensibleStarCount(wait.pid));
+      else if (msg.pass) wait.pass();
+      else wait.commit(msg.count);
+      return true;
+    }
+    if (S.netShop) {
+      const wait = S.netShop;
+      if (playerController(wait.pid) === "cpu") {
+        S.netShop = null;
+        const decision = decideShopPurchase(wait.pid);
+        if (decision) toastShop(decision);
+        else ui.toast("Just looking!", { durationMs: 900 });
+        wait.done();
+        return true;
+      }
+      const msg = peekChoice();
+      if (!msg || msg.kind !== "shop" || msg.playerId !== wait.pid) return false;
+      shiftChoice();
+      S.netShop = null;
+      if (msg.auto) {
+        const decision = decideShopPurchase(wait.pid);
+        if (decision) toastShop(decision);
+        else ui.toast("Just looking!", { durationMs: 900 });
+      } else if ((msg.bought ?? []).length === 0) {
+        ui.toast("Just looking!", { durationMs: 900 });
+      } else {
+        replayShop(wait.pid, msg.bought ?? [], msg.traps ?? []);
+      }
+      wait.done();
+      return true;
+    }
+    if (S.netPath) {
+      const wait = S.netPath;
+      const autoTo = (): number => (wait.hops(wait.branch) < wait.hops(wait.stay) ? wait.branch : wait.stay);
+      if (playerController(wait.pid) === "cpu") {
+        S.netPath = null;
+        wait.pick(autoTo());
+        return true;
+      }
+      const msg = peekChoice();
+      if (!msg || msg.kind !== "path" || msg.playerId !== wait.pid) return false;
+      shiftChoice();
+      S.netPath = null;
+      wait.pick(msg.auto ? autoTo() : (msg.to ?? wait.stay));
+      return true;
+    }
+    if (S.netDice) {
+      const pid = match.currentPlayer;
+      if (playerController(pid) === "cpu") {
+        S.netDice = false;
+        const key = pickAutoItem(pid);
+        if (key) {
+          const res = useItem(pid, key);
+          if (applyAutoItem(pid, res)) return S.phase === "dice";
+        }
+        armDice(pid);
+        return false;
+      }
+      const msg = peekChoice();
+      if (!msg || msg.playerId !== pid) return false;
+      if (msg.kind === "preitem") {
+        shiftChoice();
+        const key = pickAutoItem(pid);
+        if (key) {
+          const res = useItem(pid, key);
+          if (applyAutoItem(pid, res)) {
+            if (S.phase !== "dice") S.netDice = false;
+            return true;
+          }
+        }
+        return true;
+      }
+      if (msg.kind === "item") {
+        shiftChoice();
+        const trade = msg.give || msg.take ? { give: msg.give, take: msg.take } : undefined;
+        finishBarUse(pid, useItem(pid, msg.key, msg.target, trade));
+        if (S.phase !== "dice") S.netDice = false;
+        return true;
+      }
+      if (msg.kind === "roll") {
+        shiftChoice();
+        S.netDice = false;
+        rollPressed(true);
+        return false;
+      }
+    }
+    return false;
+  };
+
+  const pumpNet = (): void => {
+    if (pumping || S.disposed || !onlineMatch()) return;
+    pumping = true;
+    try {
+      for (let i = 0; i < 8; i++) {
+        if (!stepNet()) break;
+      }
+    } finally {
+      pumping = false;
+    }
   };
 
   const boardIntensity = (): number => (S.phase === "moving" ? 0.65 : 0.5);
@@ -410,6 +608,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   /* ---------------- phase transitions ---------------- */
 
   const beginTurn = (): void => {
+    checkpoint("turn");
     S.phase = "announce";
     match.phase = "dice";
     const pid = match.currentPlayer;
@@ -529,6 +728,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         S.itemResolving = false;
         if (S.disposed || S.phase !== "dice") return;
         armDice(pid);
+        if (partyAssist() && playerController(pid) === "local") rollPressed();
       });
       return true;
     }
@@ -551,6 +751,23 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       player.itemFx.doubleDice = false;
     }
     dice.hover(pid);
+    const gate = netGate(pid);
+    if (gate === "assist") {
+      publishChoice({ kind: "preitem", playerId: pid, auto: true });
+      const key = pickAutoItem(pid);
+      if (key) {
+        const res = useItem(pid, key);
+        if (applyAutoItem(pid, res)) return;
+      }
+      armDice(pid);
+      rollPressed();
+      return;
+    }
+    if (gate === "remote") {
+      S.netDice = true;
+      pumpNet();
+      return;
+    }
     const autoItem = decisions.preRollItem(pid);
     if (!isPending(autoItem) && autoItem.key && decisions.aim(pid) === "rng") {
       const res = useItem(pid, autoItem.key);
@@ -638,6 +855,17 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         S.moveQueue.push(...rest);
       }
     };
+    const gate = netGate(pid);
+    if (gate === "assist") {
+      publishChoice({ kind: "path", playerId: pid, auto: true });
+      pick(hopsToStar(branch.to) < hopsToStar(stay) ? branch.to : stay);
+      return;
+    }
+    if (gate === "remote") {
+      S.netPath = { pid, stay, branch: branch.to, pick, hops: hopsToStar };
+      pumpNet();
+      return;
+    }
     const lane = decisions.path(pid, stay, branch.to, hopsToStar);
     if (!isPending(lane)) {
       pick(lane.to);
@@ -652,8 +880,24 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       closeOnEsc: false,
       sound: null,
       buttons: [
-        { label: "STAY", kind: "ghost", onClick: () => { pop.destroy(); pick(stay); } },
-        { label: "BRANCH", kind: "gold", onClick: () => { pop.destroy(); pick(branch.to); } },
+        {
+          label: "STAY",
+          kind: "ghost",
+          onClick: () => {
+            pop.destroy();
+            publishLocal(pid, { kind: "path", playerId: pid, to: stay });
+            pick(stay);
+          },
+        },
+        {
+          label: "BRANCH",
+          kind: "gold",
+          onClick: () => {
+            pop.destroy();
+            publishLocal(pid, { kind: "path", playerId: pid, to: branch.to });
+            pick(branch.to);
+          },
+        },
       ],
     });
   };
@@ -860,11 +1104,14 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   /* ---------------- dice ---------------- */
 
-  const rollPressed = (): void => {
+  const rollPressed = (fromNet = false): void => {
     if (S.disposed || S.phase !== "dice" || S.rolling || S.betweenRolls > 0 || S.shopOpen || S.itemResolving) return;
     const pid = match.currentPlayer;
     const player = match.players[pid];
     if (!player) return;
+    if (!fromNet && S.diceFaces.length === 0) {
+      publishLocal(pid, { kind: "roll", playerId: pid });
+    }
     const w = window as unknown as { __forcedDice?: number };
     let face: number;
     if (typeof w.__forcedDice === "number" && Number.isFinite(w.__forcedDice)) {
@@ -936,8 +1183,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   };
 
   /**
-   * Poison is a post-roll item. CPUs and autoplay always spend one.
+   * Poison is a post-roll item. CPUs and solo autoplay always spend one.
    * A manual human gets a touch prompt and the move waits on that choice.
+   * Online, each human holder is asked in seat order and the choice is relayed.
    */
   const offerPoison = (rollerId: number, raw: number): void => {
     const holders = match.players
@@ -945,61 +1193,91 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       .map((p) => p.id);
     const waiting: number[] = [];
     for (const id of holders) {
-      const choice = decisions.poison(id);
-      if (isPending(choice)) waiting.push(id);
-      else if (choice.use) spendPoison(id, rollerId);
+      if (netGate(id) === "cpu") {
+        const choice = decisions.poison(id);
+        if (isPending(choice)) waiting.push(id);
+        else if (choice.use) spendPoison(id, rollerId);
+      } else {
+        waiting.push(id);
+      }
     }
-    if (waiting.length === 0) {
-      launchMove(rollerId, raw);
-      return;
-    }
-    const chooser = waiting[0];
-    // diceT is already spent. Drop `rolling` so the dice phase does not
-    // call diceLand again while the touch prompt is up.
-    S.rolling = false;
-    S.itemResolving = true;
-    const row = document.createElement("div");
-    row.style.cssText = "display:flex;flex-direction:column;gap:8px;width:min(82vw,320px);";
-    let settled = false;
-    const close = (): void => {
-      S.poisonPopup?.destroy();
-      S.poisonPopup = null;
-      S.poisonAutoCommit = null;
+    const ask = (index: number): void => {
+      if (index >= waiting.length) {
+        launchMove(rollerId, raw);
+        return;
+      }
+      const chooser = waiting[index];
+      const after = (use: boolean): void => {
+        if (use) spendPoison(chooser, rollerId);
+        ask(index + 1);
+      };
+      const gate = netGate(chooser);
+      if (gate === "assist") {
+        publishChoice({ kind: "poison", playerId: chooser, auto: true, use: true });
+        after(true);
+        return;
+      }
+      if (gate === "remote") {
+        S.rolling = false;
+        S.itemResolving = true;
+        S.netPoison = {
+          holderId: chooser,
+          finish: (use) => {
+            S.itemResolving = false;
+            after(use);
+          },
+        };
+        pumpNet();
+        return;
+      }
+      // diceT is already spent. Drop `rolling` so the dice phase does not
+      // call diceLand again while the touch prompt is up.
+      S.rolling = false;
+      S.itemResolving = true;
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;flex-direction:column;gap:8px;width:min(82vw,320px);";
+      let settled = false;
+      const close = (): void => {
+        S.poisonPopup?.destroy();
+        S.poisonPopup = null;
+        S.poisonAutoCommit = null;
+      };
+      const finish = (use: boolean): void => {
+        if (settled) return;
+        settled = true;
+        close();
+        S.itemResolving = false;
+        publishLocal(chooser, { kind: "poison", playerId: chooser, use });
+        after(use);
+      };
+      S.poisonAutoCommit = () => finish(true);
+      const useBtn = ui.button({
+        label: "🍋 SOUR −2",
+        kind: "danger",
+        size: "md",
+        ariaLabel: "Use Sour Mushroom to subtract 2 from this roll",
+        onClick: () => finish(true),
+      });
+      useBtn.el.setAttribute("data-poison", "use");
+      const skipBtn = ui.button({
+        label: "LET IT RIDE",
+        kind: "ghost",
+        size: "md",
+        ariaLabel: "Let the roll stand",
+        onClick: () => finish(false),
+      });
+      skipBtn.el.setAttribute("data-poison", "skip");
+      row.append(useBtn.el, skipBtn.el);
+      const roller = match.players[rollerId];
+      S.poisonPopup = ui.popup({
+        title: "SOUR MUSHROOM",
+        body: `${roller?.name ?? "They"} rolled ${raw}. Subtract 2 before they move?`,
+        content: row,
+        sound: null,
+        closeOnEsc: false,
+      });
     };
-    const finish = (use: boolean): void => {
-      if (settled) return;
-      settled = true;
-      close();
-      S.itemResolving = false;
-      if (use) spendPoison(chooser, rollerId);
-      launchMove(rollerId, raw);
-    };
-    S.poisonAutoCommit = () => finish(true);
-    const useBtn = ui.button({
-      label: "🍋 SOUR −2",
-      kind: "danger",
-      size: "md",
-      ariaLabel: "Use Sour Mushroom to subtract 2 from this roll",
-      onClick: () => finish(true),
-    });
-    useBtn.el.setAttribute("data-poison", "use");
-    const skipBtn = ui.button({
-      label: "LET IT RIDE",
-      kind: "ghost",
-      size: "md",
-      ariaLabel: "Let the roll stand",
-      onClick: () => finish(false),
-    });
-    skipBtn.el.setAttribute("data-poison", "skip");
-    row.append(useBtn.el, skipBtn.el);
-    const roller = match.players[rollerId];
-    S.poisonPopup = ui.popup({
-      title: "SOUR MUSHROOM",
-      body: `${roller?.name ?? "They"} rolled ${raw}. Subtract 2 before they move?`,
-      content: row,
-      sound: null,
-      closeOnEsc: false,
-    });
+    ask(0);
   };
 
   /* ---------------- items (pre-roll) ---------------- */
@@ -1098,6 +1376,14 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       settled = true;
       close();
       S.itemResolving = false;
+      publishLocal(pid, {
+        kind: "item",
+        playerId: pid,
+        key,
+        target,
+        give: trade?.give,
+        take: trade?.take,
+      });
       finishBarUse(pid, useItem(pid, key, target, trade));
     };
     // Autoplay that flips on mid-picker chooses with rng and never waits.
@@ -1173,9 +1459,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         return;
       }
       if (aim === "wait") return;
+      publishLocal(pid, { kind: "item", playerId: pid, key });
       finishBarUse(pid, useItem(pid, key));
       return;
     }
+    publishLocal(pid, { kind: "item", playerId: pid, key });
     finishBarUse(pid, useItem(pid, key));
   };
 
@@ -1382,6 +1670,24 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         then();
       });
     };
+    const gate = netGate(pid);
+    if (gate === "assist") {
+      publishChoice({ kind: "star", playerId: pid, auto: true, count: 0 });
+      commit(sensibleStarCount(pid));
+      return;
+    }
+    if (gate === "remote") {
+      S.netStar = {
+        pid,
+        commit,
+        pass: () => {
+          ui.toast("Maybe next time!", { durationMs: 1200 });
+          then();
+        },
+      };
+      pumpNet();
+      return;
+    }
     const bundle = decisions.starBundle(pid);
     if (!isPending(bundle)) {
       commit(bundle.count);
@@ -1412,7 +1718,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         kind: "gold",
         size: "sm",
         ariaLabel: `Buy ${count} star${count === 1 ? "" : "s"} for ${count * settings.starCost} coins`,
-        onClick: () => choose(() => commit(count)),
+        onClick: () => choose(() => {
+          publishLocal(pid, { kind: "star", playerId: pid, count });
+          commit(count);
+        }),
       });
       row.appendChild(btn.el);
     }
@@ -1421,6 +1730,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       kind: "ghost",
       size: "sm",
       onClick: () => choose(() => {
+        publishLocal(pid, { kind: "star", playerId: pid, count: 0, pass: true });
         ui.toast("Maybe next time!", { durationMs: 1200 });
         then();
       }),
@@ -1454,6 +1764,21 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       refreshHud();
       then();
     };
+    const gate = netGate(pid);
+    if (gate === "assist") {
+      publishChoice({ kind: "shop", playerId: pid, auto: true });
+      const decision = decideShopPurchase(pid);
+      if (decision) toastShop(decision);
+      else ui.toast("Just looking!", { durationMs: 900 });
+      done();
+      return;
+    }
+    if (gate === "remote") {
+      S.netShop = { pid, done };
+      pumpNet();
+      return;
+    }
+    const trapsBefore = match.traps.length;
     const autoShop = decisions.shop(pid);
     if (!isPending(autoShop)) {
       if (autoShop.decision) toastShop(autoShop.decision);
@@ -1487,6 +1812,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         S.shopOpen = false;
         S.shopAutoCommit = null;
         audio.music.play("board", { intensity: boardIntensity() });
+        if (gate === "human") {
+          const traps = match.traps.slice(trapsBefore).map((t) => ({ space: t.space, kind: t.kind }));
+          publishChoice({ kind: "shop", playerId: pid, bought: res.bought, traps });
+        }
         const force = S.shopDecideOnClose;
         S.shopDecideOnClose = false;
         if (force && res.bought.length === 0) {
@@ -1648,9 +1977,30 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     // clicks START do we switch screens and let the players "jump in".
     console.log('[turnLoop] minigameRound triggered for turn', match.turn, 'mg=', mg.id);
     match.turn += 1;
-    resumeFromMinigame = true;
     match.lastMinigameId = mg.id;
     match.lastMinigamePack = mg.pack ?? "midway";
+    if (onlineMatch()) {
+      checkpoint("minigame");
+      if (isHost()) {
+        resumeFromMinigame = true;
+        setPendingMinigame(mg);
+        skipNextMinigamePreScreen();
+        setCpuPlayout(true);
+        screens.goto("minigame");
+      } else {
+        ui.toast("CPUs are playing this one. The host's ranking counts.", { durationMs: 2600 });
+        onOfficialMinigame((result) => {
+          match.minigameDice = result.minigameDice
+            ? { turn: result.minigameDice.turn, ids: [...result.minigameDice.ids] }
+            : null;
+          awardMinigameResult(result.ranking, result.coinWinners);
+          if (match.turn > match.totalTurns) results();
+          else beginTurn();
+        });
+      }
+      return;
+    }
+    resumeFromMinigame = true;
     setPendingMinigame(mg);
 
     const coins = minigameCoinAward(mg.pack);
@@ -1677,6 +2027,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   /* ---------------- results ---------------- */
 
   const results = (): void => {
+    checkpoint("end");
     S.phase = "results";
     match.phase = "results";
     rollButton.setVisible(false);
@@ -1869,6 +2220,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       default:
         break;
     }
+    pumpNet();
   };
 
   /* ---------------- lifecycle ---------------- */

@@ -14,6 +14,7 @@ import { world } from "../main";
 import { palette } from "../config/palette";
 import { settings } from "../config/settings";
 import { match, playerController, startMatch, rollForTurnOrder } from "../core/game";
+import { setOnlineMatch } from "../net/mode";
 import { rng, ease } from "../core/rng";
 import { bus } from "../core/events";
 import { roster } from "../characters/roster";
@@ -291,6 +292,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
       // Pass the URL seed in so pack assignment and the match share it.
       // The reset below restarts the dice stream at that seed (pack picks
       // use their own stream and do not consume this one).
+      setOnlineMatch(false);
       startMatch(
         roster.map((c) => c.key),
         roster.map((c) => c.name),
