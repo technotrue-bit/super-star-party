@@ -15,7 +15,9 @@
  *
  * Determinism: deck shuffle, CPU memory rolls, CPU picks, AFK fallback and
  * particle spawns all consume ONLY ctx.rng. No Math.random / Date.now.
- * Animation is dt-driven; timers are phase clocks, not rng.
+ * Play advances in fixed 1/60 steps so a fat frame cannot finish a phase
+ * and throw away the leftover. The time cap then lands on the same turn
+ * on every client (a tied scoreboard was splitting on flip count).
  *
  * Self-registration: the framework blesses module-side registration
  * ("modules may also call registerMinigame themselves"). This module
@@ -67,6 +69,10 @@ const WIN_TIME = 1.15;
 const TIMEUP_TIME = 0.95;
 const HARD_FINISH = 29.2; // absolute floor: finish before the screen's 30s net
 const HUMAN_AFK = 8; // safety: auto-flip if the human idles this long
+const SIM_STEP = 1 / 60;
+// maxDelta (1/20) × critic speed 4 = 0.2s, exactly 12 steps. Dropping the
+// leftover keeps a stalled frame from banking time past the screen limit.
+const MAX_SIM_STEPS = 12;
 
 const CARD_BASE_Y = TABLE_TOP_Y + CARD_H / 2;
 const CHARS_Z = -5.1; // characters stand behind the table
@@ -129,7 +135,9 @@ interface MemoryMatchState {
   afkT: number; // human idle timer
   cursorR: number;
   cursorC: number;
-  time: number; // local clock (ctx.time is authoritative; this is for anims)
+  time: number; // stepped play clock (the time cap reads this, not frame dt)
+  accum: number; // leftover frame time waiting for the next 1/60 step
+  stepping: boolean; // true while update() is inside a 1/60 slice
   raycaster: THREE.Raycaster;
   ndc: THREE.Vector2;
   cursorRing: THREE.Mesh;
@@ -190,6 +198,8 @@ const memoryMatch: Minigame = {
       cursorR: 1,
       cursorC: 1,
       time: 0,
+      accum: 0,
+      stepping: false,
       raycaster: new THREE.Raycaster(),
       ndc: new THREE.Vector2(),
       cursorRing: makeRing(0.4, 0.52, hex(palette.sun)),
@@ -331,6 +341,24 @@ const memoryMatch: Minigame = {
   update(dt: number) {
     const st = (memoryMatch as unknown as { _st?: MemoryMatchState })._st;
     if (!st || st.finished) return;
+    // Substep a variable frame into 1/60 slices. The recursive call runs the
+    // body once; the flag stops it from slicing again.
+    if (!st.stepping) {
+      st.accum += dt;
+      let steps = 0;
+      st.stepping = true;
+      try {
+        while (st.accum + 1e-6 >= SIM_STEP && steps < MAX_SIM_STEPS && !st.finished) {
+          st.accum -= SIM_STEP;
+          steps += 1;
+          this.update(SIM_STEP);
+        }
+        if (steps >= MAX_SIM_STEPS && st.accum >= SIM_STEP) st.accum = 0;
+      } finally {
+        st.stepping = false;
+      }
+      return;
+    }
     const ctx = st.ctx;
     st.time += dt;
     st.phaseT += dt;
@@ -400,7 +428,7 @@ const memoryMatch: Minigame = {
 
     /* ---- time cap: interrupt cleanly on our own ranking ---- */
     if (
-      ctx.time >= TIME_CAP &&
+      st.time >= TIME_CAP &&
       st.phase !== "win" &&
       st.phase !== "timeup" &&
       st.phase !== "intro"
@@ -510,7 +538,7 @@ const memoryMatch: Minigame = {
       case "turnEnd": {
         if (st.phaseT >= TURN_END_TIME) {
           st.phaseT = 0;
-          if (ctx.time >= TIME_CAP) {
+          if (st.time >= TIME_CAP) {
             maybeTimeUp(st);
           } else {
             st.turn = (st.turn + 1) % 4;
@@ -524,7 +552,7 @@ const memoryMatch: Minigame = {
         // Finish only once every card is settled at exactly 0/PI — the
         // freeze frame the critic sees must never contain a half-turned card.
         if (
-          (st.phaseT >= WIN_TIME || ctx.time >= HARD_FINISH) &&
+          (st.phaseT >= WIN_TIME || st.time >= HARD_FINISH) &&
           tableSettled(st) &&
           st.winRanking
         ) {
@@ -535,7 +563,7 @@ const memoryMatch: Minigame = {
       }
       case "timeup": {
         if (
-          (st.phaseT >= TIMEUP_TIME || ctx.time >= HARD_FINISH) &&
+          (st.phaseT >= TIMEUP_TIME || st.time >= HARD_FINISH) &&
           tableSettled(st) &&
           st.winRanking
         ) {

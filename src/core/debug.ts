@@ -10,7 +10,7 @@ import { screens } from "../screens/screenManager";
 import { world } from "../main";
 import { openShop } from "../screens/shopScreen";
 import { resetWipeRotation } from "../ui/transitions";
-import { minigameCoinAward, minigamePayout, playerCoins } from "../game/economy";
+import { awardMinigameResult, minigameCoinAward, minigamePayout, playerCoins, type MinigameAward } from "../game/economy";
 import {
   buyItem,
   collectLuckyBlue,
@@ -73,6 +73,12 @@ export interface SSPDebug {
   minigameRewardPreview(pack?: string): number;
   /** Pay the winner the scaled minigame pot. Returns the coins actually added. */
   grantMinigamePayout(winnerId?: number, pack?: string): number;
+  /**
+   * Pay a minigame the way the results screen does. Omit coinWinners for a
+   * free-for-all (first place only). A team list pays each id the full pot
+   * and one minigame win. `pack` selects the pack-owner multiplier.
+   */
+  settleMinigamePayout(ranking: number[], coinWinners?: number[], pack?: string): MinigameAward[];
   /** Current post look: "off", "low", or "high". */
   effectsQuality(): string;
   /**
@@ -269,6 +275,10 @@ export function installDebugAPI(): void {
       const before = playerCoins(winnerId);
       minigamePayout(winnerId);
       return playerCoins(winnerId) - before;
+    },
+    settleMinigamePayout(ranking: number[], coinWinners?: number[], pack?: string) {
+      if (pack !== undefined) match.lastMinigamePack = pack;
+      return awardMinigameResult(ranking, coinWinners);
     },
     effectsQuality() {
       return getEffectsQuality();

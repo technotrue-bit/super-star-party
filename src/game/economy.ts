@@ -205,14 +205,76 @@ export function minigameCoinAward(pack?: string | null): number {
   return settings.minigameWinCoins * getMinigameCoinMultiplier() * packOwnerMultiplier(used);
 }
 
+export interface MinigameAward {
+  playerId: number;
+  /** Coins actually added. Each winner receives the full scaled pot. */
+  coins: number;
+  /** minigameWins after this payout. */
+  wins: number;
+}
+
+function uniqueRealPlayers(ids: readonly number[] | undefined): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const id of ids ?? []) {
+    if (!Number.isInteger(id) || seen.has(id) || !match.players[id]) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 /**
- * Award the minigame winner their scaled coins. Silent by design — the
- * minigame flow plays the winner fanfare itself. The screen reads the real
- * coin delta, so a ×2 or ×3 host setting shows up on the results card
- * without the screen knowing the formula.
+ * Who is paid for this minigame.
+ * A non-empty `coinWinners` list is the winning side (every teammate).
+ * Omit it, or pass an empty list, and only first place is paid (free-for-all).
  */
-export function minigamePayout(winnerId: number): void {
-  addCoins(winnerId, minigameCoinAward(), { silent: true });
+export function resolveMinigameCoinWinners(ranking: number[], coinWinners?: number[]): number[] {
+  if (coinWinners && coinWinners.length > 0) {
+    const explicit = uniqueRealPlayers(coinWinners);
+    if (explicit.length > 0) return explicit;
+  }
+  const first = uniqueRealPlayers(ranking)[0];
+  return first === undefined ? [] : [first];
+}
+
+/**
+ * Award the scaled pot to each listed winner. A single id still pays one
+ * player the full amount (pack × host included). Duplicates are paid once.
+ * Silent by design — the minigame flow plays the winner fanfare itself.
+ */
+export function minigamePayout(winnerIds: number | number[]): void {
+  const list = Array.isArray(winnerIds) ? winnerIds : [winnerIds];
+  const award = minigameCoinAward();
+  const seen = new Set<number>();
+  for (const id of list) {
+    if (!Number.isInteger(id) || seen.has(id) || !match.players[id]) continue;
+    seen.add(id);
+    addCoins(id, award, { silent: true });
+  }
+}
+
+/**
+ * Pay the winning side and give each of them one minigame win.
+ * This is the results-screen payout: team lists pay every teammate the full
+ * pot, and a free-for-all (no coin-winner list) pays ranking[0] only.
+ */
+export function awardMinigameResult(ranking: number[], coinWinners?: number[]): MinigameAward[] {
+  const ids = resolveMinigameCoinWinners(ranking, coinWinners);
+  const before = new Map(ids.map((id) => [id, playerCoins(id)]));
+  minigamePayout(ids);
+  const awards: MinigameAward[] = [];
+  for (const id of ids) {
+    const p = match.players[id];
+    if (!p) continue;
+    p.minigameWins += 1;
+    awards.push({
+      playerId: id,
+      coins: playerCoins(id) - (before.get(id) ?? 0),
+      wins: p.minigameWins,
+    });
+  }
+  return awards;
 }
 
 /* ------------------------------------------------------------------ */

@@ -29,7 +29,7 @@
 - No repeat from a pack until rest used. — **Done**: a pack reshuffles only after every game in it has been dealt.
 - Chosen player's pack owner gets double coins. — **Done**: one owner of the dealt pack pays ×2.
 - Multiple same pack selected → payout ×N (×2/3/4). — **Done**: two, three, or four owners pay ×2, ×3, or ×4. A host multiplier (×1–×4, persisted) scales that pot again. The results card shows the real coin delta.
-- 2-on-2: partner of chosen also gets double. — **TODO**: the results ceremony pays and displays only the winner, and that screen is intentionally untouched here.
+- 2-on-2: partner of chosen also gets double. — **Done**: the scaled pot (base 10 × host ×1–×4 × pack-owner ×N) is paid in full to every player on the winning side. A 2v2 partner receives the same coins as their teammate, including that pack double. A 1v3 solo win pays only the solo. A 3v1 win pays each of the three. A 4-player free-for-all still pays first place only. Losers get none of that pot. Each paid player also gains one minigame win. The results card shows +N on every paid row.
 - Lucky Card triples roulette odds. — **Done**: Using the Lucky Card sets that player's `itemFx.lucky` until the next minigame is actually dealt. `takeLuckyPlayers()` hands those ids to the roulette, which triples that pack's weight, then clears the flag. A round with no balloon pop leaves the ticket armed. The same card also arms `itemFx.luckyBlue` (+1 coin on the next blue, on top of a lucky-penny double).
 
 ### Items
