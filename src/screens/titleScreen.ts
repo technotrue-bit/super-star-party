@@ -210,6 +210,11 @@ function injectTitleStyles(): void {
     .ssp-title-settings__close {
       align-self: center;
       margin-top: 4px;
+      position: sticky;
+      bottom: 0;
+      z-index: 2;
+      background: ${palette.cream};
+      box-shadow: 0 -8px 0 ${palette.cream};
     }
   `;
   document.head.appendChild(style);
