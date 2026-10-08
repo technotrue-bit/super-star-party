@@ -933,6 +933,7 @@ export function loadCakeDash(): Promise<Minigame> {
     id: "cake_dash",
     name: "Cake Dash",
     genre: "race",
+    howTo: "Tap to jump the snacks in your lane. First one to the cake wins.",
     setup,
     update,
     teardown,

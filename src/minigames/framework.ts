@@ -5,6 +5,7 @@
  *
  *   interface Minigame {
  *     id: string;  name: string;  genre: MinigameGenre;
+ *     howTo: string;         // one or two sentences: touch controls + how to win
  *     setup(ctx): void;      // build your arena ONCE per round
  *     update(dt): void;      // advance the game; call ctx.finish(ranking) when done
  *     teardown(): void;      // remove + dispose EVERYTHING you added to ctx.scene
@@ -45,7 +46,7 @@
  */
 import type * as THREE from "three";
 import type { Character } from "../characters/characterFactory";
-import { registerMinigame, type MinigameEntry } from "./registry";
+import { assertMinigameHowTos, registerMinigame, type MinigameEntry } from "./registry";
 import { MINIGAME_MODULES } from "./index";
 
 export type { MinigameEntry }; // pending-entry hand-off uses registry entries
@@ -102,6 +103,12 @@ export interface Minigame {
   id: string;
   name: string;
   genre: MinigameGenre;
+  /**
+   * Shown on the START MINI GAME card. One or two short sentences:
+   * how to touch, tap, or hold, and how to win. Required — a new game
+   * does not typecheck without it, and registration refuses a blank one.
+   */
+  howTo: string;
   setup(ctx: MinigameContext): void;
   update(dt: number): void;
   teardown(): void;
@@ -162,13 +169,20 @@ export async function loadMinigame(id: string): Promise<Minigame | null> {
  */
 export async function registerAllMinigames(): Promise<void> {
   for (const load of MINIGAME_MODULES) {
+    let mg: Minigame;
     try {
-      const mg = await load();
-      registerMinigame({ id: mg.id, name: mg.name });
+      mg = await load();
     } catch (err) {
       console.error("[minigames] failed to register module", err);
+      continue;
     }
+    const howTo = mg.howTo?.trim() ?? "";
+    if (!howTo) {
+      throw new Error(`[minigames] '${mg.id}' is missing howTo (controls and how to win)`);
+    }
+    registerMinigame({ id: mg.id, name: mg.name, description: howTo });
   }
+  assertMinigameHowTos();
 }
 
 void registerAllMinigames();

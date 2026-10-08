@@ -884,6 +884,7 @@ const pushOfWar: Minigame = {
   id: "push_of_war",
   name: "Push of War",
   genre: "survival",
+  howTo: "Tap as fast as you can to shove the crate. Push it over the other side's line to win.",
 
   setup(ctx: MinigameContext) {
     const root = new THREE.Group();

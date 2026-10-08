@@ -135,20 +135,40 @@ const t0 = Date.now();
 let reachedFinale = false;
 let lastBalloon = null;
 let minigameClicks = 0;
+const howtoMisses = [];
 // Eight minutes. The twin match needed more than five minutes for nine
 // turns on a GitHub runner, and this run still has to reach the finale.
 // Together with the twin's nine-minute cap, this fits the 20-minute job.
 const MATCH_CAP_MS = 480000;
 while (Date.now() - t0 < MATCH_CAP_MS) {
-  const clickedStart = await page.evaluate(() => {
+  const startGate = await page.evaluate(() => {
     const btn = document.querySelector("#mg-start-btn");
-    if (!btn) return false;
-    btn.click();
-    return true;
+    if (!btn) return null;
+    const how = document.querySelector("[data-mg-howto]");
+    const text = (how?.textContent || "").replace(/\s+/g, " ").trim();
+    const inView = (el) => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+      if (parseFloat(style.opacity) === 0) return false;
+      return r.width > 8 && r.height > 8 && r.bottom > 0 && r.top < window.innerHeight;
+    };
+    return {
+      text,
+      howVisible: inView(how),
+      btnVisible: inView(btn),
+      controls: /tap|drag|hold/i.test(text),
+    };
   });
-  if (clickedStart) {
+  if (startGate) {
+    if (!startGate.howVisible || !startGate.btnVisible || !startGate.controls) {
+      howtoMisses.push(startGate.text.slice(0, 100) || "(missing how-to)");
+    }
+    await page.evaluate(() => document.querySelector("#mg-start-btn")?.click());
     minigameClicks += 1;
     console.log("  clicked START MINI GAME");
+    console.log(`  how-to: ${startGate.text.slice(0, 110)}`);
   }
   const s = await page.evaluate(() => {
     const st = window.__SSP__?.state?.() ?? {};
@@ -176,6 +196,7 @@ while (Date.now() - t0 < MATCH_CAP_MS) {
   await page.waitForTimeout(400);
 }
 console.log(`   START MINI GAME clicks: ${minigameClicks}`);
+console.log(`   how-to misses: ${howtoMisses.length ? howtoMisses.join(" | ") : "none"}`);
 st = await state();
 const mins = ((Date.now() - t0) / 60000).toFixed(1);
 console.log(`   ran ${mins} min of match time`);
@@ -188,7 +209,7 @@ await page.screenshot({ path: `${OUT}/05-finale.png` });
 
 fs.writeFileSync(`${OUT}/console-errors.txt`, errors.join("\n") || "(none)");
 console.log(`\nconsole errors: ${errors.length ? errors.length + " -> " + JSON.stringify(errors.slice(0, 4)) : "none"}`);
-const ok = errors.length === 0 && moved && reachedFinale;
+const ok = errors.length === 0 && moved && reachedFinale && minigameClicks > 0 && howtoMisses.length === 0;
 console.log(ok
   ? "\nVERDICT: the game plays end to end - title -> select -> a human ROLL that moves the token -> a full match -> finale, with zero console errors."
   : "\nVERDICT: something in the flow needs attention (see above).");
