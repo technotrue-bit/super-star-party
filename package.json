@@ -6,8 +6,8 @@
   "description": "SUPER STAR PARTY — a bright, mischievous mobile party-board game in Three.js. Mario Party 7 quality bar. Procedural art and audio are the default; glTF/GLB (Blender, Mixamo exported and retargeted) is allowed. Raw Mixamo sources are not committed.",
   "scripts": {
     "dev": "vite --port 5177 --strictPort",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && tsc -p party --noEmit && vite build",
+    "typecheck": "tsc --noEmit && tsc -p party --noEmit",
     "preview": "vite preview --port 5177 --strictPort",
     "test": "vitest run"
   },
@@ -15,10 +15,12 @@
     "@dimforge/rapier3d-compat": "0.21.0",
     "@fontsource/fredoka": "^5.2.5",
     "postprocessing": "^6.39.5",
+    "partyserver": "^0.5.10",
     "three": "^0.182.0",
     "three-mesh-bvh": "^0.9.15"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261008.1",
     "@playwright/test": "^1.54.1",
     "@types/three": "^0.182.0",
     "pngjs": "^7.0.0",

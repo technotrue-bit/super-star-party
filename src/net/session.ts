@@ -1,11 +1,14 @@
 /**
- * Friends room on the local tab relay.
+ * Friends room.
  *
  * The host owns the seed, the pack rotation, the coin multiplier, and
  * the human pack. Clients copy that setup and then run the same board.
  * CPU seats stay on the local AI everywhere. Human choices are messages.
  * After each sync point every peer hashes snapshot(); a mismatch raises
  * a sticky error.
+ *
+ * The relay is BroadcastChannel unless VITE_PARTY_URL is set, in which
+ * case it is the PartyServer WebSocket. The message shapes do not change.
  */
 import { roster } from "../characters/roster";
 import { match, snapshot, startMatch } from "../core/game";
@@ -14,7 +17,14 @@ import { assignPlayerPacks, blankPlayedByPack, readPersistedRules } from "../min
 import { briefState, hashSnapshot } from "./hash";
 import type { BoardChoice, MatchSetup, OfficialMinigame, PartyMessage, SeatSlot } from "./messages";
 import { onlineMatch, setOnlineMatch } from "./mode";
-import { localTabRelay, type PartyRelay } from "./relay";
+import {
+  configuredPartyUrl,
+  openPartyRelay,
+  partyTransport,
+  type PartyRelay,
+  type PartyRole,
+  type PartyTransport,
+} from "./relay";
 
 const LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 
@@ -32,6 +42,8 @@ export interface PartyView {
   checkpoints: number;
   sent: number;
   recv: number;
+  /** `tabs` is BroadcastChannel. `server` is the configured PartyServer URL. */
+  transport: PartyTransport;
 }
 
 interface RoomState {
@@ -48,7 +60,10 @@ type Hooks = {
 };
 
 let relay: PartyRelay | null = null;
+let relayCode: string | null = null;
+let relayRole: PartyRole | null = null;
 let unlisten: (() => void) | null = null;
+let joinTimer: ReturnType<typeof setInterval> | null = null;
 let me = "";
 let room: RoomState | null = null;
 let lobbyError: string | null = null;
@@ -95,10 +110,58 @@ function urlNumber(key: string): number | undefined {
   }
 }
 
-function ensureRelay(): void {
-  if (relay) return;
-  relay = localTabRelay();
+function onRelayStatus(message: string): void {
+  lobbyError = message;
+  clearJoinTimer();
+  notify();
+}
+
+function clearJoinTimer(): void {
+  if (joinTimer === null) return;
+  clearInterval(joinTimer);
+  joinTimer = null;
+}
+
+/**
+ * Tab relay stays open across codes (messages carry the code).
+ * A worker socket is one room, so a new code opens a new socket.
+ */
+function ensureRelay(code: string, role: PartyRole): void {
+  if (!configuredPartyUrl()) {
+    if (!relay) {
+      relay = openPartyRelay({ code, peerId: peerId(), role, onStatus: onRelayStatus });
+      unlisten = relay.listen(onMessage);
+    }
+    return;
+  }
+  if (relay && relayCode === code && relayRole === role) return;
+  unlisten?.();
+  unlisten = null;
+  relay?.close();
+  relay = openPartyRelay({ code, peerId: peerId(), role, onStatus: onRelayStatus });
+  relayCode = code;
+  relayRole = role;
   unlisten = relay.listen(onMessage);
+}
+
+function postJoin(): void {
+  if (!relay || !room) return;
+  relay.post({ type: "join", code: room.code, peerId: peerId(), name: "Friend" });
+}
+
+/** The host socket can still be opening. Resend join until the lobby arrives. */
+function armJoinRetry(): void {
+  clearJoinTimer();
+  if (!configuredPartyUrl()) return;
+  let tries = 0;
+  joinTimer = setInterval(() => {
+    tries += 1;
+    if (!room || room.seats.length > 0 || room.started || tries > 30) {
+      clearJoinTimer();
+      return;
+    }
+    postJoin();
+  }, 300);
 }
 
 function notify(): void {
@@ -130,6 +193,7 @@ export function partyView(): PartyView {
     checkpoints: checkSeq,
     sent,
     recv,
+    transport: partyTransport(),
   };
 }
 
@@ -138,11 +202,12 @@ export function isHost(): boolean {
 }
 
 export function createRoom(): string {
-  ensureRelay();
+  clearJoinTimer();
   lobbyError = null;
   matchOpen = false;
   const id = peerId();
   const code = randomToken(4);
+  ensureRelay(code, "host");
   room = {
     code,
     hostId: id,
@@ -162,11 +227,13 @@ export function createRoom(): string {
 export function joinRoom(code: string): string | null {
   const clean = code.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
   if (clean.length !== 4) return "Enter the 4-letter code.";
-  ensureRelay();
+  clearJoinTimer();
   lobbyError = null;
   matchOpen = false;
+  ensureRelay(clean, "guest");
   room = { code: clean, hostId: "", started: false, turns: 10, seats: [] };
-  relay?.post({ type: "join", code: clean, peerId: peerId(), name: "Friend" });
+  postJoin();
+  armJoinRetry();
   notify();
   return null;
 }
@@ -260,13 +327,17 @@ export function dropOut(): void {
   const id = peerId();
   relay.post({ type: "leave", code: room.code, peerId: id });
   applyLeave(id);
+  closeParty();
 }
 
 export function closeParty(): void {
+  clearJoinTimer();
   unlisten?.();
   unlisten = null;
   relay?.close();
   relay = null;
+  relayCode = null;
+  relayRole = null;
   removeLeaveButton();
 }
 
@@ -372,6 +443,7 @@ function onMessage(msg: PartyMessage): void {
   } else if (msg.type === "leave") applyLeave(msg.peerId);
   else if (msg.type === "error" && msg.peerId === peerId()) {
     lobbyError = msg.message;
+    clearJoinTimer();
     notify();
   }
 }
@@ -400,6 +472,7 @@ function onJoin(msg: Extract<PartyMessage, { type: "join" }>): void {
 
 function onLobby(msg: Extract<PartyMessage, { type: "lobby" }>): void {
   if (!room || isHost()) return;
+  clearJoinTimer();
   room.hostId = msg.hostId;
   room.seats = msg.seats.map((seat) => ({ ...seat }));
   lobbyError = null;

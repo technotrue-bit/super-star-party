@@ -1,0 +1,23 @@
+# DO NOT DEPLOY.
+# Do not run `wrangler deploy`, `npx wrangler deploy`, or `partykit deploy`.
+# Do not spend Cloudflare. Do not attach an account_id, a route, or a domain.
+# CI must not call wrangler. This file is a scaffold for later, after Joey's
+# free account and an explicit deploy yes. See party/README.md.
+#
+# When that yes exists, from the repo root:
+#   npx wrangler deploy --config party/wrangler.toml
+# That command is intentionally not an npm script.
+
+name = "ssp-party"
+main = "party-server.ts"
+compatibility_date = "2026-10-08"
+
+# No account_id. No routes. No workers_dev override.
+
+[[durable_objects.bindings]]
+name = "SspRoom"
+class_name = "SspRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SspRoom"]
