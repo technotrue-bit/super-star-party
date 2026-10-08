@@ -19,6 +19,19 @@ low-DPR displays default to Low; a desktop pointer with DPR above 1 defaults
 to High. The choice is visual only. Gameplay, the rng, and the dice do not
 read it.
 
+Contact minigames use `@dimforge/rapier3d-compat` 0.21.0 (Apache-2.0),
+lazy-loaded the same way as postprocessing. Bumper Balls and Coin Grab
+resolve character bumps and the arena wall in one fixed 1/60 s step.
+Push of War drives the crate with that same step. Cake Dash, Balloon
+Pop, Coin Cannon, and the puzzle and rhythm minigames stay on their own
+overlap tests — they are timing or selection, not contact sims. Dice
+never read a physics body. One seed is still one match: gameplay draws
+stay on `rng.ts`, bodies are created in a fixed order, and the step is
+fixed so two runs of the same seed match. The world is freed when the
+minigame exits. The board does not step a world.
+`window.__SSP__.rapier()` reports whether the chunk loaded and how many
+contact bodies are live.
+
 ## The game (scope)
 
 4 characters race around **Fizzy Fairground** (a carnival board) collecting
@@ -105,6 +118,7 @@ verbatim back to the builder. No fixed round cap — loop until wowed.
 
 `window.__SSP__` → `state()` `goto(s)` `advance(n)` `autoplay(b)` `rollDice(f)`
 `seed(n)` `reset()` `audioLevels()` `perf()` `startMatch(kinds)`
-`effectsQuality()` `setEffectsQuality(q)`
+`effectsQuality()` `setEffectsQuality(q)` `rapier()` `runContactScenario()`
+`openMinigame(id)`
 `state().effectsQuality` is `"off"`, `"low"`, or `"high"`.
 URLs: `?seed=7&screen=showcase&autoplay=1&audio=0&speed=2&fx=off`

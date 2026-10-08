@@ -3,8 +3,10 @@
  *
  * Four characters bump each other around a circular stage while the sun
  * ring closes in. Push rivals past the ring to eliminate them; last one
- * standing wins. Physics-lite (velocity + circle collisions), fully
- * deterministic (ctx.rng only), palette-only cel look.
+ * standing wins. Bumps and the rim wall are a fixed 1/60 s Rapier step
+ * (bodies in player-id order) when the WASM chunk has loaded. If it fails,
+ * the round keeps the hand-rolled circles. Draws stay on ctx.rng. The die
+ * is not involved. Palette-only cel look.
  *
  * Time budget: the framework screen force-finishes at
  * settings.minigameTimeLimit (30s). The sun ring closes with an
@@ -24,6 +26,7 @@ import { ui } from "../../ui/kit";
 import { characterColor } from "../../characters/roster";
 import { buildArena, ARENA_R, type ArenaHandle } from "./arena";
 import { freshBrain, repick, cpuDesiredDir, type CpuBrain, type CpuRival } from "./ai";
+import { createBallArena, type BallArena, type XzBody } from "../../physics/contact";
 
 /* ------------------------- tuning constants ------------------------- */
 
@@ -72,6 +75,7 @@ interface Body {
   moving: boolean; // last move-anim state (walk vs idle)
   animHoldT: number; // squash/jump hold — don't re-apply move anim during it
   brain: CpuBrain;
+  sim?: XzBody;
 }
 
 interface HumanInput {
@@ -112,6 +116,7 @@ interface RoundState {
      draw order is identical across runs regardless of frame timing. */
   simTime: number; // accumulated fixed-step time (s), = stepIndex * FIXED_DT
   stepIndex: number; // current simulation step
+  physics: BallArena | null;
 }
 
 /** Shrinking ring radius at play time t. Piecewise ease: the ring holds
@@ -181,6 +186,7 @@ export const bumperBallsMinigame: Minigame = {
       },
       simTime: 0,
       stepIndex: 0,
+      physics: null,
     };
 
     /* ---- bodies + holders (holder owns the fall/sink so the anim
@@ -216,6 +222,17 @@ export const bumperBallsMinigame: Minigame = {
         brain: freshBrain(),
       });
     });
+
+    state.physics = createBallArena({
+      wallInner: WALL_CLAMP + CHAR_R,
+      ballRestitution: BUMP_REST,
+      wallRestitution: WALL_REST,
+    });
+    if (state.physics) {
+      for (const b of state.bodies) {
+        b.sim = state.physics.addBall(b.id, b.x, b.z, CHAR_R);
+      }
+    }
 
     state.arena = buildArena(
       ctx.scene,
@@ -319,6 +336,8 @@ export const bumperBallsMinigame: Minigame = {
     const state = round;
     if (!state) return;
     window.removeEventListener("pointerup", state.onPointerUp);
+    state.physics?.dispose();
+    state.physics = null;
     state.arena?.dispose();
     state.arena = null;
     // HUD teardown
@@ -393,33 +412,64 @@ function stepFixed(state: RoundState, dt: number): void {
       }
     }
 
-    b.x += b.vx * dt;
-    b.z += b.vz * dt;
+    if (state.physics && b.sim) {
+      b.sim.setVelocity(b.vx, b.vz);
+    } else {
+      b.x += b.vx * dt;
+      b.z += b.vz * dt;
 
-    /* ---- rim wall: clamp + reflect + squash ---- */
-    const d = Math.hypot(b.x, b.z);
-    if (d > WALL_CLAMP && d > 1e-6) {
-      const nx = b.x / d;
-      const nz = b.z / d;
-      b.x = nx * WALL_CLAMP;
-      b.z = nz * WALL_CLAMP;
-      const rv = b.vx * nx + b.vz * nz;
-      if (rv > 0) {
-        b.vx -= (1 + WALL_REST) * rv * nx;
-        b.vz -= (1 + WALL_REST) * rv * nz;
-        b.vx *= 0.96;
-        b.vz *= 0.96;
-        bumpJuice(state, b, rv > 2.5);
+      /* ---- rim wall: clamp + reflect + squash ---- */
+      const d = Math.hypot(b.x, b.z);
+      if (d > WALL_CLAMP && d > 1e-6) {
+        const nx = b.x / d;
+        const nz = b.z / d;
+        b.x = nx * WALL_CLAMP;
+        b.z = nz * WALL_CLAMP;
+        const rv = b.vx * nx + b.vz * nz;
+        if (rv > 0) {
+          b.vx -= (1 + WALL_REST) * rv * nx;
+          b.vz -= (1 + WALL_REST) * rv * nz;
+          b.vx *= 0.96;
+          b.vz *= 0.96;
+          bumpJuice(state, b, rv > 2.5);
+        }
       }
-    }
 
-    b.holder.position.x = b.x;
-    b.holder.position.z = b.z;
-    applyMoveAnim(state, b);
+      b.holder.position.x = b.x;
+      b.holder.position.z = b.z;
+      applyMoveAnim(state, b);
+    }
   }
 
-  /* ---- circle-circle collisions (equal mass, elastic-ish) ---- */
-  for (let i = 0; i < state.bodies.length; i++) {
+  if (state.physics) {
+    const hits = state.physics.step();
+    for (const hit of hits) {
+      if (hit.approach <= 0) continue;
+      if (hit.b < 0) {
+        const body = state.bodies.find((p) => p.id === hit.a);
+        if (body) bumpJuice(state, body, hit.approach > 2.5);
+      } else {
+        const a = state.bodies.find((p) => p.id === hit.a);
+        const b = state.bodies.find((p) => p.id === hit.b);
+        if (a) bumpJuice(state, a, hit.approach > 3.2);
+        if (b) bumpJuice(state, b, hit.approach > 3.2);
+      }
+    }
+    for (const b of state.bodies) {
+      if (!b.alive || !b.sim) continue;
+      const pose = b.sim.pose();
+      b.x = pose.x;
+      b.z = pose.z;
+      b.vx = pose.vx;
+      b.vz = pose.vz;
+      b.holder.position.x = b.x;
+      b.holder.position.z = b.z;
+      applyMoveAnim(state, b);
+    }
+  }
+
+  /* ---- circle-circle collisions when Rapier is not loaded ---- */
+  if (!state.physics) for (let i = 0; i < state.bodies.length; i++) {
     const a = state.bodies[i];
     if (!a.alive) continue;
     for (let j = i + 1; j < state.bodies.length; j++) {
@@ -599,6 +649,7 @@ function eliminate(state: RoundState, b: Body): void {
   b.alive = false;
   b.vx = 0;
   b.vz = 0;
+  b.sim?.setEnabled(false);
   state.aliveCount--;
   state.elimOrder.push(b.id);
   state.elimRingR.push(+ringRadiusAt(state.ctx.time).toFixed(4));

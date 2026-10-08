@@ -58,6 +58,10 @@ source files do not belong in the repo.
 - Simple generous inputs: tap/swipe/keyboard, forgiving timing, big targets.
 - Rubber-band fairness: a losing player always has a path back (happening
   luck, grumpus stealing from the leader).
+- Contact minigames (Bumper Balls, Push of War, Coin Grab) resolve bumps
+  with Rapier, loaded only for that round and freed on exit. The board
+  stays a tween. Dice stay outcome-first: the face comes from the seed,
+  never from a physics body.
 
 ## 5. Win feel
 - Results podium: rankings with confetti rain, fanfare, winner dance,

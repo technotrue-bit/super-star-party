@@ -33,8 +33,8 @@ import * as THREE from "three";
 import { world } from "../main";
 import { palette, hex } from "../config/palette";
 import { settings } from "../config/settings";
-import { match } from "../core/game";
-import { mulberry32 } from "../core/rng";
+import { match, startMatch } from "../core/game";
+import { mulberry32, rng } from "../core/rng";
 import { bus } from "../core/events";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
@@ -44,10 +44,12 @@ import { minigamePayout, playerCoins } from "../game/economy";
 import {
   consumePendingMinigame,
   loadMinigame,
+  setPendingMinigame,
   type Minigame,
   type MinigameContext,
   type MinigameEntry,
 } from "../minigames/framework";
+import { isContactMinigame, loadRapier } from "../physics/contact";
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
 import { startResultsCeremony, type ResultsCeremony } from "./resultsCeremony";
@@ -481,6 +483,21 @@ export function skipNextMinigamePreScreen(): void {
   skipPreScreen = true;
 }
 
+/** Debug entry. Starts a match if the board is empty, then opens `id`. */
+export function launchMinigame(id: string): void {
+  if (match.players.length === 0) {
+    startMatch(
+      ["pip", "bounce", "glimmer", "tusk"],
+      ["Pip", "Bounce", "Glimmer", "Tusk"],
+      10,
+      rng.seed,
+    );
+  }
+  skipNextMinigamePreScreen();
+  setPendingMinigame({ id, name: id });
+  screens.goto("minigame");
+}
+
 /**
  * Place of this minigame in the match's list for the current turn.
  * A new deal appends. A repeat visit (debug goto, or the same page
@@ -529,6 +546,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
       screens.goto("board");
       return;
     }
+    if (isContactMinigame(entry.id)) void loadRapier();
 
     this._active = true;
     var self = this;
@@ -702,6 +720,13 @@ const minigameScreenImpl: MgScreenState & Screen = {
       const startRound = async () => {
         if (!entry) return;
         const mg = await loadMinigame(entry.id);
+        if (isContactMinigame(entry.id)) {
+          try {
+            await loadRapier();
+          } catch {
+            /* loadRapier already warned; the minigame keeps its own collision */
+          }
+        }
         if (!self._active) return;
         if (!mg) {
           screens.goto("board");

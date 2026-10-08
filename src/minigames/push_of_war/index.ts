@@ -12,7 +12,8 @@
  * Determinism: fixed-step sim exactly like bumper_balls — FIXED_DT 1/60,
  * integer stepIndex; all sim inside stepFixed(); rng gated on integer step
  * index; human taps enter sim only as input edges consumed inside a fixed
- * step. Telemetry mirror: window.__POW__.
+ * step. The crate is a Rapier body on a rail (same 1/60 step, impulse scaled
+ * to this integrator) when the WASM chunk has loaded. Telemetry: window.__POW__.
  */
 import * as THREE from "three";
 import type { Minigame, MinigameContext } from "../framework";
@@ -22,6 +23,7 @@ import { palette, hex } from "../../config/palette";
 import { isAutoplay } from "../../core/debug";
 import { celGradient } from "../../characters/cel";
 import { audio } from "../../audio/audioEngine";
+import { createRailCrate, type RailCrate } from "../../physics/contact";
 
 const FIXED_DT = 1 / 60;
 const MAX_STEPS_PER_FRAME = 12; // maxDelta 1/20 × speed 4 = 0.2s. Dropping below that lets the 30s screen limit beat the sim.
@@ -142,6 +144,7 @@ interface PushOfWarState {
   surgeFlashT: number;                 /* remaining seconds of the surge flash */
   chargeLevel: number;                 /* 0..1 current crate charge for telemetry */
   leadingSide: Side | null;            /* side currently ahead, for crowd/audio */
+  rail: RailCrate | null;
 }
 
 function toon(color: number): THREE.MeshToonMaterial {
@@ -427,9 +430,16 @@ function stepFixed(st: PushOfWarState): void {
   }
 
   const netForce = soloPush - trioPush;
-  st.lurchVelocity += netForce * VELOCITY_GAIN;
-  st.lurchVelocity *= FRICTION;
-  st.cratePos += st.lurchVelocity;
+  if (st.rail) {
+    st.rail.applyPush(netForce);
+    const pose = st.rail.pose();
+    st.lurchVelocity = pose.vx;
+    st.cratePos = pose.x;
+  } else {
+    st.lurchVelocity += netForce * VELOCITY_GAIN;
+    st.lurchVelocity *= FRICTION;
+    st.cratePos += st.lurchVelocity;
+  }
   st.cratePos = Math.max(-CRANE_RANGE, Math.min(CRANE_RANGE, st.cratePos));
 
   /* Track widest excursion for tension-curve telemetry */
@@ -996,6 +1006,11 @@ const pushOfWar: Minigame = {
       soloAuraRing, soloTAG: soloTag, vignetteEl,
       crateChargeRing, crowdSilhouettes, surgeFlashEl,
       surgeFlashT: 0, chargeLevel: 0, leadingSide: null,
+      rail: createRailCrate({
+        velocityGain: VELOCITY_GAIN,
+        friction: FRICTION,
+        range: CRANE_RANGE,
+      }),
     };
     round = st;
 
@@ -1072,6 +1087,8 @@ const pushOfWar: Minigame = {
   teardown() {
     const st = round;
     if (!st) return;
+    st.rail?.dispose();
+    st.rail = null;
     st.root.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (mesh.isMesh || (obj as THREE.Sprite).isSprite) {
