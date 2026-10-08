@@ -86,6 +86,8 @@ export function steerAction(dx: number, dy: number): "up" | "down" | "left" | "r
 
 export function createTouchPad(opts: {
   onSteer: (action: "up" | "down" | "left" | "right") => void;
+  /** Analog stick, screen +x right and +y down, magnitude about 0..1. */
+  onStick?: (x: number, y: number) => void;
   onAction: () => void;
 }): TouchPad {
   injectStyles();
@@ -137,6 +139,7 @@ export function createTouchPad(opts: {
     if (stickId === null) return;
     const action = steerAction(nx, ny);
     if (action) opts.onSteer(action);
+    opts.onStick?.(nx, ny);
     raf = window.requestAnimationFrame(tick);
   };
 
@@ -157,14 +160,18 @@ export function createTouchPad(opts: {
     const r = stick.getBoundingClientRect();
     placeKnob(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
   };
-  const onStickUp = (e: PointerEvent): void => {
-    if (e.pointerId !== stickId) return;
+  const releaseStick = (): void => {
     stickId = null;
     nx = 0;
     ny = 0;
     knob.style.transform = "";
     if (raf) window.cancelAnimationFrame(raf);
     raf = 0;
+    opts.onStick?.(0, 0);
+  };
+  const onStickUp = (e: PointerEvent): void => {
+    if (e.pointerId !== stickId) return;
+    releaseStick();
     e.stopPropagation();
   };
 
@@ -204,11 +211,8 @@ export function createTouchPad(opts: {
     },
     hide(): void {
       root.classList.remove("ssp-touch--on");
-      stickId = null;
+      releaseStick();
       stopAction();
-      knob.style.transform = "";
-      if (raf) window.cancelAnimationFrame(raf);
-      raf = 0;
     },
     destroy(): void {
       this.hide();

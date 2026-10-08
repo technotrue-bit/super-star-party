@@ -21,7 +21,7 @@
  * (~18.7s), making the squeeze the story of the round.
  */
 import * as THREE from "three";
-import { isLocalPlayer, type Minigame, type MinigameContext } from "../framework";
+import { contactCpuFrozen, isLocalPlayer, localPlayerIndex, stickGround, takeContactPlace, type Minigame, type MinigameContext } from "../framework";
 import { ui } from "../../ui/kit";
 import { characterColor } from "../../characters/roster";
 import { buildArena, ARENA_R, type ArenaHandle } from "./arena";
@@ -85,6 +85,8 @@ interface HumanInput {
   idleT: number; // seconds since the last routed pointer event
   keyDir: { x: number; z: number } | null;
   keyIdleT: number;
+  stickX: number; // analog stick, screen +x right, +y down
+  stickY: number;
   lastJumpT: number;
 }
 
@@ -175,7 +177,7 @@ export const bumperBallsMinigame: Minigame = {
       hudEls: null,
       hudTimerEl: null,
       hudTimerAt: 0,
-      human: { held: false, tx: 0.5, ty: 0.5, idleT: 0, keyDir: null, keyIdleT: 0, lastJumpT: -10 },
+      human: { held: false, tx: 0.5, ty: 0.5, idleT: 0, keyDir: null, keyIdleT: 0, stickX: 0, stickY: 0, lastJumpT: -10 },
       camBase,
       lookX: 0,
       lookZ: portrait ? 0.5 : 1.0,
@@ -206,6 +208,10 @@ export const bumperBallsMinigame: Minigame = {
       const ch = ctx.characters[i];
       ctx.scene.remove(ch.group); // reparent under the holder
       holder.add(ch.group);
+      // The lineup parks every avatar at (x, 0, 5.4). That offset would
+      // draw the model away from this body, so clear it and keep y.
+      ch.group.position.x = 0;
+      ch.group.position.z = 0;
       ch.setFacing(Math.atan2(-x, -z)); // face the centre
       ch.anim.idle();
 
@@ -279,17 +285,22 @@ export const bumperBallsMinigame: Minigame = {
       state.human.idleT = 0;
       if (down) state.human.held = true;
     };
+    ctx.input.stick = (x, y): void => {
+      state.human.stickX = x;
+      state.human.stickY = y;
+    };
     ctx.input.key = (action: string): void => {
       if (action === "up") state.human.keyDir = { x: 0, z: -1 };
       else if (action === "down") state.human.keyDir = { x: 0, z: 1 };
       else if (action === "left") state.human.keyDir = { x: -1, z: 0 };
       else if (action === "right") state.human.keyDir = { x: 1, z: 0 };
       else if (action === "confirm") {
-        const b = state.bodies[0];
-        if (b && b.alive && ctx.time - state.human.lastJumpT > 0.5) {
+        const seat = localPlayerIndex(ctx.players);
+        const b = state.bodies[seat];
+        if (b && b.alive && isLocalPlayer(ctx.players, b.id) && ctx.time - state.human.lastJumpT > 0.5) {
           state.human.lastJumpT = ctx.time;
           b.animHoldT = Math.max(b.animHoldT, 0.45);
-          ctx.characters[0]?.anim.jump();
+          ctx.characters[b.id]?.anim.jump();
           ctx.playSfx("jump", { volume: 0.45, pitch: 1.15 });
         }
         return;
@@ -376,6 +387,9 @@ function stepFixed(state: RoundState, dt: number): void {
   if (state.human.keyDir && state.human.keyIdleT > KEY_STALE) state.human.keyDir = null;
 
   /* ---- steer + integrate (id order: 0 human, 1-3 CPU) ---- */
+  parkLocalSeat(state);
+  const analog = stickGround(ctx.camera, state.human.stickX, state.human.stickY);
+  const cpuHold = contactCpuFrozen();
   for (const b of state.bodies) {
     if (!b.alive) continue;
     b.animHoldT = Math.max(0, b.animHoldT - dt);
@@ -383,8 +397,14 @@ function stepFixed(state: RoundState, dt: number): void {
     let dir: { x: number; z: number } | null = null;
     let maxSpeed = HUMAN_SPEED;
     if (isLocalPlayer(ctx.players, b.id)) {
-      if (state.human.held) dir = pointerDir(state, b);
+      if (analog) {
+        dir = { x: analog.x, z: analog.z };
+        maxSpeed = HUMAN_SPEED * analog.mag;
+      } else if (state.human.held) dir = pointerDir(state, b);
       else if (state.human.keyDir) dir = state.human.keyDir;
+    } else if (cpuHold) {
+      b.vx = 0;
+      b.vz = 0;
     } else {
       b.brain.pickIn--;
       if (b.brain.pickIn <= 0) repick(b.brain, ctx);
@@ -622,6 +642,26 @@ function bumpJuice(state: RoundState, b: Body, hard: boolean): void {
   if (hard) state.shakeT = Math.min(0.14, state.shakeT + 0.1);
 }
 
+/** Probe park. No-op unless a probe set `__SSP_CONTACT__.placeLocal`. */
+function parkLocalSeat(state: RoundState): void {
+  const spot = takeContactPlace();
+  if (!spot) return;
+  state.human.held = false;
+  state.human.keyDir = null;
+  state.human.stickX = 0;
+  state.human.stickY = 0;
+  for (const b of state.bodies) {
+    if (!b.alive || !isLocalPlayer(state.ctx.players, b.id)) continue;
+    b.x = spot.x;
+    b.z = spot.z;
+    b.vx = 0;
+    b.vz = 0;
+    b.sim?.place(spot.x, spot.z);
+    b.holder.position.x = spot.x;
+    b.holder.position.z = spot.z;
+  }
+}
+
 function pointerDir(state: RoundState, b: Body): { x: number; z: number } | null {
   const cam = state.ctx.camera;
   state.raycaster.setFromCamera(
@@ -668,6 +708,14 @@ function eliminate(state: RoundState, b: Body): void {
  * without inferring it from banner text. Write-only mirror — the game never
  * reads it back, so it cannot affect determinism.
  */
+interface SeatDebug {
+  id: number;
+  controller: string;
+  body: { x: number; y: number; z: number };
+  model: { x: number; y: number; z: number };
+  alive: boolean;
+  screen: { x: number; y: number };
+}
 interface BBDebug {
   t: number;
   ringR: number;
@@ -677,11 +725,42 @@ interface BBDebug {
   ended: boolean;
   endPath: "knockout" | "cap" | null;
   ranking: number[] | null;
+  seats: SeatDebug[];
+}
+const seatScratch = new THREE.Vector3();
+function seatDebug(state: RoundState): SeatDebug[] {
+  const cam = state.ctx.camera;
+  cam.updateMatrixWorld();
+  const w = window.innerWidth || 1;
+  const h = window.innerHeight || 1;
+  return state.bodies.map((b) => {
+    const ch = state.ctx.characters[b.id];
+    if (ch) ch.group.getWorldPosition(seatScratch);
+    else seatScratch.set(b.x, 0, b.z);
+    const model = {
+      x: +seatScratch.x.toFixed(4),
+      y: +seatScratch.y.toFixed(4),
+      z: +seatScratch.z.toFixed(4),
+    };
+    seatScratch.project(cam);
+    const player = state.ctx.players.find((p) => p.id === b.id);
+    return {
+      id: b.id,
+      controller: player?.controller ?? "cpu",
+      body: { x: +b.x.toFixed(4), y: 0, z: +b.z.toFixed(4) },
+      model,
+      alive: b.alive,
+      screen: {
+        x: +((seatScratch.x * 0.5 + 0.5) * w).toFixed(2),
+        y: +((-seatScratch.y * 0.5 + 0.5) * h).toFixed(2),
+      },
+    };
+  });
 }
 function bbDebug(): BBDebug {
   const w = window as unknown as { __BB__?: BBDebug };
   if (!w.__BB__) {
-    w.__BB__ = { t: 0, ringR: 0, alive: [], elimOrder: [], elimRingR: [], ended: false, endPath: null, ranking: null };
+    w.__BB__ = { t: 0, ringR: 0, alive: [], elimOrder: [], elimRingR: [], ended: false, endPath: null, ranking: null, seats: [] };
   }
   return w.__BB__;
 }
@@ -693,6 +772,7 @@ function publishDebug(state: RoundState, t: number, ringR: number): void {
   d.elimOrder = [...state.elimOrder];
   d.elimRingR = [...state.elimRingR];
   d.ended = state.ended;
+  d.seats = seatDebug(state);
 }
 function recordEnd(path: "knockout" | "cap", state: RoundState, ranking: number[]): void {
   const d = bbDebug();

@@ -6,7 +6,7 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,3 +47,25 @@ jobs:
 
       - name: Playtest
         run: node tools/smoke-play.mjs
+
+      - name: Contact controls
+        run: SSP_EXPECT_TRANSPORT=tabs node tools/probe-contact-control.mjs
+
+      - name: Contact controls with party URL
+        run: |
+          RUNNER_TRACKING_ID="" VITE_PARTY_URL=https://example.invalid nohup npx vite --host 127.0.0.1 --port 5178 --strictPort > "$RUNNER_TEMP/vite-party.log" 2>&1 < /dev/null &
+          disown
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:5178/; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then
+            echo "The party-url dev server did not listen on port 5178."
+            cat "$RUNNER_TEMP/vite-party.log"
+            exit 1
+          fi
+          SSP_URL=http://127.0.0.1:5178 SSP_EXPECT_TRANSPORT=server node tools/probe-contact-control.mjs

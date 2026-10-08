@@ -28,6 +28,8 @@ export interface RapierStatus {
 export interface XzBody {
   setVelocity(vx: number, vz: number): void;
   pose(): { x: number; z: number; vx: number; vz: number };
+  /** Park on the ground plane and stop. Probe resets call this; the step does not. */
+  place(x: number, z: number): void;
   setEnabled(on: boolean): void;
 }
 
