@@ -26,8 +26,9 @@
  *   - CPU players: run them inside update() with the same ctx.rng. Win
  *     sometimes, lose sometimes, act credibly — never psychic.
  *   - Call ctx.finish(ranking) EXACTLY once: ranking = player ids, best
- *     first (winner = ranking[0]). The screen pays the winner, shows the
- *     podium and returns to the board on its own.
+ *     first. Pass coinWinners for a team result so every teammate is paid
+ *     the full pot; omit it for a free-for-all (first place only). The
+ *     screen shows the podium and returns to the board on its own.
  *   - Input: install your handlers in setup() by ASSIGNING
  *     ctx.input.pointer / ctx.input.key (the defaults are no-ops). The
  *     screen routes DOM pointer events (normalized 0..1 screen coords) and
@@ -94,8 +95,12 @@ export interface MinigameContext {
   announce(text: string, opts?: { durationMs?: number; sound?: string | null }): void;
   /** One-shot sound effect (names: coin.gain, pop, boing, whoosh, ...). */
   playSfx(name: string, opts?: { volume?: number; pitch?: number }): void;
-  /** Call ONCE when the minigame ends: player ids, best first. */
-  finish(ranking: number[]): void;
+  /**
+   * Call ONCE when the minigame ends: player ids, best first.
+   * `coinWinners` is every player who earned the coin pot (a winning team).
+   * Omit it for a free-for-all so only ranking[0] is paid.
+   */
+  finish(ranking: number[], coinWinners?: number[]): void;
   input: MinigameInput;
 }
 

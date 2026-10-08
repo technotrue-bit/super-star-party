@@ -8,7 +8,7 @@
  *               per tick, minigame.go + flash on GO), then the minigame
  *               runs with minigame_a/minigame_b (chosen by genre).
  *   update() -> countdown -> minigame.update(dt) -> on ctx.finish(ranking):
- *               RESULTS phase — payout (winner +10), minigame:end emit,
+ *               RESULTS phase — payout (each winning player, full pot), minigame:end emit,
  *               fanfare + confetti + winner banner, characters cheer/sulk,
  *               rank popup, ~3.5s later auto-return to the board (the turn
  *               loop resumes its minigame round on re-entry).
@@ -40,7 +40,7 @@ import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
 import { characterColor } from "../characters/roster";
 import { createCharacter, type Character } from "../characters/characterFactory";
-import { minigamePayout, playerCoins } from "../game/economy";
+import { awardMinigameResult, playerCoins } from "../game/economy";
 import {
   consumePendingMinigame,
   loadMinigame,
@@ -451,6 +451,8 @@ interface MgScreenState {
   _playT?: number;
   _finished?: boolean;
   _ranking?: number[];
+  /** Winning side. Unset means free-for-all: pay ranking[0] only. */
+  _coinWinners?: number[];
   _resultsT?: number;
   _presented?: boolean;
   _existing?: Set<THREE.Object3D>;
@@ -533,6 +535,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
     ui.clearScreen();
     this._presented = false;
     this._finished = false;
+    this._coinWinners = undefined;
 
     // Robustness: no pending entry (or no live match) -> straight back to
     // the board; the turn loop's resume path continues the round.
@@ -752,9 +755,10 @@ const minigameScreenImpl: MgScreenState & Screen = {
             ui.banner(text, { durationMs: opts?.durationMs ?? 1800, sound: opts?.sound === undefined ? null : opts.sound });
           },
           playSfx: (name, opts) => audio.sfx.play(name, opts),
-          finish: (ranking) => {
+          finish: (ranking, coinWinners) => {
             (self as any)._finished = true;
             (self as any)._ranking = ranking;
+            (self as any)._coinWinners = coinWinners;
           },
           input: {
             pointer: (x, y, down) => {},
@@ -849,6 +853,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           if (!this._finished && (this._playT ?? 0) > settings.minigameTimeLimit) {
             this._finished = true;
             this._ranking = match.players.map((p) => p.id).sort((a, b) => a - b);
+            this._coinWinners = undefined;
             console.warn("[minigames] time limit reached — forced finish");
           }
         }
@@ -889,23 +894,21 @@ const minigameScreenImpl: MgScreenState & Screen = {
     cancelHudCoinsTween(); // clean up any stale tween from a previous minigame
 
     const ranking = this._ranking ?? [];
-    const winner = ranking[0] ?? match.players[0]?.id ?? 0;
     const mg = this._minigame;
+    // Team coinWinners each get the full pot. Free-for-all pays ranking[0].
+    const awards = awardMinigameResult(ranking, this._coinWinners);
+    const winner = ranking[0] ?? awards[0]?.playerId ?? match.players[0]?.id ?? 0;
+    const payout = awards.find((a) => a.playerId === winner)?.coins ?? awards[0]?.coins ?? 0;
+    const paidIds = awards.map((a) => a.playerId);
 
-    // Read the TRUE payout the economy awards — never hardcode 10.
-    const coinsBefore = playerCoins(winner);
-    minigamePayout(winner);
-    const coinsAfter = playerCoins(winner);
-    const payout = coinsAfter - coinsBefore;
-
-    const winnerPlayer = match.players[winner];
-    if (winnerPlayer) winnerPlayer.minigameWins += 1;
     bus.emit("minigame:end", { id: mg?.id ?? "?", winner, coins: payout });
 
     // Schedule a rolling count-up on the board's coin chip when the board
     // reappears (its HUD is destroyed during the ceremony).
-    if (payout !== 0 && winnerPlayer) {
-      tweenHudCoins(winnerPlayer.name, coinsBefore, coinsAfter);
+    const lead = awards.find((a) => a.playerId === winner) ?? awards[0];
+    if (lead && lead.coins !== 0) {
+      const leadPlayer = match.players[lead.playerId];
+      if (leadPlayer) tweenHudCoins(leadPlayer.name, playerCoins(lead.playerId) - lead.coins, playerCoins(lead.playerId));
     }
 
     // Crowd cheer via the existing bus hook (minigame:end wired in crowd.ts).
@@ -917,6 +920,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
       ranking,
       winner,
       coins: payout,
+      paidIds,
       minigameName: mg?.name ?? "MINIGAME",
     });
   },

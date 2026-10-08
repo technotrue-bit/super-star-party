@@ -96,9 +96,15 @@ export function startResultsCeremony(opts: {
   ranking: number[];
   winner: number;
   coins: number;
+  /** Everyone who received `coins`. Defaults to the single first-place id. */
+  paidIds?: number[];
   minigameName: string;
 }): ResultsCeremony {
   const { chars, ranking, winner, coins, minigameName } = opts;
+  const paidIds = (opts.paidIds && opts.paidIds.length > 0 ? opts.paidIds : [winner]).filter(
+    (id, index, all) => all.indexOf(id) === index,
+  );
+  const paid = new Set(paidIds);
   const scene: THREE.Scene = world.scene!;
   const camera: THREE.PerspectiveCamera = world.camera!;
   if (!world.scene || !world.camera) {
@@ -192,7 +198,7 @@ export function startResultsCeremony(opts: {
     ch.group.scale.set(1, 1, 1);
     ch.setFacing(0); // face +Z (camera)
 
-    if (pid === winner) ch.anim.cheer();
+    if (paid.has(pid)) ch.anim.cheer();
     else ch.anim.sad();
 
     charData.push({ ch, parent, origParent, origPos, origRot, origScale });
@@ -215,7 +221,7 @@ export function startResultsCeremony(opts: {
     z-index: 95; pointer-events: none; white-space: nowrap;
     transition: transform 0.45s cubic-bezier(.34,1.56,.64,1);
   `;
-  bannerEl.textContent = `${winnerPlayer?.name ?? "?"} WINS!`;
+  bannerEl.textContent = paidIds.length > 1 ? "TEAM WINS!" : `${winnerPlayer?.name ?? "?"} WINS!`;
   document.body.appendChild(bannerEl);
 
   /* ---- DOM: coin ticker ---- */
@@ -242,6 +248,7 @@ export function startResultsCeremony(opts: {
   cardHeader.style.cssText = "text-align:center; font-weight:700; margin-bottom:4px;";
   cardHeader.textContent = `${minigameName} — RESULTS`;
   cardEl.appendChild(cardHeader);
+  cardEl.dataset.sspResults = "minigame";
 
   const rowEls: HTMLDivElement[] = [];
   let winnerRowEl: HTMLDivElement | null = null;
@@ -252,11 +259,13 @@ export function startResultsCeremony(opts: {
     const row = document.createElement("div");
     row.style.color = color;
     row.style.fontWeight = "700";
+    row.dataset.sspPlayer = String(ordered[i]);
     let rowText = `${medal} ${p?.name ?? "?"}`;
-    if (ordered[i] === winner) {
+    if (paid.has(ordered[i])) {
       rowText += ` +${coins}c`;
-      winnerRowEl = row;
+      row.dataset.sspPaid = String(coins);
     }
+    if (ordered[i] === winner) winnerRowEl = row;
     row.textContent = rowText;
     cardEl.appendChild(row);
     rowEls.push(row);

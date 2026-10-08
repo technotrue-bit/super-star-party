@@ -5,9 +5,9 @@
  * crate/rope toward the opponent's line; cross it to win. The solo side
  * gets a POWER SURGE burst so it is genuinely winnable.
  *
- * Contract: ctx.finish(ranking) gets exactly ONE winner:
- *   - SOLO wins -> ranking[0] = solo, trio sorted by contribution after.
- *   - TRIO wins -> ranking[0] = top trio contributor, rest by contribution.
+ * Contract: ctx.finish(ranking, coinWinners).
+ *   - SOLO wins -> ranking[0] = solo, coinWinners = [solo].
+ *   - TRIO wins -> ranking[0] = top contributor, coinWinners = every trio id.
  *
  * Determinism: fixed-step sim exactly like bumper_balls — FIXED_DT 1/60,
  * integer stepIndex; all sim inside stepFixed(); rng gated on integer step
@@ -513,6 +513,9 @@ function endGame(st: PushOfWarState, path: "solo-win" | "trio-win" | "timeout"):
     ranking = soloContrib > trioContrib ? [st.soloId, ...trioSorted] : [...trioSorted, st.soloId];
   }
   st.ranking = ranking;
+  // The whole winning side is paid, not only the top contributor in ranking[0].
+  const soloWon = ranking[0] === st.soloId;
+  const coinWinners = soloWon ? [st.soloId] : st.trioIds.slice();
   /* Don't set finished=true yet — allow the post-game camera push-in to
    * play out in update() before ctx.finish fires (the 900ms setTimeout waits). */
   st.ended = true;
@@ -532,11 +535,15 @@ function endGame(st: PushOfWarState, path: "solo-win" | "trio-win" | "timeout"):
    * line, or the buzzer resolving the side closer to the goal. */
   const crossed = Math.abs(st.cratePos) >= WIN_THRESHOLD;
   st.winReason = path === "timeout" ? "DEAD HEAT!" : crossed ? "GOAL LINE!" : "BUZZER BEATER!";
-  ctx.announce(`${winnerPlayer.name} WINS PUSH OF WAR! ${st.winReason}`, { durationMs: 2200, sound: "crowd.cheer" });
+  const label = coinWinners.length > 1 ? "TEAM" : winnerPlayer.name;
+  ctx.announce(`${label} WINS PUSH OF WAR! ${st.winReason}`, { durationMs: 2200, sound: "crowd.cheer" });
   ctx.playSfx("fanfare.win", { volume: 0.8 });
   ctx.playSfx("crowd.cheer", { volume: 0.9 });
-  ctx.characters[winner]?.anim.cheer();
-  for (const p of st.players) { if (p.id !== winner) ctx.characters[p.id]?.anim.sad(); }
+  const won = new Set(coinWinners);
+  for (const p of st.players) {
+    if (won.has(p.id)) ctx.characters[p.id]?.anim.cheer();
+    else ctx.characters[p.id]?.anim.sad();
+  }
 
   st.shakeT = 0.4; st.shakeMag = 0.12;
   spawnConfetti(st);
@@ -545,7 +552,7 @@ function endGame(st: PushOfWarState, path: "solo-win" | "trio-win" | "timeout"):
   st.surgeFlashT = SURGE_FLASH_DURATION * 0.6;
   st.ended = true;
 
-  setTimeout(() => { if (st.finished && st.ranking) ctx.finish(st.ranking); }, 2150);
+  setTimeout(() => { if (st.finished && st.ranking) ctx.finish(st.ranking, coinWinners); }, 2150);
 }
 
 function spawnDust(st: PushOfWarState): void {
