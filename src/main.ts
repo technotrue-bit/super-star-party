@@ -95,6 +95,7 @@ function boot(): void {
     import("./screens/boardScreenPlaceholder").then((m) => screens.register(m.boardScreenPlaceholder)),
     import("./screens/minigameScreen").then((m) => screens.register(m.minigameScreen)),
     import("./screens/characterSelect").then((m) => screens.register(m.characterSelect)),
+    import("./screens/friendsScreen").then((m) => screens.register(m.friendsScreen)),
     import("./screens/howToPlay").then((m) => screens.register(m.howToPlay)),
     import("./screens/matchFinale").then((m) => screens.register(m.matchFinale)),
   ];

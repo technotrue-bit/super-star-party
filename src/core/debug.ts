@@ -35,6 +35,8 @@ import {
 } from "../minigames/packRules";
 import { effectsPassCount, getEffectsQuality, setEffectsQuality as applyEffectsQuality } from "../render/postFx";
 import { rapierStatus, runContactScenario as runRapierContactScenario } from "../physics/contact";
+import { setOnlineMatch, setPartyAssist } from "../net/mode";
+import { dropOut, partyView } from "../net/session";
 
 export interface SSPDebug {
   state(): Record<string, unknown>;
@@ -115,6 +117,12 @@ export interface SSPDebug {
   runContactScenario(): Promise<{ contacted: boolean; separated: boolean; minGap: number }>;
   /** Open one minigame directly. Starts a match first when the board is empty. */
   openMinigame(id: string): void;
+  /** Friends-room status. Offline until a room starts. */
+  party(): ReturnType<typeof partyView>;
+  /** Playtest: local humans publish the CPU choice over the relay. */
+  partyAssist(on: boolean): void;
+  /** Leave the room. A guest's seat becomes a CPU. The host ends the room. */
+  partyDrop(): void;
 }
 
 let autoplayOn = false;
@@ -214,6 +222,7 @@ export function installDebugAPI(): void {
     startMatch(kinds: string[], names?: string[]) {
       // Preserve the current seed (set via __SSP__.seed(n)) so critic
       // replays are byte-identical; plain startMatch still reseeds randomly.
+      setOnlineMatch(false);
       startMatch(kinds, names ?? [], 10, match.seed);
       screens.goto("board");
     },
@@ -324,6 +333,15 @@ export function installDebugAPI(): void {
     },
     openMinigame(id: string) {
       void import("../screens/minigameScreen").then((mod) => mod.launchMinigame(id));
+    },
+    party() {
+      return partyView();
+    },
+    partyAssist(on: boolean) {
+      setPartyAssist(on);
+    },
+    partyDrop() {
+      dropOut();
     },
   };
   (window as unknown as { __SSP__: SSPDebug }).__SSP__ = api;

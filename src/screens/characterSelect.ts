@@ -11,6 +11,7 @@ import * as THREE from "three";
 import { world } from "../main";
 import { palette, hex } from "../config/palette";
 import { startMatch } from "../core/game";
+import { setOnlineMatch } from "../net/mode";
 import type { SeatController } from "../core/seat";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
@@ -463,6 +464,7 @@ const characterSelectImpl: SelectScreenState & Screen = {
       /* URL parse must never break the game */
     }
 
+    setOnlineMatch(false);
     startMatch(kinds, names, 10, urlSeed, controllers);
     audio.sfx.play("fanfare.win");
     screens.goto("board");

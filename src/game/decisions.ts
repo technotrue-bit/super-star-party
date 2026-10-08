@@ -5,11 +5,15 @@
  * touch UI. Autoplay makes that same seat take the CPU choice, except
  * the roll: the ROLL button stays the input and the autoplay hook
  * clicks it (the CPU timer would draw rng the human turn does not).
- * A remote seat always returns pending or "wait". Nothing resolves it
- * yet — there is no session and no socket.
+ * A remote seat returns pending or "wait". The online session applies
+ * the relayed choice. CPU seats stay on this local AI on every peer.
+ * While a match is online, a local seat stays manual here so the turn
+ * loop can publish the choice; party assist is that loop's concern.
+ * Solo autoplay is unchanged.
  */
 import { playerController } from "../core/game";
 import { isAutoplay } from "../core/debug";
+import { onlineMatch } from "../net/mode";
 import { rng } from "../core/rng";
 import { decideShopPurchase, pickAutoItem, type ShopDecision } from "./items";
 import { sensibleStarCount } from "./economy";
@@ -71,7 +75,10 @@ export function isPending(value: object): value is PendingDecision {
 function automatic(playerId: number): boolean {
   const seat = playerController(playerId);
   if (seat === "remote") return false;
-  if (seat === "local") return isAutoplay();
+  if (seat === "local") {
+    if (onlineMatch()) return false;
+    return isAutoplay();
+  }
   return true;
 }
 

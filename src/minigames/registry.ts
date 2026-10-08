@@ -13,6 +13,8 @@
  *   then that pack's list opens up again.
  */
 import { rng } from "../core/rng";
+import { onlineMatch } from "../net/mode";
+import { isContactMinigame } from "../physics/contact";
 import {
   blankPlayedByPack,
   getEnabledPacks,
@@ -110,7 +112,7 @@ export function tryPickMinigame(
 
   // A pack that has dealt every one of its games may deal again.
   for (const pack of enabled) {
-    const games = REGISTRY.filter((m) => m.pack === pack);
+    const games = REGISTRY.filter((m) => m.pack === pack && dealableOnline(m.id));
     const played = playedList(pack);
     if (games.length > 0 && games.every((g) => played.includes(g.id))) played.length = 0;
   }
@@ -118,6 +120,7 @@ export function tryPickMinigame(
   const available = REGISTRY.filter((m) => {
     const pack = m.pack ?? "midway";
     if (!enabled.has(pack)) return false;
+    if (!dealableOnline(m.id)) return false;
     return !playedList(pack).includes(m.id);
   });
   if (available.length === 0) return null;
@@ -145,6 +148,11 @@ export function tryPickMinigame(
     if (roll <= 0) return take(available[i]);
   }
   return take(available[0]);
+}
+
+/** Contact minigames stay off the online path. Solo still deals them. */
+function dealableOnline(id: string): boolean {
+  return !(onlineMatch() && isContactMinigame(id));
 }
 
 function take(chosen: MinigameEntry): MinigameEntry {
