@@ -73,6 +73,9 @@ function injectStyles(): void {
       color: ${palette.ink}; background: ${palette.white};
     }
     .ssp-friends__err { color: ${palette.lava}; font-weight: 700; text-align: center; margin: 0; }
+    .ssp-friends__transport {
+      margin: 0; text-align: center; color: ${palette.inkSoft}; font-size: 13px;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -111,7 +114,14 @@ const friendsImpl = {
     const blurb = document.createElement("p");
     blurb.className = "ssp-friends__blurb";
     blurb.textContent = "Friends-only room. Share the 4-letter code. Empty seats are CPUs.";
-    card.append(title, blurb);
+    const transport = document.createElement("p");
+    transport.className = "ssp-friends__transport";
+    transport.dataset.partyTransport = view.transport;
+    transport.textContent =
+      view.transport === "server"
+        ? "Party server is on. Phones join with the code."
+        : "Same-browser tabs share this room. No server.";
+    card.append(title, blurb, transport);
 
     if (!view.code) {
       const create = ui.button({
