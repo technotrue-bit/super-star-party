@@ -16,6 +16,28 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const fxArg = (process.env.SSP_FX ?? "").trim().toLowerCase();
 const fxQuery = fxArg === "off" || fxArg === "low" || fxArg === "high" ? `&fx=${fxArg}` : "";
+// SSP_SEED pins the match seed (and so the turn order). Unset = random, as before.
+const seedArg = (process.env.SSP_SEED ?? "").trim();
+const seedQuery = /^\d+$/.test(seedArg) ? `&seed=${seedArg}` : "";
+const BASE = process.env.SSP_URL ?? "http://localhost:5177";
+
+// CI starts Vite in the background. Wait for a real 200 before opening the
+// page so a slow or refused first connection is a wait, not a failure.
+async function waitForServer(url, ms = 60000) {
+  const until = Date.now() + ms;
+  let last = "";
+  while (Date.now() < until) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return;
+      last = `HTTP ${res.status}`;
+    } catch (err) {
+      last = String(err?.cause?.code ?? err);
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error(`dev server at ${url} was not ready after ${ms} ms (${last})`);
+}
 
 const errors = [];
 let page;
@@ -64,7 +86,8 @@ page.on("console", (m) => { if (m.type() === "error") errors.push(m.text().slice
 page.on("pageerror", (e) => errors.push("PAGEERROR: " + String(e).slice(0, 160)));
 
 console.log("1. boot");
-await page.goto(`http://localhost:5177/?audio=1&speed=8${fxQuery}`, { waitUntil: "domcontentloaded" });
+await waitForServer(`${BASE}/`);
+await page.goto(`${BASE}/?audio=1&speed=8${fxQuery}${seedQuery}`, { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(2500);
 let st = await state();
 console.log("   screen:", st.screen, "| canvas:", await page.evaluate(() => {
@@ -88,15 +111,20 @@ console.log("   screen:", st.screen, "| phase:", st.phase, "| coins:", JSON.stri
 await page.screenshot({ path: `${OUT}/03-board.png` });
 
 console.log("4. ROLL! -> (human click)");
-const before = st.positions;
-// The turn-order ceremony is wall-clock (~5s) and ignores an early ROLL.
-// Click once the button is actually enabled. A CPU who goes first moves
-// a token without that click.
+let before = st.positions;
+// The turn-order ceremony runs on wall-clock timers (~5 s). The ROLL button
+// is already drawn and enabled while it plays, but the turn loop ignores a
+// press until its dice phase starts. The old check clicked as soon as the
+// button looked ready: when a CPU went first a CPU token moved and the run
+// passed without a real human roll; when the seed put the human first the
+// early click was dropped, the die hovered forever and the run failed.
+// Wait for the loop itself - the dice phase on the human (player 0) - then
+// click, and check that the human's own token moves.
 let rollReady = "timeout";
 try {
   const handle = await page.waitForFunction(() => {
-    const players = window.__SSP__?.state?.()?.match?.players ?? [];
-    if (players.some((p) => p.space !== 0)) return "moved";
+    const m = window.__SSP__?.state?.()?.match ?? {};
+    if (m.phase !== "dice" || m.currentPlayer !== 0) return false;
     const btn = Array.from(document.querySelectorAll("button")).find((b) =>
       /^roll!$/i.test((b.textContent || "").trim())
     );
@@ -105,19 +133,22 @@ try {
     if (style.display === "none" || style.pointerEvents === "none") return false;
     if (parseFloat(style.opacity) <= 0.5) return false;
     return "ready";
-  }, null, { timeout: 20000 });
+  }, null, { timeout: 60000 });
   rollReady = await handle.jsonValue();
 } catch {
   rollReady = "timeout";
 }
-console.log("   roll ready:", rollReady);
-if (rollReady !== "moved") await clickText(/^roll!$/i, "ROLL");
+const turnOrder = await page.evaluate(() => window.__SSP__?.state?.()?.match?.turnOrder ?? []);
+before = (await state()).positions;
+console.log("   roll ready:", rollReady, "| turn order:", JSON.stringify(turnOrder),
+  turnOrder[0] === 0 ? "(human first)" : "(CPU first, waited for the human turn)");
+if (rollReady === "ready") await clickText(/^roll!$/i, "ROLL");
 let sawDie = "hidden", moved = false;
 for (let i = 0; i < 40; i++) {
   const s = await page.evaluate(() => window.__DIE_STATE ?? "n/a");
   if (s !== "hidden" && s !== "n/a") sawDie = s;
   const now = await state();
-  if (JSON.stringify(now.positions) !== JSON.stringify(before)) { moved = true; break; }
+  if (now.positions[0] !== before[0]) { moved = true; break; } // the human token (player 0)
   await page.waitForTimeout(250);
 }
 st = await state();
@@ -179,7 +210,7 @@ while (Date.now() - t0 < MATCH_CAP_MS) {
       screen: st.screen,
       phase: m.phase,
       round: m.round ?? m.turn,
-      mg: (last && (last.id ?? last.minigame ?? last.game)) ?? null,
+      mg: (last && (last.id ?? last.minigame ?? last.game)) ?? (st.screen === "minigame" ? m.lastMinigameId ?? null : null),
       coins: (m.players ?? []).map((p) => p.coins),
       stars: (m.players ?? []).map((p) => p.stars),
       starBalloonPos: m.starBalloonPos,
