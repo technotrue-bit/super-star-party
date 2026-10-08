@@ -135,7 +135,11 @@ const t0 = Date.now();
 let reachedFinale = false;
 let lastBalloon = null;
 let minigameClicks = 0;
-while (Date.now() - t0 < 240000) {
+// Eight minutes. The twin match needed more than five minutes for nine
+// turns on a GitHub runner, and this run still has to reach the finale.
+// Together with the twin's nine-minute cap, this fits the 20-minute job.
+const MATCH_CAP_MS = 480000;
+while (Date.now() - t0 < MATCH_CAP_MS) {
   const clickedStart = await page.evaluate(() => {
     const btn = document.querySelector("#mg-start-btn");
     if (!btn) return false;

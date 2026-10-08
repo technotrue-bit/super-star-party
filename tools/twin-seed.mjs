@@ -2,9 +2,12 @@ import { chromium } from "@playwright/test";
 
 const URL = "http://127.0.0.1:5177/?seed=7&screen=board&autoplay=1&audio=0&speed=4";
 const TURNS = 9;
-const CAP_MS = 300000;
+// A GitHub runner matched turns 1–8, then both pages hit a 300s cap during
+// turn 9. Nine minutes lets that turn finish. Speed stays 4: past five
+// sim steps per frame, a faster speed does not shorten the minigames.
+const CAP_MS = 540000;
 
-async function play(page) {
+async function play(page, label) {
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e).slice(0, 180)));
   await page.goto(URL, { waitUntil: "domcontentloaded" });
@@ -36,6 +39,7 @@ async function play(page) {
 
   const t0 = Date.now();
   let ends = [];
+  let reported = 0;
   while (Date.now() - t0 < CAP_MS) {
     await page.evaluate(() => {
       const btn = document.querySelector("#mg-start-btn");
@@ -43,6 +47,10 @@ async function play(page) {
     });
     ends = await page.evaluate(() => window.__TWIN_ENDS ?? []);
     const closed = ends.filter((row) => row.turn >= 2 && row.turn <= TURNS + 1);
+    if (closed.length > reported) {
+      reported = closed.length;
+      console.log(`${label} turn ${reported} closed at ${Date.now() - t0}ms`);
+    }
     if (closed.length >= TURNS) break;
     const screen = ends.length ? ends[ends.length - 1].screen : null;
     if (screen === "finale") break;
@@ -71,7 +79,7 @@ const pageB = await context.newPage();
 
 let failed = false;
 try {
-  const [a, b] = await Promise.all([play(pageA), play(pageB)]);
+  const [a, b] = await Promise.all([play(pageA, "A"), play(pageB, "B")]);
   console.log(`A ${a.ms}ms errors ${a.errors.length}`);
   console.log(`B ${b.ms}ms errors ${b.errors.length}`);
   if (a.errors.length || b.errors.length) {
