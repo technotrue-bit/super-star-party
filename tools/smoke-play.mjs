@@ -159,7 +159,9 @@ await page.screenshot({ path: `${OUT}/05-finale.png` });
 
 fs.writeFileSync(`${OUT}/console-errors.txt`, errors.join("\n") || "(none)");
 console.log(`\nconsole errors: ${errors.length ? errors.length + " -> " + JSON.stringify(errors.slice(0, 4)) : "none"}`);
-console.log(errors.length === 0 && moved && reachedFinale
+const ok = errors.length === 0 && moved && reachedFinale;
+console.log(ok
   ? "\nVERDICT: the game plays end to end - title -> select -> a human ROLL that moves the token -> a full match -> finale, with zero console errors."
   : "\nVERDICT: something in the flow needs attention (see above).");
 await b.close();
+process.exitCode = ok ? 0 : 1;
