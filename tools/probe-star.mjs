@@ -59,4 +59,5 @@ for (const seed of seeds) {
   if (found) break;
 }
 console.log("ERRORS:", errors.length ? errors.slice(0, 5) : "none");
+if (!found || errors.length) process.exitCode = 1;
 await browser.close();

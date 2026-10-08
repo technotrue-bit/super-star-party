@@ -21,8 +21,10 @@
  *
  * Determinism: each minigame draws from a mulberry32 stream mixed from
  * match.seed, match.turn, and that minigame's index within the turn.
- * Index 0 is the first minigame, so its stream matches seed and turn alone.
- * A second minigame on the same turn, such as a duel, gets the next index.
+ * The index is the id's place in match.minigameDice for this turn.
+ * A repeat visit keeps its place. Index 0 is the first minigame, so its
+ * stream matches seed and turn alone. A later deal on that turn, such as
+ * a duel, gets the next index.
  * The VS splash uses a separate stream mixed from the seed. Music follows
  * genre. Countdown and results advance on dt. performance.now only times
  * the coin-count tween. Gameplay does not call Math.random.
@@ -479,15 +481,24 @@ export function skipNextMinigamePreScreen(): void {
   skipPreScreen = true;
 }
 
-let dieRound: { players: typeof match.players; turn: number; index: number } | null = null;
-
-function minigameRoundIndex(): number {
-  if (dieRound && dieRound.players === match.players && dieRound.turn === match.turn) {
-    dieRound.index += 1;
-    return dieRound.index;
+/**
+ * Place of this minigame in the match's list for the current turn.
+ * A new deal appends. A repeat visit (debug goto, or the same page
+ * without a reload) reads the place already stored on the match.
+ * The first id on a turn is index 0.
+ */
+function minigameRoundIndex(id: string, dealt: boolean): number {
+  const log = match.minigameDice;
+  if (!log || log.turn !== match.turn) {
+    match.minigameDice = { turn: match.turn, ids: [id] };
+    return 0;
   }
-  dieRound = { players: match.players, turn: match.turn, index: 0 };
-  return 0;
+  if (!dealt) {
+    const at = log.ids.lastIndexOf(id);
+    if (at >= 0) return at;
+  }
+  log.ids.push(id);
+  return log.ids.length - 1;
 }
 
 function minigameDie(seed: number, turn: number, round: number) {
@@ -509,6 +520,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
     // the board; the turn loop's resume path continues the round.
     // Debug/critic hook: ?minigame=ID forces a specific minigame.
     let entry = consumePendingMinigame();
+    const dealt = entry != null;
     const forced = new URLSearchParams(window.location.search).get("minigame");
     if (forced && match.players.length > 0) {
       entry = { id: forced, name: forced };
@@ -707,7 +719,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           characters: self._chars ?? [],
           scene: world.scene!,
           camera: world.camera!,
-          rng: minigameDie(match.seed, match.turn, minigameRoundIndex()),
+          rng: minigameDie(match.seed, match.turn, minigameRoundIndex(entry.id, dealt)),
           get time() { return (self as any)._playT ?? 0; },
           announce: (text, opts) => {
             ui.clearFeedback();
