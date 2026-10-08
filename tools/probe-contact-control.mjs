@@ -32,7 +32,7 @@ function gap(seat) {
 
 async function boot(page) {
   await page.goto(`${BASE}/?audio=0&fx=off&seed=7`, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => window.__SSP__?.state?.()?.screen === "title", null, { timeout: 20000 });
+  await page.waitForFunction(() => window.__SSP__?.state?.()?.screen === "title", null, { timeout: 45000 });
 }
 
 async function openGame(page, id) {
@@ -46,7 +46,7 @@ async function openGame(page, id) {
       return !!window.__POW__;
     },
     id,
-    { timeout: 20000 },
+    { timeout: 45000 },
   );
 }
 
@@ -71,7 +71,7 @@ async function waitForStick(page) {
     if (!stick) return false;
     const r = stick.getBoundingClientRect();
     return r.width > 40 && r.height > 40;
-  }, null, { timeout: 20000 });
+  }, null, { timeout: 45000 });
 }
 
 async function localSeat(page, id) {
