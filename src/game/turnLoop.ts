@@ -8,7 +8,7 @@
  * hook), per-tile hop movement with the Funhouse Cut shortcut, space effects
  * (blue / red / Grand Prize Balloon / shop / green / grumpus), shops on pass,
  * Carnival Squeeze when a move ends on a shared space, Fizzy Barker pity
- * in the last 5 turns, item use before rolling,
+ * in the last 5 turns, item use before rolling (and poison after the roll),
  * minigame-round gating, bonus stars and the final podium. Every beat plays
  * its SFX, the music intensity follows the phase, and bus events keep the
  * crowd reactions + debug API live.
@@ -35,7 +35,24 @@ import type { ButtonHandle } from "../ui/button";
 import type { PopupHandle } from "../ui/popup";
 import { addCoins, tryBuyStars, sensibleStarCount, movePrizeBalloon, computeBonusStars, finalRanking, grantStamp, popMinigameBalloon, carnivalSqueeze, minigameCoinAward, type BonusStarKind } from "./economy";
 import { resolveGreen, resolveGrumpus, consumeFreeStar, consumeDoubleBlue } from "./happenings";
-import { ITEM_DEFS, canUseItem, useItem, turnsLeft, grantFizzyPity, decideShopPurchase, type ShopDecision } from "./items";
+import {
+  ITEM_DEFS,
+  canUseItem,
+  useItem,
+  turnsLeft,
+  grantFizzyPity,
+  decideShopPurchase,
+  pickAutoItem,
+  itemTargets,
+  swapGiveChoices,
+  swapTakeChoices,
+  consumeRollAdjust,
+  movementTotal,
+  takeLuckyPlayers,
+  collectLuckyBlue,
+  type ShopDecision,
+  type UseItemResult,
+} from "./items";
 import { openShop } from "../screens/shopScreen";
 import { tryPickMinigame } from "../minigames/registry";
 import { setPendingMinigame } from "../minigames/framework";
@@ -270,6 +287,12 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     shopAutoCommit: (() => void) | null;
     /** Human closed the shop because autoplay started; buy if they bought nothing. */
     shopDecideOnClose: boolean;
+    /** Item picker or warp pause: do not also roll. */
+    itemResolving: boolean;
+    itemPopup: PopupHandle | null;
+    itemAutoCommit: (() => void) | null;
+    poisonPopup: PopupHandle | null;
+    poisonAutoCommit: (() => void) | null;
     // results
     resultSteps: Array<() => void>;
     resultTimer: number;
@@ -313,6 +336,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     starAutoCommit: null,
     shopAutoCommit: null,
     shopDecideOnClose: false,
+    itemResolving: false,
+    itemPopup: null,
+    itemAutoCommit: null,
+    poisonPopup: null,
+    poisonAutoCommit: null,
     resultSteps: [],
     resultTimer: 0,
     circusToll: null,
@@ -389,6 +417,17 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     const pid = match.currentPlayer;
     const player = match.players[pid];
     if (!player) return;
+    if (player.itemFx.skipTurn) {
+      player.itemFx.skipTurn = false;
+      bus.emit("turn:start", { turn: match.turn, player: pid });
+      hud.showBanner(`${player.name} LOSES A TURN!`, { durationMs: 1400 });
+      ui.toast("The Bowser Suit ate their turn!", { durationMs: 1800 });
+      chars[pid]?.anim.sad();
+      audio.sfx.play("sad");
+      refreshHud();
+      pause(1.1, nextTurn);
+      return;
+    }
     bus.emit("turn:start", { turn: match.turn, player: pid });
     audio.sfx.play("whistle");
     board.clearHighlights();
@@ -438,15 +477,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     pause(1.2, then);
   };
 
-  const beginDice = (): void => {
-    S.phase = "dice";
-    match.phase = "dice";
-    audio.music.intensity(0.5);
-    const pid = match.currentPlayer;
-    S.diceFaces = [];
-    S.rollsNeeded = 1;
-    S.rolling = false;
-    S.betweenRolls = 0;
+  const armDice = (pid: number): void => {
+    if (S.disposed || S.phase !== "dice") return;
+    S.itemResolving = false;
     // Die appears floating above the current player's token, slowly spinning
     // until the player (or CPU timer) presses ROLL.
     dice.hover(pid);
@@ -459,6 +492,71 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       rollButton.setEnabled(false);
       S.cpuTimer = 0.9 + rng.next() * 0.6;
     }
+  };
+
+  /**
+   * CPU and autoplay use one held item before the roll. Returns true when
+   * that item left the dice phase (warp) or will arm the die itself (chomp).
+   */
+  const applyAutoItem = (pid: number, res: UseItemResult): boolean => {
+    if (!res.ok) return false;
+    ui.toast(res.message, { durationMs: 1600 });
+    audio.sfx.play("boing");
+    refreshHud();
+    if (res.extraDice) {
+      S.rollsNeeded = 2;
+      const p = match.players[pid];
+      if (p) p.itemFx.doubleDice = false;
+    }
+    if (res.swappedWith !== undefined) syncCharPositions();
+    if (res.moveTo !== undefined) {
+      S.itemResolving = true;
+      rollButton.setEnabled(false);
+      itemBar.innerHTML = "";
+      dice.hide();
+      const after = res.landEffect ? "effect" : "done";
+      pause(0.35, () => {
+        S.itemResolving = false;
+        startMoving([res.moveTo as number], after);
+      });
+      return true;
+    }
+    if (res.chomp) {
+      S.itemResolving = true;
+      offerPrizeBalloon(pid, () => {
+        S.itemResolving = false;
+        if (S.disposed || S.phase !== "dice") return;
+        armDice(pid);
+      });
+      return true;
+    }
+    return false;
+  };
+
+  const beginDice = (): void => {
+    S.phase = "dice";
+    match.phase = "dice";
+    audio.music.intensity(0.5);
+    const pid = match.currentPlayer;
+    const player = match.players[pid];
+    S.diceFaces = [];
+    S.rollsNeeded = 1;
+    S.rolling = false;
+    S.betweenRolls = 0;
+    S.itemResolving = false;
+    if (player?.itemFx.doubleDice) {
+      S.rollsNeeded = 2;
+      player.itemFx.doubleDice = false;
+    }
+    dice.hover(pid);
+    if (pid !== HUMAN || isAutoplay()) {
+      const key = pickAutoItem(pid);
+      if (key) {
+        const res = useItem(pid, key);
+        if (applyAutoItem(pid, res)) return;
+      }
+    }
+    armDice(pid);
   };
 
   const startMoving = (queued: number[], after: "effect" | "done", total = 0): void => {
@@ -668,6 +766,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
           addCoins(pid, gained);
           gained *= 2;
         }
+        gained += collectLuckyBlue(pid);
         hud.showBanner(`+${gained} COINS!`, { durationMs: 1400 });
         const sc = projectToScreen(pos);
         if (sc) ui.confettiBurst(sc.x, sc.y, { count: 36, sound: null });
@@ -761,7 +860,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   /* ---------------- dice ---------------- */
 
   const rollPressed = (): void => {
-    if (S.disposed || S.phase !== "dice" || S.rolling || S.betweenRolls > 0 || S.shopOpen) return;
+    if (S.disposed || S.phase !== "dice" || S.rolling || S.betweenRolls > 0 || S.shopOpen || S.itemResolving) return;
     const pid = match.currentPlayer;
     const player = match.players[pid];
     if (!player) return;
@@ -799,24 +898,117 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       if (pid === HUMAN) rollButton.setEnabled(true);
     } else {
       match.lastDice = [...S.diceFaces];
-      const total = S.diceFaces.reduce((s, f) => s + f, 0);
+      const raw = S.diceFaces.reduce((s, f) => s + f, 0);
       // Lock the roll through the post-land pause so the autoplay hook can't
       // fire a phantom second roll (rng + bus determinism).
       S.rolling = true;
-      pause(1.0, () => {
-        S.rolling = false;
-        if (!(window as any).__SSP_HOLD_DIE) { dice.hide(); startMoving([], "effect", total); }
-      });
+      offerPoison(pid, raw);
     }
+  };
+
+  const launchMove = (pid: number, raw: number): void => {
+    // Keep the roll locked while the adjusted total is on screen. The face
+    // was already chosen; this only blocks a second roll.
+    S.rolling = true;
+    const adj = consumeRollAdjust(pid);
+    const total = movementTotal(raw, adj.bonus, adj.penalty);
+    if (adj.bonus !== 0 || adj.penalty !== 0) {
+      const bits = [`rolled ${raw}`];
+      if (adj.bonus) bits.push(`+${adj.bonus}`);
+      if (adj.penalty) bits.push(`−${adj.penalty}`);
+      ui.toast(`${bits.join(" ")} → move ${total}`, { durationMs: 1600 });
+    }
+    pause(adj.bonus || adj.penalty ? 0.7 : 1.0, () => {
+      S.rolling = false;
+      if (!(window as any).__SSP_HOLD_DIE) {
+        dice.hide();
+        startMoving([], "effect", total);
+      }
+    });
+  };
+
+  const spendPoison = (holderId: number, rollerId: number): void => {
+    const res = useItem(holderId, "poison_mushroom", rollerId);
+    if (!res.ok) return;
+    ui.toast(res.message, { durationMs: 1400 });
+    refreshHud();
+  };
+
+  /**
+   * Poison is a post-roll item. CPUs and autoplay always spend one.
+   * A manual human gets a touch prompt and the move waits on that choice.
+   */
+  const offerPoison = (rollerId: number, raw: number): void => {
+    const holders = match.players
+      .filter((p) => p.active && p.id !== rollerId && p.items.includes("poison_mushroom"))
+      .map((p) => p.id);
+    const humanChooses = holders.includes(HUMAN) && !isAutoplay();
+    for (const id of holders) {
+      if (humanChooses && id === HUMAN) continue;
+      spendPoison(id, rollerId);
+    }
+    if (!humanChooses) {
+      launchMove(rollerId, raw);
+      return;
+    }
+    // diceT is already spent. Drop `rolling` so the dice phase does not
+    // call diceLand again while the touch prompt is up.
+    S.rolling = false;
+    S.itemResolving = true;
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;flex-direction:column;gap:8px;width:min(82vw,320px);";
+    let settled = false;
+    const close = (): void => {
+      S.poisonPopup?.destroy();
+      S.poisonPopup = null;
+      S.poisonAutoCommit = null;
+    };
+    const finish = (use: boolean): void => {
+      if (settled) return;
+      settled = true;
+      close();
+      S.itemResolving = false;
+      if (use) spendPoison(HUMAN, rollerId);
+      launchMove(rollerId, raw);
+    };
+    S.poisonAutoCommit = () => finish(true);
+    const useBtn = ui.button({
+      label: "☠️ POISON −2",
+      kind: "danger",
+      size: "md",
+      ariaLabel: "Use Poison Mushroom to subtract 2 from this roll",
+      onClick: () => finish(true),
+    });
+    useBtn.el.setAttribute("data-poison", "use");
+    const skipBtn = ui.button({
+      label: "LET IT RIDE",
+      kind: "ghost",
+      size: "md",
+      ariaLabel: "Let the roll stand",
+      onClick: () => finish(false),
+    });
+    skipBtn.el.setAttribute("data-poison", "skip");
+    row.append(useBtn.el, skipBtn.el);
+    const roller = match.players[rollerId];
+    S.poisonPopup = ui.popup({
+      title: "POISON MUSHROOM",
+      body: `${roller?.name ?? "They"} rolled ${raw}. Subtract 2 before they move?`,
+      content: row,
+      sound: null,
+      closeOnEsc: false,
+    });
   };
 
   /* ---------------- items (pre-roll) ---------------- */
 
+  const TARGET_PICK = new Set(["warp_pipe", "dueling_glove", "mecha_fly", "swap_card", "boo_bell", "bowser_suit"]);
+
   const rebuildItemBar = (pid: number): void => {
     itemBar.innerHTML = "";
-    if (pid !== HUMAN) return;
+    if (pid !== HUMAN || isAutoplay()) return;
     const keys = Array.from(new Set(match.players[pid]?.items ?? []));
     for (const key of keys) {
+      if (key === "poison_mushroom") continue;
       if (!canUseItem(pid, key)) continue;
       const def = ITEM_DEFS[key];
       const btn = ui.button({
@@ -824,29 +1016,155 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         kind: "primary",
         size: "sm",
         sound: "ui.click",
+        ariaLabel: `Use ${def.name}`,
       });
+      btn.el.setAttribute("data-item-use", key);
       btn.el.addEventListener("click", () => useItemPressed(pid, key));
       itemBar.appendChild(btn.el);
     }
   };
 
-  const useItemPressed = (pid: number, key: string): void => {
-    if (S.phase !== "dice" || S.rolling) return;
-    const res = useItem(pid, key);
+  const finishBarUse = (pid: number, res: UseItemResult): void => {
+    if (!res.ok) {
+      ui.toast(res.message, { durationMs: 1400 });
+      rebuildItemBar(pid);
+      if (pid === HUMAN) rollButton.setEnabled(true);
+      return;
+    }
     ui.toast(res.message, { durationMs: 2200 });
     audio.sfx.play("boing");
     refreshHud();
+    if (res.swappedWith !== undefined) syncCharPositions();
     if (res.extraDice) {
       S.rollsNeeded = 2;
+      const p = match.players[pid];
+      if (p) p.itemFx.doubleDice = false;
       rebuildItemBar(pid);
-    } else if (res.moveTo !== undefined) {
+      if (pid === HUMAN) rollButton.setEnabled(true);
+      return;
+    }
+    if (res.moveTo !== undefined) {
+      S.itemResolving = true;
       dice.hide();
       rollButton.setEnabled(false);
       itemBar.innerHTML = "";
-      pause(0.35, () => startMoving([res.moveTo as number], "done"));
-    } else {
-      rebuildItemBar(pid);
+      const after = res.landEffect ? "effect" : "done";
+      pause(0.35, () => {
+        S.itemResolving = false;
+        startMoving([res.moveTo as number], after);
+      });
+      return;
     }
+    if (res.chomp) {
+      S.itemResolving = true;
+      rollButton.setEnabled(false);
+      offerPrizeBalloon(pid, () => {
+        S.itemResolving = false;
+        if (S.disposed || S.phase !== "dice") return;
+        if (pid === HUMAN) rollButton.setEnabled(true);
+        rebuildItemBar(pid);
+      });
+      return;
+    }
+    rebuildItemBar(pid);
+    if (pid === HUMAN) rollButton.setEnabled(true);
+  };
+
+  const openTargetPicker = (pid: number, key: string): void => {
+    const def = ITEM_DEFS[key];
+    S.itemResolving = true;
+    rollButton.setEnabled(false);
+    const sheet = document.createElement("div");
+    sheet.style.cssText = "display:flex;flex-direction:column;gap:8px;width:min(82vw,340px);";
+    let settled = false;
+    const close = (): void => {
+      S.itemPopup?.destroy();
+      S.itemPopup = null;
+      S.itemAutoCommit = null;
+    };
+    const cancel = (): void => {
+      if (settled) return;
+      settled = true;
+      close();
+      S.itemResolving = false;
+      if (pid === HUMAN) rollButton.setEnabled(true);
+      rebuildItemBar(pid);
+    };
+    const commit = (target?: number, trade?: { give?: string; take?: string }): void => {
+      if (settled) return;
+      settled = true;
+      close();
+      S.itemResolving = false;
+      finishBarUse(pid, useItem(pid, key, target, trade));
+    };
+    // Autoplay that flips on mid-picker chooses with rng and never waits.
+    S.itemAutoCommit = () => commit();
+    const showPlayers = (): void => {
+      sheet.replaceChildren();
+      for (const id of itemTargets(pid, key)) {
+        const rival = match.players[id];
+        const btn = ui.button({
+          label: `${rival?.name ?? "Rival"} · space ${(rival?.space ?? 0) + 1}`,
+          kind: "primary",
+          size: "sm",
+          ariaLabel: `Choose ${rival?.name ?? "rival"}`,
+          onClick: () => {
+            if (key === "swap_card") showGive(id);
+            else commit(id);
+          },
+        });
+        btn.el.setAttribute("data-item-target", String(id));
+        sheet.appendChild(btn.el);
+      }
+    };
+    const showGive = (targetId: number): void => {
+      sheet.replaceChildren();
+      for (const give of swapGiveChoices(pid)) {
+        const gdef = ITEM_DEFS[give];
+        const btn = ui.button({
+          label: `Give ${gdef?.icon ?? ""} ${gdef?.name ?? give}`,
+          kind: "primary",
+          size: "sm",
+          ariaLabel: `Give ${gdef?.name ?? give}`,
+          onClick: () => showTake(targetId, give),
+        });
+        btn.el.setAttribute("data-swap-give", give);
+        sheet.appendChild(btn.el);
+      }
+    };
+    const showTake = (targetId: number, give: string): void => {
+      sheet.replaceChildren();
+      for (const take of swapTakeChoices(targetId)) {
+        const tdef = ITEM_DEFS[take];
+        const btn = ui.button({
+          label: `Take ${tdef?.icon ?? ""} ${tdef?.name ?? take}`,
+          kind: "gold",
+          size: "sm",
+          ariaLabel: `Take ${tdef?.name ?? take}`,
+          onClick: () => commit(targetId, { give, take }),
+        });
+        btn.el.setAttribute("data-swap-take", take);
+        sheet.appendChild(btn.el);
+      }
+    };
+    showPlayers();
+    S.itemPopup = ui.popup({
+      title: def?.name ?? "ITEM",
+      body: def?.desc ?? "Choose a rival.",
+      content: sheet,
+      sound: null,
+      closeOnEsc: false,
+      buttons: [{ label: "CANCEL", kind: "ghost", onClick: cancel }],
+    });
+  };
+
+  const useItemPressed = (pid: number, key: string): void => {
+    if (S.phase !== "dice" || S.rolling || S.itemResolving) return;
+    if (TARGET_PICK.has(key)) {
+      openTargetPicker(pid, key);
+      return;
+    }
+    finishBarUse(pid, useItem(pid, key));
   };
 
   /* ---------------- space effects ---------------- */
@@ -1293,7 +1611,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     for (const p of match.players) {
       if (p.pack) playerPacks[p.id] = p.pack;
     }
-    const mg = tryPickMinigame(playerPacks);
+    const luckyPlayers = takeLuckyPlayers();
+    const mg = tryPickMinigame(playerPacks, luckyPlayers);
     if (!mg) {
       // No minigames registered yet — toast and carry on.
       ui.toast("Minigames arrive in Wave 3!", { durationMs: 2200 });
@@ -1416,6 +1735,18 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     if (isAutoplay() && S.shopOpen && S.shopAutoCommit) {
       const fn = S.shopAutoCommit;
       S.shopAutoCommit = null;
+      fn();
+      return;
+    }
+    if (isAutoplay() && S.poisonAutoCommit) {
+      const fn = S.poisonAutoCommit;
+      S.poisonAutoCommit = null;
+      fn();
+      return;
+    }
+    if (isAutoplay() && S.itemAutoCommit) {
+      const fn = S.itemAutoCommit;
+      S.itemAutoCommit = null;
       fn();
       return;
     }
@@ -1559,6 +1890,12 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     S.starAutoCommit = null;
     S.shopAutoCommit = null;
     S.shopDecideOnClose = false;
+    S.itemPopup?.destroy();
+    S.itemPopup = null;
+    S.itemAutoCommit = null;
+    S.poisonPopup?.destroy();
+    S.poisonPopup = null;
+    S.poisonAutoCommit = null;
     liveLoop = null;
   };
 
@@ -1567,7 +1904,15 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     update,
     rollPressed,
     isWaitingForRoll: (): boolean =>
-      S.phase === "dice" && !S.rolling && S.betweenRolls <= 0 && !S.shopOpen && !S.starPopup && !S.starCeremony,
+      S.phase === "dice" &&
+      !S.rolling &&
+      S.betweenRolls <= 0 &&
+      !S.shopOpen &&
+      !S.starPopup &&
+      !S.starCeremony &&
+      !S.itemResolving &&
+      !S.itemPopup &&
+      !S.poisonPopup,
     get phase(): LoopPhase {
       return S.phase;
     },

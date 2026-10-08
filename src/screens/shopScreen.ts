@@ -45,7 +45,7 @@ function injectShopStyles(): void {
               linear-gradient(180deg, ${palette.sun} 0%, ${palette.sunDeep} 100%);
   border:2px solid ${palette.ink}; box-shadow: inset 0 -3px 0 rgba(43,29,78,.25); }
 .ssp-shop__counter { min-width:30px; text-align:center; font-size:20px; font-weight:700; color:${palette.ink}; }
-.ssp-shop__grid { display:flex; flex-direction:column; gap:12px; max-height:44vh; overflow-y:auto; padding:3px 2px; -webkit-overflow-scrolling:touch; }
+.ssp-shop__grid { display:flex; flex-direction:column; gap:12px; max-height:min(52vh, 460px); overflow-y:auto; padding:3px 2px; -webkit-overflow-scrolling:touch; }
 .ssp-shop__space { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:48px; width:100%; text-align:left; font-family:inherit; font-weight:700; font-size:15px; color:${palette.ink}; background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:14px; padding:8px 12px; box-shadow:0 3px 0 ${palette.ink}; cursor:pointer; touch-action:manipulation; }
 .ssp-shop__space:active { transform:translateY(2px); box-shadow:0 1px 0 ${palette.ink}; }
 .ssp-shop__card { display:flex; align-items:center; gap:12px; background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:20px; padding:10px 12px; box-shadow:0 4px 0 ${palette.ink}; transition: opacity .25s ease-out, filter .25s ease-out; }

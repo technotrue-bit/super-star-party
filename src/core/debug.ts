@@ -11,6 +11,19 @@ import { world } from "../main";
 import { openShop } from "../screens/shopScreen";
 import { resetWipeRotation } from "../ui/transitions";
 import { minigameCoinAward, minigamePayout, playerCoins } from "../game/economy";
+import {
+  buyItem,
+  collectLuckyBlue,
+  debugFund,
+  debugGiveStars,
+  debugPlace,
+  grantItem,
+  itemDebugSnapshot,
+  pityPool,
+  takeLuckyPlayers,
+  useItem,
+  type UseItemResult,
+} from "../game/items";
 import { minigameCatalog, minigameCount, resetMinigameTracking, tryPickMinigame } from "../minigames/registry";
 import {
   getEnabledPacks,
@@ -66,6 +79,26 @@ export interface SSPDebug {
    * Unknown values are ignored. Returns the quality now in effect.
    */
   setEffectsQuality(quality: string): string;
+  /** Live item catalog, bags, and pending effects. */
+  itemState(): ReturnType<typeof itemDebugSnapshot>;
+  /** Add coins through the economy. */
+  fundPlayer(playerId: number, coins: number): number;
+  /** Add stars without moving the Grand Prize Balloon. */
+  giveStars(playerId: number, count: number): number;
+  /** Put a player on a space. Position stays `p.space`. */
+  placePlayer(playerId: number, space: number): number;
+  /** Award an item with no coin cost. */
+  grantItem(playerId: number, key: string): boolean;
+  /** Buy an item through the shop path. */
+  buyItem(playerId: number, key: string): boolean;
+  /** Use a held item. Omit targetId to let rng choose a rival. */
+  useHeldItem(playerId: number, key: string, targetId?: number): UseItemResult;
+  /** Bag keys Fizzy Barker can still give this player. */
+  pityPool(playerId: number): string[];
+  /** Lucky Card +1 on the next blue. Returns coins added. */
+  collectLuckyBlue(playerId: number): number;
+  /** Lucky Card holders for the next roulette, then the flag clears. */
+  takeLuckyPlayers(): number[];
 }
 
 let autoplayOn = false;
@@ -121,6 +154,7 @@ export function installDebugAPI(): void {
         },
         rngSeed: rng.seed,
         autoplay: autoplayOn,
+        items: itemDebugSnapshot(),
         minigameRules: {
           enabledPacks: getEnabledPacks(),
           coinMultiplier: getMinigameCoinMultiplier(),
@@ -203,10 +237,11 @@ export function installDebugAPI(): void {
       for (const p of match.players) {
         if (p.pack) packs[p.id] = p.pack;
       }
+      const lucky = match.players.filter((p) => p.itemFx?.lucky).map((p) => p.id);
       const out: { id: string; pack: string }[] = [];
       const count = Math.max(0, Math.floor(n));
       for (let i = 0; i < count; i++) {
-        const mg = tryPickMinigame(packs);
+        const mg = tryPickMinigame(packs, lucky);
         if (!mg) break;
         out.push({ id: mg.id, pack: mg.pack ?? "midway" });
       }
@@ -226,6 +261,36 @@ export function installDebugAPI(): void {
     },
     setEffectsQuality(quality: string) {
       return applyEffectsQuality(quality, false);
+    },
+    itemState() {
+      return itemDebugSnapshot();
+    },
+    fundPlayer(playerId: number, coins: number) {
+      return debugFund(playerId, coins);
+    },
+    giveStars(playerId: number, count: number) {
+      return debugGiveStars(playerId, count);
+    },
+    placePlayer(playerId: number, space: number) {
+      return debugPlace(playerId, space);
+    },
+    grantItem(playerId: number, key: string) {
+      return grantItem(playerId, key);
+    },
+    buyItem(playerId: number, key: string) {
+      return buyItem(playerId, key);
+    },
+    useHeldItem(playerId: number, key: string, targetId?: number) {
+      return useItem(playerId, key, targetId);
+    },
+    pityPool(playerId: number) {
+      return pityPool(playerId);
+    },
+    collectLuckyBlue(playerId: number) {
+      return collectLuckyBlue(playerId);
+    },
+    takeLuckyPlayers() {
+      return takeLuckyPlayers();
     },
   };
   (window as unknown as { __SSP__: SSPDebug }).__SSP__ = api;

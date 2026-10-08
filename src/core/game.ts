@@ -40,6 +40,34 @@ export interface SpaceDef {
   balloonCoins?: 5 | 10;
 }
 
+/**
+ * Pending item effects. Dice faces stay outcome-first; rollBonus and
+ * rollPenalty change the movement total after the face is chosen.
+ */
+export interface PlayerItemFx {
+  rollBonus: number;
+  rollPenalty: number;
+  /** Next dice phase rolls two dice. */
+  doubleDice: boolean;
+  /** Triple this player's pack weight on the next minigame roulette. */
+  lucky: boolean;
+  /** Next blue space pays one extra coin. */
+  luckyBlue: boolean;
+  /** Bowser Suit: skip this player's upcoming turn. */
+  skipTurn: boolean;
+}
+
+export function blankItemFx(): PlayerItemFx {
+  return {
+    rollBonus: 0,
+    rollPenalty: 0,
+    doubleDice: false,
+    lucky: false,
+    luckyBlue: false,
+    skipTurn: false,
+  };
+}
+
 export interface PlayerState {
   id: number;
   kind: string; // character key
@@ -49,6 +77,8 @@ export interface PlayerState {
   space: number; // board space index
   minigameWins: number;
   items: string[]; // item keys
+  /** Effects waiting on the next roll, blue space, roulette, or turn. */
+  itemFx: PlayerItemFx;
   active: boolean;
   /** Minigame pack chosen by this player (for roulette weighting). */
   pack?: string;
@@ -143,6 +173,7 @@ function makePlayer(id: number, kind: string, name: string): PlayerState {
     space: 0,
     minigameWins: 0,
     items: [],
+    itemFx: blankItemFx(),
     active: true,
     pack: undefined,
     stamps: [],
