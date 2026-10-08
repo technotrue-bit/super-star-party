@@ -124,6 +124,13 @@ export interface MatchState {
   /** Minigame the roulette just dealt. The coin payout reads its pack. */
   lastMinigameId: string | null;
   lastMinigamePack: string | null;
+  /**
+   * Minigame ids that have drawn a die on `turn`, in deal order.
+   * The die index is the id's place in `ids`. A repeat visit keeps that
+   * place. Cleared when a match starts, so the first minigame of a turn
+   * stays the seed-and-turn stream.
+   */
+  minigameDice: { turn: number; ids: string[] } | null;
 }
 
 function makePlayer(id: number, kind: string, name: string): PlayerState {
@@ -160,6 +167,7 @@ export const match: MatchState = {
   traps: [],
   lastMinigameId: null,
   lastMinigamePack: null,
+  minigameDice: null,
 };
 
 /** Start a fresh match. Kinds = character keys, e.g. ["pip","bounce",...]. */
@@ -185,6 +193,7 @@ export function startMatch(kinds: string[], names: string[], totalTurns = 10, se
   match.duel = undefined;
   match.lastMinigameId = null;
   match.lastMinigamePack = null;
+  match.minigameDice = null;
 
   // Human keeps their saved pack; CPUs draw from packs the host left on.
   assignPlayerPacks(match.seed, match.players);

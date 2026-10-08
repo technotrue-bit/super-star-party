@@ -19,6 +19,7 @@ async function run(seed) {
   while (Date.now() - t0 < 70000) {
     await page.waitForTimeout(250);
     const s = await page.evaluate(() => {
+      document.querySelector("#mg-start-btn")?.click();
       const pow = window.__POW__ ?? null;
       const st = window.__SSP__?.state?.() ?? {};
       const players = (st.match?.players ?? []).map((p) => (Array.isArray(p) ? { id: p[0], stars: p[1], coins: p[2] } : { id: p.id, stars: p.stars, coins: p.coins }));
@@ -28,6 +29,7 @@ async function run(seed) {
     if (s.pow && s.pow.endPath) { out = { seed, ...s.pow, players: s.players }; break; }
     if (started && s.screen === "board") { out = { seed, note: "returned to board with no endPath", players: s.players }; break; }
   }
+  if (!out) out = { seed, note: "no endPath", endPath: null };
   out.__side = out.endPath;
   return out;
 }
@@ -53,4 +55,6 @@ const strip = (o) => (o ? { seed: o.seed, stepIndex: o.stepIndex, crate: o.crate
 const same = JSON.stringify(strip(twinA)) === JSON.stringify(strip(twinB));
 console.log("TWIN_MATCH:", same, "| A:", JSON.stringify(strip(twinA)), "| B:", JSON.stringify(strip(twinB)));
 console.log("ERRORS:", errors.length ? [...new Set(errors)].slice(0, 4) : "none");
+const missingEnd = [...results, twinA, twinB].some((r) => !r || r.endPath == null);
+if (missingEnd || !same || errors.length) process.exitCode = 1;
 await browser.close();
