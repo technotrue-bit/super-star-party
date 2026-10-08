@@ -10,13 +10,14 @@
  * (seed 0xf100a1) — never Math.random(), never the gameplay rng. exit() removes
  * every DOM node, 3D object, listener, and timer it created; re-entering works.
  *
- * Timeline (~5.2s before controls):
- *   0.0-0.8s   Camera swoop to podium view + standings banner drops in
- *   0.8-1.6s   Standings count-up: stars + coins animate from 0 to final
- *   1.6-2.8s   Mini star reveal: drumroll, banner, star flies to winner
- *   2.8-4.0s   Coin star reveal: drumroll, banner, star flies to winner
- *   4.0-5.2s   Winner banner + podium poses + sustained confetti/sparkles
- *   5.2s+      Controls appear (PLAY AGAIN / BACK TO TITLE)
+ * Timeline (controls at 15s):
+ *   0.0-1.2s   Camera swoop to podium view
+ *   1.2-2.4s   Standings count-up: stars + coins animate from 0 to match totals
+ *   3.2s       Minigame Star
+ *   5.8s       Coin Star
+ *   8.4s       Stamp Star, only when someone collected a stamp
+ *   10.8s      Winner banner + podium poses + sustained confetti/sparkles
+ *   15.0s      Controls appear (PLAY AGAIN / BACK TO TITLE)
  */
 import * as THREE from "three";
 import { world } from "../main";
@@ -61,8 +62,10 @@ const DRUMROLL_DUR = 1.2; /* candidates cycle before each award — the reveal n
 const BONUS1_T = 3.2;
 const BONUS1_DUR = 1.2;
 const BONUS2_T = 5.8;
-const WINNER_T = 8.2;
-const CONTROLS_T = 12.4;
+const BONUS3_T = 8.4;
+const WINNER_T = 10.8;
+const CONTROLS_T = 15;
+const BONUS_AT = [BONUS1_T, BONUS2_T, BONUS3_T];
 
 /* ------------------------------------------------------------------ */
 /*  Podium layout                                                      */
@@ -162,7 +165,8 @@ class FinaleScreen implements Screen {
     this._camPos0 = null;
     this._camQuat0 = null;
     this._look0 = null;
-    this._bonusRevealed = [false, false];
+    this._drumStarted = [];
+    this._bonusRevealed = [];
 
     const scene = world.scene;
     const camera = world.camera;
@@ -179,6 +183,8 @@ class FinaleScreen implements Screen {
     // economy
     this._rankings = finalRanking();
     this._bonuses = computeBonusStars();
+    this._drumStarted = this._bonuses.map(() => false);
+    this._bonusRevealed = this._bonuses.map(() => false);
     this._starDisplays = this._rankings.map(() => 0);
     this._coinDisplays = this._rankings.map(() => 0);
 
@@ -266,11 +272,13 @@ class FinaleScreen implements Screen {
 
     // center banner (bonus reveals)
     const banner = document.createElement("div");
+    banner.id = "finale-banner";
     banner.style.cssText = `
       position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(0);
-      font-size:clamp(28px,6vw,56px);font-weight:700;color:${palette.cream};
+      font-size:clamp(22px,5.4vw,56px);font-weight:700;color:${palette.cream};
       text-shadow:0 3px 0 ${palette.ink},3px 0 0 ${palette.ink},-3px 0 0 ${palette.ink},0 -3px 0 ${palette.ink},0 6px 0 ${palette.ink};
-      z-index:95;pointer-events:none;white-space:nowrap;text-align:center;
+      z-index:95;pointer-events:none;white-space:normal;text-align:center;
+      max-width:92vw;line-height:1.05;width:max-content;
       transition:transform 0.45s cubic-bezier(.34,1.56,.64,1);
     `;
     document.body.appendChild(banner);
@@ -383,23 +391,17 @@ class FinaleScreen implements Screen {
       }
     }
 
-    // drumroll run-up to each bonus reveal (candidates cycle before the answer)
-    for (let i = 0; i < 2; i++) {
-      const at = i === 0 ? BONUS1_T : BONUS2_T;
-      if (!this._drumStarted[i] && t >= at - DRUMROLL_DUR) {
+    for (let i = 0; i < this._bonuses.length && i < BONUS_AT.length; i++) {
+      const at = BONUS_AT[i];
+      const priorLanded = i === 0 || this._bonusRevealed[i - 1];
+      if (priorLanded && !this._drumStarted[i] && t >= at - DRUMROLL_DUR) {
         this._drumStarted[i] = true;
         this._startDrumroll();
       }
-    }
-
-    // bonus star reveals
-    if (!this._bonusRevealed[0] && t >= BONUS1_T) {
-      this._bonusRevealed[0] = true;
-      this._revealBonus(0);
-    }
-    if (this._bonusRevealed[0] && !this._bonusRevealed[1] && t >= BONUS2_T) {
-      this._bonusRevealed[1] = true;
-      this._revealBonus(1);
+      if (priorLanded && !this._bonusRevealed[i] && t >= at) {
+        this._bonusRevealed[i] = true;
+        this._revealBonus(i);
+      }
     }
 
     // winner phase
