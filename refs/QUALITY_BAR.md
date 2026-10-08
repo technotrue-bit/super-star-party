@@ -6,6 +6,13 @@ Party 7 (GameCube, 2005, Hudson Soft). The bar is not "a fun game" — it is
 and side-by-side (our running game vs. remembered MP7 feel) and name the
 single biggest gap when we lose.
 
+## Assets
+
+Procedural meshes, textures, animation, and audio are the default. glTF/GLB
+is allowed: models authored in Blender, and Mixamo animations exported and
+retargeted into glTF/GLB. Commit the exported glTF/GLB only. Raw Mixamo
+source files do not belong in the repo.
+
 ## 1. Colors & look
 - Bright, saturated candy palette on cream/warm neutrals; deep violet-ink
   outlines and shadows give everything a printed-cartoon weight.
@@ -28,7 +35,7 @@ single biggest gap when we lose.
 - Hit-stop, camera shake, and confetti on wins, fails, and big moments.
 - Nothing waits silently: idle animations, crowd ambience, character banter.
 
-## 3. Sounds & music (broadcast-quality, all procedural)
+## 3. Sounds & music (broadcast-quality; procedural synthesis is the default)
 - Music: catchy melodic hooks (party swing, ~120–140 BPM), bass-led, layered
   drums, key-change lift on big moments, crowd cheer layers. Tracks: title,
   board, minigame A/B, happening, grumpus, shop, results, win fanfare.

@@ -14,6 +14,7 @@ import { installDebugAPI, tickFrame, autoplayTick, isAutoplay } from "./core/deb
 import { bus } from "./core/events";
 import { audio, unlock } from "./audio/audioEngine";
 import { fitAppToViewport, onViewportChange, viewportSize } from "./ui/viewport";
+import { installAcceleratedRaycast } from "./render/meshBvh";
 
 export const world = {
   renderer: null as THREE.WebGLRenderer | null,
@@ -23,6 +24,10 @@ export const world = {
 };
 
 function boot(): void {
+  // Mesh raycasts consult a bounds tree when a static mesh has one.
+  // Today's low-poly picks do not, and fall through to Three's raycast.
+  installAcceleratedRaycast();
+
   const container = document.getElementById("app")!;
 
   const renderer = new THREE.WebGLRenderer({
