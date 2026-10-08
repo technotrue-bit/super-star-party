@@ -335,9 +335,9 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
   if (world.scene) world.scene.add(group);
 
   console.log(`[SSP] board built: ${def.id} (${n} spaces)`);
-  // Rigid static props only. Current scenery is under the triangle cutoff,
-  // so this allocates no trees; a dense glTF prop added here would.
-  attachStaticBoundsIn(group);
+  // Rigid static props only. Under the cutoff this builds no tree and does
+  // not load three-mesh-bvh. A dense glTF prop added here would.
+  void attachStaticBoundsIn(group);
 
   // ---- the BoardScene contract -------------------------------------------------------
   const scene: BoardScene = {

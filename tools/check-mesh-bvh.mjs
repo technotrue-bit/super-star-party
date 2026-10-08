@@ -2,7 +2,8 @@
  * check-mesh-bvh.mjs — the bounds-tree gate does not change hits.
  *
  * Loads src/render/meshBvh.ts the way Vite does and checks:
- * - a 12-triangle box (the card / tile pick) gets no tree
+ * - a 12-triangle box (the card / tile pick) gets no tree and does not
+ *   patch Mesh.raycast (three-mesh-bvh stays unloaded)
  * - a dense rigid mesh gets one indirect tree, index buffer untouched
  * - closest hit matches the original Mesh.raycast
  * - skinned and morph meshes are skipped
@@ -30,15 +31,16 @@ function check(label, ok) {
 try {
   const mod = await server.ssrLoadModule("/src/render/meshBvh.ts");
   const original = THREE.Mesh.prototype.raycast;
-
-  mod.installAcceleratedRaycast();
-  check("prototype patched once", THREE.Mesh.prototype.raycast === acceleratedRaycast);
-  mod.installAcceleratedRaycast();
-  check("second install keeps the same patch", THREE.Mesh.prototype.raycast === acceleratedRaycast);
+  check("boot leaves Three's raycast in place", THREE.Mesh.prototype.raycast === original);
 
   const box = new THREE.BoxGeometry(0.7, 0.92, 0.06);
   check("card box is under the cutoff", mod.triangleCount(box) < mod.STATIC_BVH_MIN_TRIANGLES);
-  check("card box builds no tree", mod.attachStaticBoundsTree(box) === false && !box.boundsTree);
+  check(
+    "card box builds no tree and does not patch raycast",
+    (await mod.attachStaticBoundsTree(box)) === false &&
+      !box.boundsTree &&
+      THREE.Mesh.prototype.raycast === original
+  );
 
   const mesh = new THREE.Mesh(box);
   mesh.position.set(0.2, 1.1, -0.4);
@@ -66,9 +68,17 @@ try {
   sphere.position.set(1, 2, 3);
   sphere.rotation.set(0.4, 1.1, 0.2);
   sphere.updateMatrixWorld(true);
-  check("dense mesh gets one tree", mod.attachStaticBoundsTree(dense) === true && !!dense.boundsTree);
+  check(
+    "dense mesh gets one tree and patches raycast",
+    (await mod.attachStaticBoundsTree(dense)) === true &&
+      !!dense.boundsTree &&
+      THREE.Mesh.prototype.raycast === acceleratedRaycast
+  );
   const tree = dense.boundsTree;
-  check("second attach does not rebuild", mod.attachStaticBoundsTree(dense) === false && dense.boundsTree === tree);
+  check(
+    "second attach does not rebuild",
+    (await mod.attachStaticBoundsTree(dense)) === false && dense.boundsTree === tree
+  );
   let indexSame = indexBefore.length === dense.getIndex().array.length;
   for (let i = 0; indexSame && i < indexBefore.length; i++) {
     if (indexBefore[i] !== dense.getIndex().array[i]) indexSame = false;
@@ -107,7 +117,7 @@ try {
   morph.morphTargetInfluences = [0];
   group.add(morph);
   group.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1)));
-  const built = mod.attachStaticBoundsIn(group);
+  const built = await mod.attachStaticBoundsIn(group);
   check("shared dense geometry is built once", built === 1 && !!shared.boundsTree);
   check("skinned mesh is not treed", !skin.geometry.boundsTree);
   check("morph mesh is not treed", !morph.geometry.boundsTree);

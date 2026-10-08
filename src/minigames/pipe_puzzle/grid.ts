@@ -510,7 +510,7 @@ export const starSpriteTexture = makeStarSpriteTexture();
 
 const tileGeom = new THREE.BoxGeometry(TILE_W, TILE_H, TILE_W);
 // Shared pick target. Under the triangle cutoff, so no bounds tree.
-attachStaticBoundsTree(tileGeom);
+void attachStaticBoundsTree(tileGeom);
 const underlayGeom = new THREE.BoxGeometry(TILE_W * 1.08, 0.09, TILE_W * 1.08);
 const sideMat = new THREE.MeshToonMaterial({ color: hex(palette.cream), gradientMap: celGradient });
 const underlayMat = new THREE.MeshBasicMaterial({ color: hex(palette.ink) });
