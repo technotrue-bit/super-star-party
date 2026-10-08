@@ -536,7 +536,7 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
     const itemsP = document.createElement("p");
     itemsP.style.margin = "0";
     itemsP.innerHTML =
-      "Pass or land on the <b>Gumball Shop</b> (🛒) to buy items: <b>Mushroom</b> (roll twice), <b>Warp Whistle</b> (teleport), <b>Zappy</b> (steal 5 coins). In the <b>last 5 turns</b>, Fizzy Barker gives the last-place player one free item at the start of their turn.";
+      "Pass or land on the <b>Gumball Shop</b> (🛒) to buy. The stall sells a Zip Mushroom, a Golden Zip Mushroom, a Sour Mushroom, double dice, a Funhouse Hatch, a dueling glove, the <b>Lucky Card</b> (triple roulette odds and +1 on your next blue), Cogfly, a swap card, Wisp Bell, a genie lamp, Balloon Tug, and a Grumpus Coat, plus the mushroom, Midway Whistle, zappy, and orbs. Tap an item before you roll; the Sour Mushroom is used after a rival rolls. In the <b>last 5 turns</b>, Fizzy Barker gives the last-place player one free bag item at the start of their turn.";
     rules.appendChild(itemsP);
 
     panel.appendChild(rules);

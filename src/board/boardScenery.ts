@@ -492,8 +492,8 @@ const STAMP_SEAL_COLOR: Record<StampKind, string> = {
 };
 
 /**
- * Bobbing seal for a stamp space. The letter (S / G / K) and seal color
- * tell Shy Guy, Goomba, and Koopa apart from the party camera.
+ * Bobbing seal for a stamp space. The letter (F / C / T) and seal color
+ * tell Fizz, Crumb, and Taffy apart from the party camera.
  */
 export function buildStampProp(kit: BoardTextures, kind: StampKind, phase: number): Prop {
   const root = new THREE.Group();

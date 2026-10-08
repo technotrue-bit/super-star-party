@@ -10,6 +10,7 @@ import { ui } from "../ui/kit";
 import { screens } from "./screenManager";
 import { audio } from "../audio/audioEngine";
 import type { Screen } from "./screenManager";
+import { ITEM_DEFS, ITEM_ORDER } from "../game/items";
 
 /* ------------------------------------------------------------------ */
 /*  Scoped stylesheet                                                  */
@@ -245,13 +246,21 @@ const howToImpl: HowToState & Screen = {
       "🍄",
       palette.mint,
       "ITEMS & THE GUMBALL SHOP",
-      "Pass or land on a shop space (🛒) to buy an item from the gumball machine. You choose; computer players decide on their own:"
+      "Pass or land on a shop space (🛒) to buy. You choose on big touch buttons; computers buy one item they can afford and use one before they roll. Sour Mushroom waits until a rival has rolled. Lucky Card triples your pack's roulette odds and pays +1 on your next blue. In the last 5 turns, Fizzy Barker gives last place one free bag item."
     );
     const itemChips = document.createElement("div");
     itemChips.className = "ssp-howto-card__space";
-    itemChips.appendChild(this._chip(palette.candy, "🍄 Mushroom — Roll TWICE (5 coins)"));
-    itemChips.appendChild(this._chip(palette.bubble, "🌀 Warp Whistle — Teleport ahead (8 coins)"));
-    itemChips.appendChild(this._chip(palette.sun, "⚡ Zappy — Steal 5 coins (10 coins)"));
+    const chipColors = [palette.candy, palette.bubble, palette.sun, palette.mint, palette.tentRed];
+    let chipI = 0;
+    for (const key of ITEM_ORDER) {
+      const def = ITEM_DEFS[key];
+      if (!def || def.places) continue;
+      const late = def.lateGame ? ", last 5 turns" : "";
+      itemChips.appendChild(
+        this._chip(chipColors[chipI % chipColors.length], `${def.icon} ${def.name} — ${def.price} coins${late}`),
+      );
+      chipI += 1;
+    }
     itemCard.appendChild(itemChips);
     cards.appendChild(itemCard);
 
@@ -261,7 +270,7 @@ const howToImpl: HowToState & Screen = {
         "🏆",
         palette.candy,
         "BONUS STARS",
-        "Stamp spaces hand out a <b>Shy Guy</b>, <b>Goomba</b>, or <b>Koopa</b> stamp (passing counts). Hold all three and the <b>Carnival Jackpot</b> pays <b>30 coins</b> on the spot — enough to buy a star later that same move. At the end, <b>Mini Star</b> and <b>Coin Star</b> still go to the most minigame wins and the most coins."
+        "Stamp spaces hand out a <b>Fizz</b>, <b>Crumb</b>, or <b>Taffy</b> stamp (passing counts). Hold all three and the <b>Carnival Jackpot</b> pays <b>30 coins</b> on the spot — enough to buy a star later that same move. At the end, <b>Mini Star</b> and <b>Coin Star</b> still go to the most minigame wins and the most coins."
       )
     );
 

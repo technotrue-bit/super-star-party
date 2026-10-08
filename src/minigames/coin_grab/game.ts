@@ -74,7 +74,7 @@ const KEY_STALE = 0.35; // keyboard steer drops after this long without keys
 
 /* --------------------- fixed-step simulation ---------------------- */
 const FIXED_DT = 1 / 60; // simulation step (s)
-const MAX_STEPS_PER_FRAME = 5; // catch-up cap (avoids spiral-of-death)
+const MAX_STEPS_PER_FRAME = 12; // maxDelta 1/20 × speed 4 = 0.2s. Dropping below that lets the 30s screen limit beat the sim.
 
 /* ------------------------------ types ------------------------------- */
 

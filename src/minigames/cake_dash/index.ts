@@ -10,10 +10,11 @@
  *
  * Determinism: the ONLY randomness is ctx.rng (skills + spawn cursors at
  * setup; kind/gap/CPU plan per spawn; confetti velocities at the win).
- * Animation advances purely by dt. The character's own jump anim owns the
- * visible arc; a holder group adds the remaining arc lift so the gameplay
- * apex is 1.3 (visual = anim arc + holder, always in sync since both run
- * on the same dt).
+ * The race itself steps at a fixed 1/60s. A variable frame delta would
+ * skip a short jump window or tunnel a thin hit, so two seeded runs
+ * could crown different winners. Animation and the camera still follow dt.
+ * The character's own jump anim owns the visible arc; a holder group adds
+ * the remaining arc lift so the gameplay apex is 1.3.
  *
  * Finish: first across x=52 wins — announce + crowd cheer + confetti at the
  * cake, 0.9s victory beat, then ctx.finish(ranking). 25s cap ranks by
@@ -39,6 +40,8 @@ import {
 
 const SPEED = 6; // run speed (u/s)
 const TIME_CAP = 25; // rank by distance if nobody finishes
+const FIXED_DT = 1 / 60; // race step (s). Movement per step is 0.1u, under the shortest CPU jump window.
+const MAX_STEPS = 12; // settings.maxDelta (1/20) × critic speed 4 = 0.2s, exactly 12 steps.
 const STUN_TIME = 0.6; // obstacle hit stun (s)
 const SLOW_TIME = 1.0; // confetti puddle slip (s)
 const SLOW_FACTOR = 0.6; // slip speed multiplier
@@ -385,6 +388,8 @@ const S = {
   nextSpawn: [0, 0, 0, 0],
   phase: "idle" as Phase,
   winT: 0,
+  simTime: 0, // leftover race time, carried across frames (never discarded)
+  raceT: 0, // fixed-step clock the time cap reads
   t: 0, // animation clock (dt-driven only — never gameplay decisions)
   ranking: [] as number[],
   announced: false,
@@ -523,6 +528,8 @@ function setup(ctx: MinigameContext): void {
   S.scene = ctx.scene;
   S.phase = "play";
   S.winT = 0;
+  S.simTime = 0;
+  S.raceT = 0;
   S.ranking = [];
   S.announced = false;
   S.shakeT = 0;
@@ -766,51 +773,13 @@ function updateCamera(dt: number): void {
 /*  Update                                                             */
 /* ------------------------------------------------------------------ */
 
-function update(dt: number): void {
+/** One fixed race step. Jump windows and hit tests see the same clock every run. */
+function stepRace(): void {
   const ctx = S.ctx;
-  if (!ctx || !S.course || S.phase === "idle") return;
+  if (!ctx || S.phase !== "play") return;
+  const dt = FIXED_DT;
+  S.raceT += dt;
 
-  S.t += dt; // animation clock (cosmetic only)
-
-  if (!S.announced) {
-    S.announced = true;
-    ctx.announce("TAP / SPACE TO JUMP!", { durationMs: 1600 });
-  }
-
-  if (S.phase === "win") {
-    S.winT -= dt;
-    S.course.updateConfetti(dt);
-    updateBursts(dt);
-    updateCamera(dt);
-    if (S.winT <= 0) {
-      ctx.finish(S.ranking);
-      S.phase = "idle";
-    }
-    return;
-  }
-
-  // Obstacles were pre-generated at setup; just track the leader for
-  // scenery parallax and camera.
-  let leaderX = START_X;
-  for (const r of S.runners) if (r.x > leaderX) leaderX = r.x;
-  S.course.updateScenery(leaderX);
-
-  // Obstacle readability at speed: everything within ~6u ahead of the
-  // leader gets a gentle 1.0..1.08 warning pulse; forks idle-wiggle.
-  for (const o of S.obstacles) {
-    const d = o.x - leaderX;
-    if (d >= 0 && d <= PULSE_WINDOW) {
-      const p = 1 + PULSE_AMOUNT * (0.5 + 0.5 * Math.sin(S.t * 6 + o.x * 1.7 + o.lane * 2.1));
-      o.group.scale.setScalar(p);
-    } else if (o.group.scale.x !== 1) {
-      o.group.scale.setScalar(1);
-    }
-    if (o.kind === "fork") {
-      o.group.rotation.z = Math.sin(S.t * 2.3 + o.x * 0.9) * 0.035;
-    }
-  }
-
-  // Runners: jump state, movement, CPU thoughts, collisions.
   for (const r of S.runners) {
     if (!r.grounded) {
       r.jumpT += dt;
@@ -863,18 +832,67 @@ function update(dt: number): void {
     collide(r);
   }
 
+  const crossed = S.runners.filter((r) => r.x >= FINISH_X);
+  if (crossed.length > 0) enterWin(crossed);
+  else if (S.raceT >= TIME_CAP) finishByDistance(true);
+}
+
+function update(dt: number): void {
+  const ctx = S.ctx;
+  if (!ctx || !S.course || S.phase === "idle") return;
+
+  S.t += dt; // animation clock (cosmetic only)
+
+  if (!S.announced) {
+    S.announced = true;
+    ctx.announce("TAP / SPACE TO JUMP!", { durationMs: 1600 });
+  }
+
+  if (S.phase === "win") {
+    S.winT -= dt;
+    S.course.updateConfetti(dt);
+    updateBursts(dt);
+    updateCamera(dt);
+    if (S.winT <= 0) {
+      ctx.finish(S.ranking);
+      S.phase = "idle";
+    }
+    return;
+  }
+
+  S.simTime += dt;
+  let steps = 0;
+  while (S.simTime >= FIXED_DT && steps < MAX_STEPS && S.phase === "play") {
+    stepRace();
+    S.simTime -= FIXED_DT;
+    steps++;
+  }
+
+  // Obstacles were pre-generated at setup; just track the leader for
+  // scenery parallax and camera.
+  let leaderX = START_X;
+  for (const r of S.runners) if (r.x > leaderX) leaderX = r.x;
+  S.course.updateScenery(leaderX);
+
+  // Obstacle readability at speed: everything within ~6u ahead of the
+  // leader gets a gentle 1.0..1.08 warning pulse; forks idle-wiggle.
+  for (const o of S.obstacles) {
+    const d = o.x - leaderX;
+    if (d >= 0 && d <= PULSE_WINDOW) {
+      const p = 1 + PULSE_AMOUNT * (0.5 + 0.5 * Math.sin(S.t * 6 + o.x * 1.7 + o.lane * 2.1));
+      o.group.scale.setScalar(p);
+    } else if (o.group.scale.x !== 1) {
+      o.group.scale.setScalar(1);
+    }
+    if (o.kind === "fork") {
+      o.group.rotation.z = Math.sin(S.t * 2.3 + o.x * 0.9) * 0.035;
+    }
+  }
+
   S.course.updateConfetti(dt);
   updateBursts(dt);
   updateCamera(dt);
   updateHud(); // badges + rail follow the final positions of this frame
-
-  // Win / cap checks.
-  const crossed = S.runners.filter((r) => r.x >= FINISH_X);
-  if (crossed.length > 0) {
-    enterWin(crossed);
-  } else if (ctx.time >= TIME_CAP) {
-    finishByDistance(true);
-  }
 }
 
 /* ------------------------------------------------------------------ */

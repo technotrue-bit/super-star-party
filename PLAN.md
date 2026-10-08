@@ -29,7 +29,7 @@ stars and a winner celebration.
 - **Board**: ~28 spaces — 12 blue (+3 coins), 6 red (−3), 4 green happenings,
   2 star, 2 shop, 2 grumpus, plus a shortcut path.
 - **Dice**: personality dice per character (standard 1–6, swingy, steady).
-- **Items**: Mushroom (roll twice), Warp Whistle (teleport ahead), Zappy
+- **Items**: Mushroom (roll twice), Midway Whistle (teleport ahead), Zappy
   (steal 5 coins from the nearest rival).
 - **Happenings**: 8+ green-space events (wind ride, coin shower, swap spots,
   star dance, etc.) + Grumpus events (gamble wheel).

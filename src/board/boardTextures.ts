@@ -295,7 +295,7 @@ function stampSealTexture(kind: StampKind): THREE.CanvasTexture {
   ctx.font = "700 28px Fredoka, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  const letter = kind === "shy" ? "S" : kind === "goomba" ? "G" : "K";
+  const letter = kind === "shy" ? "F" : kind === "goomba" ? "C" : "T";
   ctx.fillText(letter, 32, 34);
   return toTexture(c);
 }

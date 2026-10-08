@@ -14,7 +14,7 @@ export type SpaceType =
   | "star"              // disk style only; the balloon lives on match.starBalloonPos
   | "shop"
   | "grumpus"
-  | "stamp"             // collect Shy Guy / Goomba / Koopa stamp
+  | "stamp"             // collect a Fizz, Crumb, or Taffy stamp
   | "minigame_balloon"; // passing/landing pays 5 or 10 and flags a minigame
 
 /** The three carnival stamps. A full set pays the Carnival Jackpot. */
@@ -23,9 +23,9 @@ export type StampKind = "shy" | "goomba" | "koopa";
 export const STAMP_KINDS: readonly StampKind[] = ["shy", "goomba", "koopa"];
 
 export const STAMP_LABEL: Record<StampKind, string> = {
-  shy: "Shy Guy",
-  goomba: "Goomba",
-  koopa: "Koopa",
+  shy: "Fizz",
+  goomba: "Crumb",
+  koopa: "Taffy",
 };
 
 export interface SpaceDef {
@@ -40,6 +40,34 @@ export interface SpaceDef {
   balloonCoins?: 5 | 10;
 }
 
+/**
+ * Pending item effects. Dice faces stay outcome-first; rollBonus and
+ * rollPenalty change the movement total after the face is chosen.
+ */
+export interface PlayerItemFx {
+  rollBonus: number;
+  rollPenalty: number;
+  /** Next dice phase rolls two dice. */
+  doubleDice: boolean;
+  /** Triple this player's pack weight on the next minigame roulette. */
+  lucky: boolean;
+  /** Next blue space pays one extra coin. */
+  luckyBlue: boolean;
+  /** Grumpus Coat: skip this player's upcoming turn. */
+  skipTurn: boolean;
+}
+
+export function blankItemFx(): PlayerItemFx {
+  return {
+    rollBonus: 0,
+    rollPenalty: 0,
+    doubleDice: false,
+    lucky: false,
+    luckyBlue: false,
+    skipTurn: false,
+  };
+}
+
 export interface PlayerState {
   id: number;
   kind: string; // character key
@@ -49,6 +77,8 @@ export interface PlayerState {
   space: number; // board space index
   minigameWins: number;
   items: string[]; // item keys
+  /** Effects waiting on the next roll, blue space, roulette, or turn. */
+  itemFx: PlayerItemFx;
   active: boolean;
   /** Minigame pack chosen by this player (for roulette weighting). */
   pack?: string;
@@ -143,6 +173,7 @@ function makePlayer(id: number, kind: string, name: string): PlayerState {
     space: 0,
     minigameWins: 0,
     items: [],
+    itemFx: blankItemFx(),
     active: true,
     pack: undefined,
     stamps: [],
@@ -183,7 +214,7 @@ export function startMatch(kinds: string[], names: string[], totalTurns = 10, se
   match.lastDice = [];
   match.events = [];
   match.players = kinds.map((k, i) => makePlayer(i, k, names[i] ?? `P${i + 1}`));
-  // Grand Prize Balloon starts one hop after the Shy Stamp Stand, so a
+  // Grand Prize Balloon starts one hop after the Fizz Stamp Stand, so a
   // jackpot collected on the way in can fund a purchase the same move.
   match.starBalloonPos = 4;
   match.minigameTriggeredThisRound = false;
