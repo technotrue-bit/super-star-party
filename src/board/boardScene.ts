@@ -31,6 +31,7 @@ import {
   toonMat,
   type Prop,
 } from "./boardScenery";
+import { attachStaticBoundsIn, releaseStaticBoundsIn } from "../render/meshBvh";
 
 export interface BoardScene {
   /** Root group, added to world.scene by buildBoardScene(). */
@@ -334,6 +335,9 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
   if (world.scene) world.scene.add(group);
 
   console.log(`[SSP] board built: ${def.id} (${n} spaces)`);
+  // Rigid static props only. Under the cutoff this builds no tree and does
+  // not load three-mesh-bvh. A dense glTF prop added here would.
+  void attachStaticBoundsIn(group);
 
   // ---- the BoardScene contract -------------------------------------------------------
   const scene: BoardScene = {
@@ -450,6 +454,7 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      releaseStaticBoundsIn(group);
       world.scene?.remove(group);
       const geoms = new Set<THREE.BufferGeometry>();
       const mats = new Set<THREE.Material>();

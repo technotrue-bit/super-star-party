@@ -10,6 +10,7 @@
 import * as THREE from "three";
 import { palette, hex } from "../../config/palette";
 import { celGradient } from "../../characters/cel";
+import { attachStaticBoundsTree } from "../../render/meshBvh";
 
 /* ------------------------------------------------------------------ */
 /*  Card dimensions / layout constants                                 */
@@ -415,6 +416,9 @@ function makeStarSpriteTexture(): THREE.CanvasTexture {
 export const starSpriteTexture = makeStarSpriteTexture();
 
 const cardGeom = new THREE.BoxGeometry(CARD_W, CARD_H, CARD_T);
+// Shared pick target. A 12-triangle box is under the cutoff (a tree made
+// this pick slower), so this builds nothing and the raycast stays stock.
+void attachStaticBoundsTree(cardGeom);
 
 function toon(mat: THREE.MeshToonMaterialParameters): THREE.MeshToonMaterial {
   return new THREE.MeshToonMaterial({ ...mat, gradientMap: celGradient });

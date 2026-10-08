@@ -1,7 +1,9 @@
 # SUPER STAR PARTY — Master Plan & Piece Decomposition
 
-Mobile party-board game, Three.js, Mario Party 7 quality bar. 100% procedural
-(no external art/audio). Orchestrated by Hermes (the Captain's agent) with
+Mobile party-board game, Three.js, Mario Party 7 quality bar. Procedural art,
+animation, and audio are the default. glTF/GLB is allowed (Blender models, or
+Mixamo animations exported and retargeted). Do not commit raw Mixamo source
+files — only the exported glTF/GLB. Orchestrated by Hermes (the Captain's agent) with
 builder/critic subagent waves. Live progress: `/progress.html`.
 
 ## The game (scope)
