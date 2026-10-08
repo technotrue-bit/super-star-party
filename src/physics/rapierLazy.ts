@@ -112,6 +112,12 @@ export function createBallArena(options: BallArenaOptions): BallArena {
           const v = body.linvel();
           return { x: t.x, z: t.z, vx: v.x, vz: v.z };
         },
+        place(x, z) {
+          const y = body.translation().y;
+          body.setTranslation({ x, y, z }, true);
+          body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+          rec.pre = { x, z, vx: 0, vz: 0 };
+        },
         setEnabled(on) {
           body.setEnabled(on);
         },

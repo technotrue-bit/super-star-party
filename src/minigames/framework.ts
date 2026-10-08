@@ -145,6 +145,36 @@ export function stickGround(
   return { x: wx * scale, z: wz * scale, mag };
 }
 
+/**
+ * Probe-only controls on `window.__SSP_CONTACT__`.
+ * Absent during normal play, so the CPU branch and the rng stream stay as they are.
+ */
+interface ContactProbeHook {
+  freezeCpu?: boolean;
+  /** Taken on the next sim step, then cleared. */
+  placeLocal?: { x: number; z: number } | null;
+}
+
+function contactHook(): ContactProbeHook | null {
+  if (typeof window === "undefined") return null;
+  const hook = (window as unknown as { __SSP_CONTACT__?: ContactProbeHook }).__SSP_CONTACT__;
+  return hook ?? null;
+}
+
+/** True only when a probe has asked CPU seats to hold still. */
+export function contactCpuFrozen(): boolean {
+  return contactHook()?.freezeCpu === true;
+}
+
+/** One-shot park for the local seat. Null when no probe has asked. */
+export function takeContactPlace(): { x: number; z: number } | null {
+  const hook = contactHook();
+  const spot = hook?.placeLocal;
+  if (!spot || typeof spot.x !== "number" || typeof spot.z !== "number") return null;
+  hook.placeLocal = null;
+  return { x: spot.x, z: spot.z };
+}
+
 /** Input entry points — minigames assign handlers in setup(). */
 export interface MinigameInput {
   /** Human pointer, screen coords normalized 0..1, down = press/release. */

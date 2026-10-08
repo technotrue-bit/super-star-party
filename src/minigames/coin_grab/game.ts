@@ -19,7 +19,7 @@
  * limit is reached, so it always ranks itself before the safety net.
  */
 import * as THREE from "three";
-import { isLocalPlayer, localPlayerIndex, stickGround, type Minigame, type MinigameContext } from "../framework";
+import { contactCpuFrozen, isLocalPlayer, localPlayerIndex, stickGround, takeContactPlace, type Minigame, type MinigameContext } from "../framework";
 import { ease } from "../../core/rng";
 import { ui } from "../../ui/kit";
 import { characterColor } from "../../characters/roster";
@@ -934,6 +934,26 @@ function applyMoveAnim(state: RoundState, b: Body): void {
   }
 }
 
+/** Probe park. No-op unless a probe set `__SSP_CONTACT__.placeLocal`. */
+function parkLocalSeat(state: RoundState): void {
+  const spot = takeContactPlace();
+  if (!spot) return;
+  state.human.held = false;
+  state.human.keyDir = null;
+  state.human.stickX = 0;
+  state.human.stickY = 0;
+  for (const b of state.bodies) {
+    if (!isLocalPlayer(state.ctx.players, b.id)) continue;
+    b.x = spot.x;
+    b.z = spot.z;
+    b.vx = 0;
+    b.vz = 0;
+    b.sim?.place(spot.x, spot.z);
+    b.holder.position.x = spot.x;
+    b.holder.position.z = spot.z;
+  }
+}
+
 function pointerDir(state: RoundState, b: Body): { x: number; z: number } | null {
   const cam = state.ctx.camera;
   state.raycaster.setFromCamera(
@@ -1373,7 +1393,9 @@ function stepFixed(state: RoundState, dt: number): void {
   }
 
   /* ---- steer + integrate (id order: 0 human, 1-3 CPU) ---- */
+  parkLocalSeat(state);
   const analog = stickGround(ctx.camera, state.human.stickX, state.human.stickY);
+  const cpuHold = contactCpuFrozen();
   for (const b of state.bodies) {
     b.animHoldT = Math.max(0, b.animHoldT - dt);
 
@@ -1385,6 +1407,9 @@ function stepFixed(state: RoundState, dt: number): void {
         maxSpeed = HUMAN_SPEED * analog.mag;
       } else if (state.human.held) dir = pointerDir(state, b);
       else if (state.human.keyDir) dir = state.human.keyDir;
+    } else if (cpuHold) {
+      b.vx = 0;
+      b.vz = 0;
     } else {
       b.brain.pickIn--;
       if (b.brain.pickIn <= 0) repick(b.brain, state);

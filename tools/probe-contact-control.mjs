@@ -80,31 +80,95 @@ async function localSeat(page, id) {
   return seats.find((seat) => seat.controller === "local") ?? null;
 }
 
+/** Sim seconds the stick stays down. Short enough that a slow frame cannot walk off the ring. */
+const DRAG_SIM_SEC = 0.2;
+/**
+ * Degrees the screen delta may lean off the intended axis.
+ * Coin grab's camera squashes vertical pixels, so a pure ground move
+ * can pick up a little screen-x without leaving the intended direction.
+ */
+const AXIS_TOLERANCE_DEG = 35;
+const MIN_AXIS_PX = 6;
+
+function mirrorTime(gameId) {
+  const mirror = gameId === "bumper_balls" ? window.__BB__ : window.__CG__;
+  return mirror?.t ?? 0;
+}
+
+async function simTime(page, id) {
+  return page.evaluate(mirrorTime, id);
+}
+
+async function releasePointer(page) {
+  await page.mouse.up().catch(() => {});
+}
+
+/**
+ * Park the local seat and hold every CPU still.
+ * The hook is ignored unless a probe sets it, so a normal round never takes this path.
+ */
+async function placeLocal(page, id, x, z) {
+  await releasePointer(page);
+  await page.evaluate(({ x: px, z: pz }) => {
+    const hook = (window.__SSP_CONTACT__ ??= {});
+    hook.freezeCpu = true;
+    hook.placeLocal = { x: px, z: pz };
+  }, { x, z });
+  await page.waitForFunction(
+    ({ gameId, x: px, z: pz }) => {
+      const mirror = gameId === "bumper_balls" ? window.__BB__ : window.__CG__;
+      const seat = mirror?.seats?.find((s) => s.controller === "local" && s.alive !== false);
+      if (!seat) return false;
+      return Math.hypot(seat.body.x - px, seat.body.z - pz) <= 0.3;
+    },
+    { gameId: id, x, z },
+    { timeout: 8000 },
+  );
+}
+
+async function waitSim(page, id, start, simSec) {
+  await page.waitForFunction(
+    ({ gameId, start: t0, need }) => {
+      const mirror = gameId === "bumper_balls" ? window.__BB__ : window.__CG__;
+      return (mirror?.t ?? 0) - t0 >= need;
+    },
+    { gameId: id, start, need: simSec },
+    { timeout: 8000 },
+  );
+}
+
 /**
  * Drag the thumb stick and return the local seat's screen delta.
  * dx/dy are CSS pixels from the stick center (screen +y down).
+ * The hold is sim time, not wall clock, and the pointer moves in one step
+ * so a slow runner cannot keep the stick down while Playwright interpolates.
  */
-async function dragStick(page, id, dx, dy, holdMs) {
+async function dragStick(page, id, dx, dy, simSec) {
   const box = await page.locator(".ssp-stick").boundingBox();
   if (!box) throw new Error("move stick is not on screen");
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
-  const before = await localSeat(page, id);
   await page.mouse.move(cx, cy);
   await page.mouse.down();
-  await page.mouse.move(cx + dx, cy + dy, { steps: 8 });
-  await page.waitForTimeout(holdMs);
+  await page.mouse.move(cx + dx, cy + dy);
+  const before = await localSeat(page, id);
+  const start = await simTime(page, id);
+  try {
+    await waitSim(page, id, start, simSec);
+  } finally {
+    await releasePointer(page);
+  }
   const after = await localSeat(page, id);
-  await page.mouse.up();
-  await page.waitForTimeout(550);
-  if (!before || !after) return null;
+  if (!before?.screen || !after?.screen) return null;
   return {
     dx: after.screen.x - before.screen.x,
     dy: after.screen.y - before.screen.y,
     alive: after.alive,
-    before,
-    after,
   };
+}
+
+function axisAngleDeg(primary, other) {
+  return (Math.atan2(Math.abs(other), Math.abs(primary)) * 180) / Math.PI;
 }
 
 function assertMoved(id, name, moved, expect) {
@@ -114,17 +178,49 @@ function assertMoved(id, name, moved, expect) {
   }
   const primary = expect.axis === "x" ? moved.dx : moved.dy;
   const other = expect.axis === "x" ? moved.dy : moved.dx;
-  console.log(`   ${name}: screen Δ (${moved.dx.toFixed(1)}, ${moved.dy.toFixed(1)}) alive=${moved.alive}`);
+  const angle = expect.axis === "both" ? null : axisAngleDeg(primary, other);
+  console.log(
+    `   ${name}: screen Δ (${moved.dx.toFixed(1)}, ${moved.dy.toFixed(1)}) alive=${moved.alive}` +
+      (angle == null ? "" : ` off-axis=${angle.toFixed(0)}°`),
+  );
   if (expect.axis === "both") {
-    if (!(moved.dx > 8 && moved.dy < -8)) {
+    if (!(moved.dx >= MIN_AXIS_PX && moved.dy <= -MIN_AXIS_PX)) {
       fail(`${id} diagonal: wanted up-right on screen, got Δ (${moved.dx.toFixed(1)}, ${moved.dy.toFixed(1)})`);
     }
     return;
   }
-  const rightWay = expect.sign < 0 ? primary < -10 : primary > 10;
-  const dominant = Math.abs(primary) > Math.abs(other) * 1.2;
-  if (!rightWay || !dominant) {
+  const rightWay = expect.sign < 0 ? primary <= -MIN_AXIS_PX : primary >= MIN_AXIS_PX;
+  if (!rightWay || angle > AXIS_TOLERANCE_DEG) {
     fail(`${id} ${name}: wanted ${expect.label} on screen, got Δ (${moved.dx.toFixed(1)}, ${moved.dy.toFixed(1)})`);
+  }
+}
+
+/**
+ * Model-vs-body gap for seats that are still in.
+ * A knockout fall swings the model after alive flips false, so those seats are skipped.
+ * Bounce's idle fidget lifts the group by about 0.14 for under a second, and the walk
+ * hop does the same while a seat is moving. Measure a frame where every living model
+ * is back on its body. The ground gap is still required on that frame.
+ */
+async function assertAliveGap(page, id, when) {
+  const deadline = Date.now() + 8000;
+  let snap = null;
+  let settled = false;
+  while (Date.now() < deadline) {
+    snap = await readMirror(page, id);
+    const alive = (snap.seats ?? []).filter((seat) => seat.alive);
+    settled = alive.length > 0 && alive.every((seat) => gap(seat) <= 0.05 && xzGap(seat) <= 0.05);
+    if (settled) break;
+    await page.waitForTimeout(40);
+  }
+  for (const seat of snap?.seats ?? []) {
+    if (!seat.alive) continue;
+    const d = gap(seat);
+    const xz = xzGap(seat);
+    console.log(`   seat ${seat.id} alive gap=${d.toFixed(4)} xz=${xz.toFixed(4)} ${when}`);
+    if (!settled && (xz > 0.05 || d > 0.05)) {
+      fail(`${id} seat ${seat.id}: model and body are ${d.toFixed(3)} apart (xz ${xz.toFixed(3)}) ${when}`);
+    }
   }
 }
 
@@ -132,6 +228,10 @@ async function checkArena(page, id) {
   console.log(`\n${id}`);
   await boot(page);
   await openGame(page, id);
+  await page.evaluate(() => {
+    const hook = (window.__SSP_CONTACT__ ??= {});
+    hook.freezeCpu = true;
+  });
   const snap = await readMirror(page, id);
   console.log(`   online=${snap.online} transport=${snap.transport}`);
   if (snap.online !== false) fail(`${id}: match is online`);
@@ -145,6 +245,7 @@ async function checkArena(page, id) {
   }
   if (seats.length !== 4) fail(`${id}: expected 4 seats, got ${seats.length}`);
   for (const seat of seats) {
+    if (!seat.alive) continue;
     const d = gap(seat);
     const xz = xzGap(seat);
     console.log(
@@ -163,21 +264,27 @@ async function checkArena(page, id) {
     { name: "right", dx: 52, dy: 0, axis: "x", sign: 1, label: "right" },
     { name: "diagonal", dx: 40, dy: -40, axis: "both", sign: 1, label: "up-right" },
   ];
-  let stillAlive = true;
   for (const drag of drags) {
-    const moved = await dragStick(page, id, drag.dx, drag.dy, 320);
+    await placeLocal(page, id, 0, 0);
+    const moved = await dragStick(page, id, drag.dx, drag.dy, DRAG_SIM_SEC);
     assertMoved(id, drag.name, moved, drag);
-    if (moved && moved.alive === false) stillAlive = false;
+    await assertAliveGap(page, id, "after " + drag.name);
   }
-  const end = await localSeat(page, id);
-  if (!end?.alive || !stillAlive) fail(`${id}: local seat was knocked out during the stick drags`);
-  else console.log("   local seat still alive");
 
-  const live = await readMirror(page, id);
-  for (const seat of live.seats ?? []) {
-    const xz = xzGap(seat);
-    if (xz > 0.05) fail(`${id} seat ${seat.id}: model drifted ${xz.toFixed(3)} from the body after steering`);
+  // Survival is its own check: a short shove toward the middle must leave Pip in.
+  await placeLocal(page, id, 0, 1.5);
+  const toward = await dragStick(page, id, 0, -52, 0.15);
+  const survived = await localSeat(page, id);
+  console.log(
+    `   toward centre: screen Δ (${toward ? toward.dx.toFixed(1) : "?"}, ${toward ? toward.dy.toFixed(1) : "?"}) alive=${survived?.alive}`,
+  );
+  if (!survived?.alive) fail(`${id}: local seat was knocked out by a short drag toward the centre`);
+  else if (!toward || !(toward.dy < -MIN_AXIS_PX)) {
+    fail(`${id}: drag toward the centre did not move up on screen`);
+  } else {
+    console.log("   local seat still alive");
   }
+  await assertAliveGap(page, id, "after the survival drag");
 }
 
 async function checkPush(page) {
