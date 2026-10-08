@@ -3,9 +3,10 @@
  *
  * MP7-style setup (see RULES_ALIGNMENT.md):
  * - The host chooses which packs stay in the roulette. An off pack never deals.
- * - Each player owns one pack. The human's pick is persisted; CPUs are dealt
- *   from the enabled packs with a seed-derived stream (deterministic, and it
- *   does not consume the match rng, so dice and happenings stay put).
+ * - Each player owns one pack. Each local seat keeps the persisted human
+ *   pick; CPU and remote seats are dealt from the enabled packs with a
+ *   seed-derived stream (deterministic, and it does not consume the match
+ *   rng, so dice and happenings stay put).
  * - Coin rewards scale by the persisted multiplier (×1–×4). The economy
  *   stacks the pack-owner bonus on top of that: one owner doubles the coins,
  *   and two, three, or four owners pay ×2, ×3, or ×4.
@@ -14,6 +15,8 @@
  */
 import { settings } from "../config/settings";
 import { mulberry32 } from "../core/rng";
+import { defaultSeatController, type SeatController } from "../core/seat";
+import { liveRules, type LiveMatchRules } from "./liveRules";
 
 export const PACK_IDS = ["midway", "sideshow", "bigtop"] as const;
 export type MinigamePackId = (typeof PACK_IDS)[number];
@@ -115,8 +118,8 @@ export function packOfMinigame(id: string): MinigamePackId | null {
   return PACK_OF_MINIGAME[id] ?? null;
 }
 
-/** Host's rotation. Always at least one pack, in catalog order. */
-export function getEnabledPacks(): MinigamePackId[] {
+/** Host's rotation from storage. Always at least one pack, in catalog order. */
+function readEnabledFromStorage(): MinigamePackId[] {
   const raw = readKey(LS_MINIGAME_PACKS);
   if (!raw) return [...PACK_IDS];
   try {
@@ -129,6 +132,51 @@ export function getEnabledPacks(): MinigamePackId[] {
   }
 }
 
+function readCoinMultiplierFromStorage(): CoinMultiplier {
+  const raw = readKey(LS_MINIGAME_COIN_MULT);
+  const n = raw === null ? settings.minigameCoinMultiplier : Number(raw);
+  return (COIN_MULTIPLIERS as readonly number[]).includes(n) ? (n as CoinMultiplier) : 1;
+}
+
+function readHumanPackFromStorage(enabled: readonly MinigamePackId[]): MinigamePackId {
+  const saved = normalizePack(readKey(LS_HUMAN_PACK));
+  if (saved && enabled.includes(saved)) return saved;
+  return enabled[0];
+}
+
+/** Empty no-repeat lists, one array per pack, in catalog order. */
+export function blankPlayedByPack(): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const id of PACK_IDS) out[id] = [];
+  return out;
+}
+
+/**
+ * Persisted host rules. Copied onto the match at boot and at match start
+ * so snapshot() sees the rotation the roulette will actually use.
+ */
+export function readPersistedRules(): Pick<LiveMatchRules, "enabledPacks" | "coinMultiplier" | "humanPack"> {
+  const enabledPacks = readEnabledFromStorage();
+  return {
+    enabledPacks,
+    coinMultiplier: readCoinMultiplierFromStorage(),
+    humanPack: readHumanPackFromStorage(enabledPacks),
+  };
+}
+
+/** Copy storage into the live match rules. Played-minigame lists are left alone. */
+export function syncPersistedRules(target: LiveMatchRules): void {
+  const read = readPersistedRules();
+  target.enabledPacks = read.enabledPacks;
+  target.coinMultiplier = read.coinMultiplier;
+  target.humanPack = read.humanPack;
+}
+
+/** Host's rotation. Always at least one pack, in catalog order. */
+export function getEnabledPacks(): MinigamePackId[] {
+  return [...liveRules().enabledPacks];
+}
+
 /**
  * Turn packs on or off. An empty selection is ignored so the roulette
  * always has somewhere to land. If the human's pack was switched off,
@@ -138,16 +186,20 @@ export function setEnabledPacks(ids: readonly string[]): MinigamePackId[] {
   const next = PACK_IDS.filter((id) => ids.some((raw) => normalizePack(raw) === id));
   if (next.length === 0) return getEnabledPacks();
   writeKey(LS_MINIGAME_PACKS, JSON.stringify(next));
-  const human = normalizePack(readKey(LS_HUMAN_PACK));
-  if (!human || !next.includes(human)) writeKey(LS_HUMAN_PACK, next[0]);
+  const rules = liveRules();
+  rules.enabledPacks = [...next];
+  if (!next.includes(rules.humanPack)) {
+    rules.humanPack = next[0];
+    writeKey(LS_HUMAN_PACK, next[0]);
+  }
   return [...next];
 }
 
 export function getHumanPack(): MinigamePackId {
-  const enabled = getEnabledPacks();
-  const saved = normalizePack(readKey(LS_HUMAN_PACK));
-  if (saved && enabled.includes(saved)) return saved;
-  return enabled[0];
+  const rules = liveRules();
+  const saved = normalizePack(rules.humanPack);
+  if (saved && rules.enabledPacks.includes(saved)) return saved;
+  return rules.enabledPacks[0];
 }
 
 /** The human can only own a pack that is in rotation. */
@@ -156,34 +208,43 @@ export function setHumanPack(id: string): MinigamePackId {
   const enabled = getEnabledPacks();
   const applied = pack && enabled.includes(pack) ? pack : enabled[0];
   writeKey(LS_HUMAN_PACK, applied);
+  liveRules().humanPack = applied;
   return applied;
 }
 
 export function getMinigameCoinMultiplier(): CoinMultiplier {
-  const raw = readKey(LS_MINIGAME_COIN_MULT);
-  const n = raw === null ? settings.minigameCoinMultiplier : Number(raw);
-  return (COIN_MULTIPLIERS as readonly number[]).includes(n) ? (n as CoinMultiplier) : 1;
+  return liveRules().coinMultiplier;
 }
 
 export function setMinigameCoinMultiplier(n: number): CoinMultiplier {
   const applied = (COIN_MULTIPLIERS as readonly number[]).includes(n) ? (n as CoinMultiplier) : 1;
   writeKey(LS_MINIGAME_COIN_MULT, String(applied));
+  liveRules().coinMultiplier = applied;
   return applied;
 }
 
 /**
  * Stamp packs onto the roster at match start.
- * Player 0 keeps the persisted human pick. Everyone else draws from the
- * enabled packs via mulberry32(seed), NOT the match rng, so a seeded
- * replay's dice stream does not shift when this feature is on.
+ * Each local seat keeps the persisted human pick. CPU and remote seats
+ * draw from the enabled packs via mulberry32(seed), NOT the match rng,
+ * so a seeded replay's dice stream does not shift. With one local seat
+ * at index 0 the draw order matches the old "player 0, then everyone else".
  */
-export function assignPlayerPacks(seed: number, players: { pack?: string }[]): void {
+export function assignPlayerPacks(
+  seed: number,
+  players: { pack?: string; controller?: SeatController }[],
+): void {
   const enabled = getEnabledPacks();
   if (players.length === 0 || enabled.length === 0) return;
-  players[0].pack = getHumanPack();
+  const human = getHumanPack();
   const side = ((seed ^ 0x5041434b) >>> 0) || 1;
   const roll = mulberry32(side);
-  for (let i = 1; i < players.length; i++) {
+  for (let i = 0; i < players.length; i++) {
+    const controller = players[i].controller ?? defaultSeatController(i);
+    if (controller === "local") {
+      players[i].pack = human;
+      continue;
+    }
     const idx = Math.floor(roll() * enabled.length);
     players[i].pack = enabled[idx];
   }

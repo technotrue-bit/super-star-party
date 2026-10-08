@@ -14,12 +14,13 @@
  */
 import { rng } from "../core/rng";
 import {
+  blankPlayedByPack,
   getEnabledPacks,
   packOfMinigame,
   type MinigamePackId,
-  PACK_IDS,
   normalizePack,
 } from "./packRules";
+import { peekLiveRules } from "./liveRules";
 
 export interface MinigameEntry {
   id: string;
@@ -34,7 +35,13 @@ export interface MinigameEntry {
 }
 
 const REGISTRY: MinigameEntry[] = [];
-const playedByPack = new Map<string, Set<string>>();
+
+function playedList(pack: string): string[] {
+  const book = peekLiveRules()?.playedByPack;
+  if (!book) return [];
+  if (!book[pack]) book[pack] = [];
+  return book[pack];
+}
 
 function resolvePack(entry: MinigameEntry): MinigamePackId {
   const explicit = normalizePack(entry.pack);
@@ -56,8 +63,9 @@ export function registerMinigame(entry: MinigameEntry): void {
 }
 
 export function resetMinigameTracking(): void {
-  playedByPack.clear();
-  for (const p of PACK_IDS) playedByPack.set(p, new Set());
+  const rules = peekLiveRules();
+  if (!rules) return;
+  rules.playedByPack = blankPlayedByPack();
 }
 
 export function minigameCatalog(): { id: string; name: string; pack: string; description: string }[] {
@@ -103,16 +111,14 @@ export function tryPickMinigame(
   // A pack that has dealt every one of its games may deal again.
   for (const pack of enabled) {
     const games = REGISTRY.filter((m) => m.pack === pack);
-    const played = playedByPack.get(pack) ?? new Set<string>();
-    playedByPack.set(pack, played);
-    if (games.length > 0 && games.every((g) => played.has(g.id))) played.clear();
+    const played = playedList(pack);
+    if (games.length > 0 && games.every((g) => played.includes(g.id))) played.length = 0;
   }
 
   const available = REGISTRY.filter((m) => {
     const pack = m.pack ?? "midway";
     if (!enabled.has(pack)) return false;
-    const played = playedByPack.get(pack) ?? new Set<string>();
-    return !played.has(m.id);
+    return !playedList(pack).includes(m.id);
   });
   if (available.length === 0) return null;
 
@@ -143,9 +149,8 @@ export function tryPickMinigame(
 
 function take(chosen: MinigameEntry): MinigameEntry {
   const pack = chosen.pack ?? "midway";
-  const set = playedByPack.get(pack) ?? new Set<string>();
-  set.add(chosen.id);
-  playedByPack.set(pack, set);
+  const played = playedList(pack);
+  if (!played.includes(chosen.id)) played.push(chosen.id);
   return chosen;
 }
 

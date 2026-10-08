@@ -47,6 +47,7 @@
  */
 import type * as THREE from "three";
 import type { Character } from "../characters/characterFactory";
+import type { SeatController } from "../core/seat";
 import { assertMinigameHowTos, registerMinigame, type MinigameEntry } from "./registry";
 import { MINIGAME_MODULES } from "./index";
 
@@ -64,10 +65,44 @@ export type MinigameGenre =
 
 /** Static per-player info the framework hands to every minigame. */
 export interface MinigamePlayerInfo {
-  id: number; // playerId (0 = human)
+  id: number;
   kind: string; // character key
   name: string;
   color: string;
+  /** Who drives this seat. Local input belongs to "local" seats only. */
+  controller: SeatController;
+}
+
+/** True when this seat is played on this device. */
+export function isLocalPlayer(
+  players: readonly Pick<MinigamePlayerInfo, "id" | "controller">[],
+  playerId: number,
+): boolean {
+  for (const player of players) {
+    if (player.id === playerId) return player.controller === "local";
+  }
+  return playerId === 0;
+}
+
+/** Index of the first local seat. Solo matches keep that at 0. */
+export function localPlayerIndex(players: readonly Pick<MinigamePlayerInfo, "controller">[]): number {
+  const index = players.findIndex((player) => player.controller === "local");
+  return index >= 0 ? index : 0;
+}
+
+/**
+ * Seats a minigame should drive itself. Autoplay adds the local seats
+ * and keeps roster order, so the rng stream does not move.
+ */
+export function automatedSeatIds(
+  players: readonly Pick<MinigamePlayerInfo, "id" | "controller">[],
+  automateLocal: boolean,
+): number[] {
+  const ids: number[] = [];
+  for (const player of players) {
+    if (automateLocal || player.controller !== "local") ids.push(player.id);
+  }
+  return ids;
 }
 
 /** Input entry points — minigames assign handlers in setup(). */
@@ -79,7 +114,7 @@ export interface MinigameInput {
 }
 
 export interface MinigameContext {
-  /** The 4 players, id = playerId (index 0 = human). */
+  /** The 4 players. A local seat is this device's human; the rest are CPU or remote. */
   players: MinigamePlayerInfo[];
   /** The 4 live avatars, by player id — the framework spawned them. */
   characters: Character[];

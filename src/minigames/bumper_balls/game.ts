@@ -21,7 +21,7 @@
  * (~18.7s), making the squeeze the story of the round.
  */
 import * as THREE from "three";
-import type { Minigame, MinigameContext } from "../framework";
+import { isLocalPlayer, type Minigame, type MinigameContext } from "../framework";
 import { ui } from "../../ui/kit";
 import { characterColor } from "../../characters/roster";
 import { buildArena, ARENA_R, type ArenaHandle } from "./arena";
@@ -382,7 +382,7 @@ function stepFixed(state: RoundState, dt: number): void {
 
     let dir: { x: number; z: number } | null = null;
     let maxSpeed = HUMAN_SPEED;
-    if (b.id === 0) {
+    if (isLocalPlayer(ctx.players, b.id)) {
       if (state.human.held) dir = pointerDir(state, b);
       else if (state.human.keyDir) dir = state.human.keyDir;
     } else {

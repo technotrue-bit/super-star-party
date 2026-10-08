@@ -35,7 +35,7 @@
  * orchestrator's index.ts wiring (if any) is deduped by id.
  */
 import * as THREE from "three";
-import type { Minigame, MinigameContext } from "../framework";
+import { automatedSeatIds, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
@@ -539,8 +539,9 @@ function humanStrike(st: DrumSoloState): void {
   const t = ctx.time;
   let best: Ring | null = null;
   let bestDiff = Infinity;
+  const lane = localPlayerIndex(st.ctx.players);
   for (const ring of st.rings) {
-    if (ring.lane !== 0) continue;
+    if (ring.lane !== lane) continue;
     if (ring.state !== "incoming" && ring.state !== "wait") continue;
     const diff = Math.abs(t - ring.arriveT);
     if (diff <= OK_WINDOW && diff < bestDiff) {
@@ -635,7 +636,7 @@ const drumSolo: Minigame = {
     }
 
     /* ---- CPU rolls (fixed order: beats asc, lanes asc) ---- */
-    const cpuLanes = st.humanCpu ? [0, 1, 2, 3] : [1, 2, 3];
+    const cpuLanes = automatedSeatIds(ctx.players, st.humanCpu);
     for (const ring of st.rings) {
       if (!cpuLanes.includes(ring.lane)) continue;
       const r = ctx.rng();

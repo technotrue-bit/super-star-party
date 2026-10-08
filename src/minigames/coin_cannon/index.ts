@@ -14,7 +14,7 @@
  * frame-rate independent.
  */
 import * as THREE from "three";
-import type { Minigame, MinigameContext } from "../framework";
+import { isLocalPlayer, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
 import { celGradient } from "../../characters/cel";
@@ -700,8 +700,9 @@ function simulateStep(st: State, step: number): void {
 
   // ---- CPU thinking (players 1..3): decisions at fixed simTime intervals ----
   const tAThink = arriveTime(MUZZLE_Y, VY);
-  for (let pid = 1; pid < 4; pid++) {
+  for (let pid = 0; pid < st.players.length; pid++) {
     const P = st.players[pid];
+    if (isLocalPlayer(st.ctx.players, P.id)) continue;
     if (P.ammo <= 0) continue;
     if (st.simTime >= P.cpuNextThink && !P.charging) {
       P.cpuNextThink += CPU_THINK_INTERVAL;
@@ -862,11 +863,12 @@ const coinCannon: Minigame = {
     ctx.announce("COIN CANNON!", { durationMs: 1500, sound: null });
 
     // ---- input: tap anywhere (or confirm) to fire ----
+    const human = st.players[localPlayerIndex(ctx.players)] ?? st.players[0];
     ctx.input.pointer = (x: number, y: number, down: boolean): void => {
       void x;
       void y;
       if (!down) return;
-      const P = st.players[0];
+      const P = human;
       if (st.finished || P.ammo <= 0 || P.charging) return;
       P.ammo -= 1;
       P.ammoPips[P.ammo].visible = false;
@@ -877,7 +879,7 @@ const coinCannon: Minigame = {
     };
     ctx.input.key = (action: string): void => {
       if (action !== "confirm") return;
-      const P = st.players[0];
+      const P = human;
       if (st.finished || P.ammo <= 0 || P.charging) return;
       P.ammo -= 1;
       P.ammoPips[P.ammo].visible = false;
@@ -913,7 +915,7 @@ const coinCannon: Minigame = {
 
     // ---- charge-up -> fire (dt-based, no RNG — responsive for human) ----
     for (const P of st.players) {
-      if (P.id !== 0 || !P.charging) continue;
+      if (!isLocalPlayer(st.ctx.players, P.id) || !P.charging) continue;
       P.chargeT -= dt;
       const frac = 1 - Math.max(0, P.chargeT) / CHARGE;
       P.glow.visible = true;
@@ -921,7 +923,7 @@ const coinCannon: Minigame = {
       if (P.chargeT <= 0) {
         P.charging = false;
         P.glow.visible = false;
-        if (P.id === 0) {
+        if (isLocalPlayer(st.ctx.players, P.id)) {
           fireCoin(st, P.id);
         } else {
           // CPU re-checks the window at fire time

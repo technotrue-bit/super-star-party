@@ -4,8 +4,11 @@
  * data model every system reads/writes. Keep fields stable.
  */
 import { rng } from "./rng";
+import { defaultSeatController, type SeatController } from "./seat";
 import { resetMinigameTracking } from "../minigames/registry";
-import { assignPlayerPacks } from "../minigames/packRules";
+import { assignPlayerPacks, blankPlayedByPack, readPersistedRules, syncPersistedRules } from "../minigames/packRules";
+import { bindLiveRules } from "../minigames/liveRules";
+import type { CoinMultiplier, MinigamePackId } from "../minigames/packRules";
 
 export type SpaceType =
   | "blue"
@@ -82,6 +85,12 @@ export interface PlayerState {
   active: boolean;
   /** Minigame pack chosen by this player (for roulette weighting). */
   pack?: string;
+  /**
+   * Who supplies this seat's choices. Solo matches use one "local"
+   * seat and the rest "cpu". "remote" waits for a session that does
+   * not exist yet.
+   */
+  controller: SeatController;
   /**
    * Stamps currently held toward the next Carnival Jackpot.
    * Cleared when the three-stamp set pays out.
@@ -161,9 +170,20 @@ export interface MatchState {
    * stays the seed-and-turn stream.
    */
   minigameDice: { turn: number; ids: string[] } | null;
+  /** Packs the host left in the roulette. Copied from storage at match start. */
+  enabledPacks: MinigamePackId[];
+  /** Host coin scale, ×1–×4. Payouts read this, and snapshot() includes it. */
+  coinMultiplier: CoinMultiplier;
+  /** Pack owned by each local seat. */
+  humanPack: MinigamePackId;
+  /**
+   * Minigame ids already dealt from each pack, in deal order.
+   * A pack opens again once every game in it has been dealt.
+   */
+  playedByPack: Record<string, string[]>;
 }
 
-function makePlayer(id: number, kind: string, name: string): PlayerState {
+function makePlayer(id: number, kind: string, name: string, controller: SeatController): PlayerState {
   return {
     id,
     kind,
@@ -176,10 +196,20 @@ function makePlayer(id: number, kind: string, name: string): PlayerState {
     itemFx: blankItemFx(),
     active: true,
     pack: undefined,
+    controller,
     stamps: [],
     stampsCollected: 0,
   };
 }
+
+/** Who drives this seat. Missing data keeps the solo default (seat 0 local). */
+export function playerController(playerId: number): SeatController {
+  const controller = match.players[playerId]?.controller;
+  if (controller === "local" || controller === "cpu" || controller === "remote") return controller;
+  return defaultSeatController(playerId);
+}
+
+const persistedRules = readPersistedRules();
 
 /** The one live match. Screens read it; the turn-loop mutates it. */
 export const match: MatchState = {
@@ -199,10 +229,26 @@ export const match: MatchState = {
   lastMinigameId: null,
   lastMinigamePack: null,
   minigameDice: null,
+  enabledPacks: persistedRules.enabledPacks,
+  coinMultiplier: persistedRules.coinMultiplier,
+  humanPack: persistedRules.humanPack,
+  playedByPack: blankPlayedByPack(),
 };
 
-/** Start a fresh match. Kinds = character keys, e.g. ["pip","bounce",...]. */
-export function startMatch(kinds: string[], names: string[], totalTurns = 10, seed?: number): void {
+bindLiveRules(match);
+
+/**
+ * Start a fresh match. Kinds = character keys, e.g. ["pip","bounce",...].
+ * `controllers` assigns each seat. Omit it for one local human at seat 0
+ * and CPUs in the rest, which is the current solo screen.
+ */
+export function startMatch(
+  kinds: string[],
+  names: string[],
+  totalTurns = 10,
+  seed?: number,
+  controllers?: SeatController[],
+): void {
   // A provided seed is preserved (critic replays, debug API); otherwise a
   // fresh random seed starts a new match.
   const used = seed === undefined ? rng.reset(Math.floor(Math.random() * 2 ** 31)) : rng.reset(seed);
@@ -213,7 +259,9 @@ export function startMatch(kinds: string[], names: string[], totalTurns = 10, se
   match.currentPlayer = 0;
   match.lastDice = [];
   match.events = [];
-  match.players = kinds.map((k, i) => makePlayer(i, k, names[i] ?? `P${i + 1}`));
+  match.players = kinds.map((k, i) =>
+    makePlayer(i, k, names[i] ?? `P${i + 1}`, controllers?.[i] ?? defaultSeatController(i)),
+  );
   // Grand Prize Balloon starts one hop after the Fizz Stamp Stand, so a
   // jackpot collected on the way in can fund a purchase the same move.
   match.starBalloonPos = 4;
@@ -226,7 +274,9 @@ export function startMatch(kinds: string[], names: string[], totalTurns = 10, se
   match.lastMinigamePack = null;
   match.minigameDice = null;
 
-  // Human keeps their saved pack; CPUs draw from packs the host left on.
+  // Pull the host's saved rotation onto this match, then deal packs.
+  // Local seats keep the human pack; CPU and remote seats draw.
+  syncPersistedRules(match);
   assignPlayerPacks(match.seed, match.players);
 
   // Reset minigame pack tracking for a fresh match (MP7 no-repeat within pack)

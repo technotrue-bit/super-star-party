@@ -16,7 +16,7 @@
  * to this integrator) when the WASM chunk has loaded. Telemetry: window.__POW__.
  */
 import * as THREE from "three";
-import type { Minigame, MinigameContext } from "../framework";
+import { isLocalPlayer, type Minigame, type MinigameContext } from "../framework";
 import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
@@ -478,7 +478,7 @@ function stepFixed(st: PushOfWarState): void {
 /** Push the solo produces this step (0 = no push). Human taps are worth more. */
 function soloMashPush(st: PushOfWarState, p: PlayerState): number {
   if (st.humanCpu) return st.prng() < CPU_SOLO_MASH_P ? SOLO_PUSH_PER_TAP : 0;
-  if (p.id === 0) {
+  if (isLocalPlayer(st.ctx.players, p.id)) {
     if (st.humanTaps > 0) { st.humanTaps--; return HUMAN_TAP_PUSH; }
     return 0;
   }
@@ -487,7 +487,7 @@ function soloMashPush(st: PushOfWarState, p: PlayerState): number {
 
 /** Push one trio member produces this step (0 = no push). Human taps are worth more. */
 function trioMashPush(st: PushOfWarState, p: PlayerState): number {
-  if (p.id === 0 && !st.humanCpu) {
+  if (isLocalPlayer(st.ctx.players, p.id) && !st.humanCpu) {
     if (st.humanTaps > 0) { st.humanTaps--; return HUMAN_TAP_PUSH; }
     return 0;
   }

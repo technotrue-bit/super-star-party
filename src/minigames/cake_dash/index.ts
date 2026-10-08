@@ -21,7 +21,7 @@
  * distance (tie → smaller playerId).
  */
 import * as THREE from "three";
-import type { Minigame, MinigameContext } from "../framework";
+import { isLocalPlayer, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import type { Character } from "../../characters/characterFactory";
 import { palette, hex } from "../../config/palette";
 import { Course, FINISH_X, START_X, LANE_Z } from "./course";
@@ -569,25 +569,31 @@ function setup(ctx: MinigameContext): void {
     return runner;
   });
 
-  // CPU skill (players 1..3) + per-lane spawn cursors — fixed rng order.
-  for (let i = 1; i < 4; i++) S.runners[i].skill = 0.84 + ctx.rng() * 0.16;
+  // CPU skill for every non-local seat, in roster order, then spawn cursors.
+  // Skipping the local seat first keeps the same rng draws as seat 0 local.
+  for (let i = 0; i < S.runners.length; i++) {
+    if (isLocalPlayer(ctx.players, S.runners[i].id)) continue;
+    S.runners[i].skill = 0.84 + ctx.rng() * 0.16;
+  }
   for (let l = 0; l < 4; l++) S.nextSpawn[l] = 11 + ctx.rng() * 5;
   pregenerateObstacles();
 
   // Camera frames the start line during the countdown. Initialise the look
   // target to the human's lane (z=2.55) so the human is centred from the
   // first frame — no lerp from z=0 needed.
+  const localRunner = S.runners.find((r) => isLocalPlayer(ctx.players, r.id)) ?? S.runners[0];
   const cam = ctx.camera;
   cam.position.set(START_X + 7.2, 4.4, 9.6);
-  S.camLook.set(START_X + 0.3, 1.5, LANE_Z[3]);
+  S.camLook.set(START_X + 0.3, 1.5, LANE_Z[localRunner?.lane ?? 3]);
   cam.lookAt(S.camLook);
 
-  // Human input: any press jumps (buffered 0.15s if pressed mid-air).
+  // Local seat: any press jumps (buffered 0.15s if pressed mid-air).
+  const localIndex = localPlayerIndex(ctx.players);
   ctx.input.pointer = (x, y, down) => {
-    if (down) pressJump(0);
+    if (down) pressJump(localIndex);
   };
   ctx.input.key = (action) => {
-    if (action === "up" || action === "confirm") pressJump(0);
+    if (action === "up" || action === "confirm") pressJump(localIndex);
   };
 
   // Build the position indicator AFTER runners exist (badge above each head).
@@ -722,9 +728,8 @@ function updateCamera(dt: number): void {
   const ctx = S.ctx;
   if (!ctx) return;
   const cam = ctx.camera;
-  // Follow the HUMAN runner (id 0) — the camera must keep the human's
-  // avatar on screen at all times, never race blind when trailing.
-  const human = S.runners[0];
+  // Follow the local seat. Solo play still puts that runner first.
+  const human = S.runners.find((r) => isLocalPlayer(ctx.players, r.id)) ?? S.runners[0];
   if (!human) return;
   const humanX = human.x;
 
@@ -828,7 +833,7 @@ function stepRace(): void {
     r.char.group.position.x = r.x;
     r.holder.position.y = holderLift(r);
 
-    if (r.id > 0) cpuThink(r);
+    if (S.ctx && !isLocalPlayer(S.ctx.players, r.id)) cpuThink(r);
     collide(r);
   }
 

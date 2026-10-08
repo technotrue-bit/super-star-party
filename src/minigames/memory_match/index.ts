@@ -26,7 +26,7 @@
  * deduped by id and by the loader guard below.
  */
 import * as THREE from "three";
-import type { Minigame, MinigameContext } from "../framework";
+import { automatedSeatIds, isLocalPlayer, type Minigame, type MinigameContext } from "../framework";
 import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
@@ -295,7 +295,7 @@ const memoryMatch: Minigame = {
     ctx.input.pointer = (x: number, y: number, down: boolean): void => {
       if (!down) return;
       if (st.phase !== "awaitFirst" && st.phase !== "awaitSecond") return;
-      if (st.turn !== 0) return;
+      if (!isLocalPlayer(st.ctx.players, st.turn)) return;
       if (!st.introDone) return;
       const hit = cardUnderPointer(st, x, y);
       if (hit !== null && hit.state === "down") {
@@ -305,7 +305,7 @@ const memoryMatch: Minigame = {
 
     ctx.input.key = (action: string): void => {
       if (st.phase !== "awaitFirst" && st.phase !== "awaitSecond") return;
-      if (st.turn !== 0) return;
+      if (!isLocalPlayer(st.ctx.players, st.turn)) return;
       if (!st.introDone) return;
       if (action === "left") st.cursorC = (st.cursorC + GRID_COLS - 1) % GRID_COLS;
       else if (action === "right") st.cursorC = (st.cursorC + 1) % GRID_COLS;
@@ -608,7 +608,7 @@ const memoryMatch: Minigame = {
 /* ------------------------------------------------------------------ */
 
 function isCpuTurn(st: MemoryMatchState): boolean {
-  return st.turn !== 0 || st.humanCpu;
+  return !isLocalPlayer(st.ctx.players, st.turn) || st.humanCpu;
 }
 
 function faceDownCards(st: MemoryMatchState): Card[] {
@@ -625,7 +625,7 @@ function startTurn(st: MemoryMatchState): void {
   st.activeRing.position.x = ch ? ch.group.position.x : (st.turn - 1.5) * 2.0;
   (st.activeRing.material as THREE.MeshToonMaterial).color.setHex(playerColorHex(ctx, st.turn));
   ctx.characters[st.turn]?.anim.jump();
-  if (st.turn === 0 && !st.humanCpu) {
+  if (isLocalPlayer(ctx.players, st.turn) && !st.humanCpu) {
     placeCursorRing(st);
   } else {
     st.cursorRing.visible = false;
@@ -686,7 +686,7 @@ function flipDown(st: MemoryMatchState, index: number): void {
 
 /** Every CPU rolls p=0.78 memory on a reveal (including its own flips). */
 function rememberReveal(st: MemoryMatchState, index: number): void {
-  const cpus = st.humanCpu ? [0, 1, 2, 3] : [1, 2, 3];
+  const cpus = automatedSeatIds(st.ctx.players, st.humanCpu);
   for (const p of cpus) {
     if (!st.known[p].has(index) && st.ctx.rng() < CPU_MEMORY_P) {
       st.known[p].add(index);

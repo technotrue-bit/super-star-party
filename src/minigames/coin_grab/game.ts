@@ -19,7 +19,7 @@
  * limit is reached, so it always ranks itself before the safety net.
  */
 import * as THREE from "three";
-import type { Minigame, MinigameContext } from "../framework";
+import { isLocalPlayer, type Minigame, type MinigameContext } from "../framework";
 import { ease } from "../../core/rng";
 import { ui } from "../../ui/kit";
 import { characterColor } from "../../characters/roster";
@@ -1325,7 +1325,7 @@ function stepFixed(state: RoundState, dt: number): void {
 
     let dir: { x: number; z: number } | null = null;
     let maxSpeed = HUMAN_SPEED;
-    if (b.id === 0) {
+    if (isLocalPlayer(ctx.players, b.id)) {
       if (state.human.held) dir = pointerDir(state, b);
       else if (state.human.keyDir) dir = state.human.keyDir;
     } else {

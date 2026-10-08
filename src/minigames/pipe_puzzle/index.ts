@@ -23,7 +23,7 @@
  * moment it loads — no edits to src/minigames/index.ts required.
  */
 import * as THREE from "three";
-import type { Minigame, MinigameContext } from "../framework";
+import { isLocalPlayer, type Minigame, type MinigameContext } from "../framework";
 import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
@@ -275,7 +275,7 @@ const pipePuzzle: Minigame = {
     /* ---- input handlers ---- */
     ctx.input.pointer = (x: number, y: number, down: boolean): void => {
       if (!down) return;
-      if (st.phase !== "turn" || st.turnStep !== "start" || st.turn !== 0 || st.humanCpu) return;
+      if (st.phase !== "turn" || st.turnStep !== "start" || !isLocalPlayer(st.ctx.players, st.turn) || st.humanCpu) return;
       const hit = tileUnderPointer(st, x, y);
       if (hit && !isDecor(st.defs[hit.r][hit.c])) {
         doRotate(st, hit.r, hit.c, 1);
@@ -283,7 +283,7 @@ const pipePuzzle: Minigame = {
     };
 
     ctx.input.key = (action: string): void => {
-      if (st.phase !== "turn" || st.turnStep !== "start" || st.turn !== 0 || st.humanCpu) return;
+      if (st.phase !== "turn" || st.turnStep !== "start" || !isLocalPlayer(st.ctx.players, st.turn) || st.humanCpu) return;
       if (action === "left") st.cursorC = (st.cursorC + GRID_COLS - 1) % GRID_COLS;
       else if (action === "right") st.cursorC = (st.cursorC + 1) % GRID_COLS;
       else if (action === "up") st.cursorR = (st.cursorR + GRID_ROWS - 1) % GRID_ROWS;
@@ -361,7 +361,7 @@ const pipePuzzle: Minigame = {
     }
 
     // cursor tile idle bob on the human's turn
-    if (st.phase === "turn" && st.turnStep === "start" && st.turn === 0 && !st.humanCpu) {
+    if (st.phase === "turn" && st.turnStep === "start" && isLocalPlayer(st.ctx.players, st.turn) && !st.humanCpu) {
       const tm = st.meshes[st.cursorR][st.cursorC];
       if (tm) tm.mesh.position.y = TILE_CENTER_Y + 0.05 * Math.sin(st.time * 7);
     }
@@ -476,7 +476,7 @@ function startTurn(st: PipeState): void {
   st.turnStep = "start";
   st.phaseT = 0;
   st.afkT = 0;
-  if (st.turn === 0 && !st.humanCpu) {
+  if (isLocalPlayer(ctx.players, st.turn) && !st.humanCpu) {
     st.cursorR = 2;
     st.cursorC = 2;
     placeCursorRing(st);
@@ -491,7 +491,7 @@ function placeCursorRing(st: PipeState): void {
 }
 
 function isCpuTurn(st: PipeState): boolean {
-  return st.turn !== 0 || st.humanCpu;
+  return !isLocalPlayer(st.ctx.players, st.turn) || st.humanCpu;
 }
 
 function tickTurn(st: PipeState, dt: number): void {

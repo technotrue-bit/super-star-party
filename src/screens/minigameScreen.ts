@@ -172,6 +172,7 @@ function buildVsSplash(self: MgScreenState, mgName: string, themeColor: string):
   injectVsSplashStyles();
   const players = self._ctx?.players ?? match.players.map((p) => ({
     id: p.id, kind: p.kind, name: p.name, color: characterColor(p.kind),
+    controller: p.controller,
   }));
   const seedFn = mulberry32(0x5eed ^ ((match.seed * 2654435761) >>> 0));
 
@@ -261,9 +262,11 @@ function buildVsSplash(self: MgScreenState, mgName: string, themeColor: string):
     popIn(pipEls[i], delay, 0.2, 0, 18);
   }
 
-  // Highlight ring on the human pip (player 0)
-  if (pipEls[0]) {
-    setTimeout(() => pipEls[0].classList.add("ssp-vs-player--highlight"), VS_STAGGER * 2500);
+  // Highlight ring on the local seat's pip.
+  const localPip = players.findIndex((p) => p?.controller === "local");
+  const pip = pipEls[localPip >= 0 ? localPip : 0];
+  if (pip) {
+    setTimeout(() => pip.classList.add("ssp-vs-player--highlight"), VS_STAGGER * 2500);
   }
 
   // Store cleanup handle
@@ -744,6 +747,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
             kind: p.kind,
             name: p.name,
             color: characterColor(p.kind),
+            controller: p.controller,
           })),
           characters: self._chars ?? [],
           scene: world.scene!,
@@ -769,7 +773,8 @@ const minigameScreenImpl: MgScreenState & Screen = {
 
         mg.setup(ctx);
 
-        const themeColor = characterColor(match.players[0]?.kind ?? "pip");
+        const local = match.players.find((p) => p.controller === "local") ?? match.players[0];
+        const themeColor = characterColor(local?.kind ?? "pip");
         self._vsT = 0;
         self._vsSkip = false;
         buildVsSplash(self, mg.name, themeColor);
