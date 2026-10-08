@@ -15,7 +15,8 @@ export const settings = {
   starBundleMax: 5, // most stars one visit to the balloon can ask for
   blueCoin: 3, // coins gained on blue space
   redCoin: 3, // coins lost on red space
-  minigameWinCoins: 10, // minigame winner payout
+  minigameWinCoins: 10, // base minigame winner payout, before pack bonus and the host multiplier
+  minigameCoinMultiplier: 1, // host scale (1, 2, 3, or 4); live value is persisted in localStorage
   stampJackpot: 30, // coins when a player completes the 3-stamp set
   squeezeCoins: 2, // Carnival Squeeze: coins for each player on a shared landing space
   pityLastTurns: 5, // Fizzy Barker visits last place while this many turns remain

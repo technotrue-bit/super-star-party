@@ -22,6 +22,7 @@ import { createCharacter, type Character } from "../characters/characterFactory"
 import { buildBoardScene, type BoardScene } from "../board/boardScene";
 import { fizzyFairground } from "../board/boardData";
 import { getMusicGain, setMusicGain, getSfxGain, setSfxGain } from "../ui/sound";
+import { mountPackPicker } from "../ui/packPicker";
 import type { Screen } from "./screenManager";
 
 /* ------------------------------------------------------------------ */
@@ -134,7 +135,9 @@ function injectTitleStyles(): void {
       border-radius: 28px;
       box-shadow: 0 8px 0 ${palette.ink};
       padding: clamp(20px, 4vw, 32px) clamp(24px, 5vw, 36px);
-      width: min(360px, 90vw);
+      width: min(400px, 92vw);
+      max-height: min(86vh, 720px);
+      overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: clamp(14px, 3vw, 20px);
@@ -526,6 +529,8 @@ const titleImpl: TitleState & Screen = {
       speedRow.appendChild(b);
     }
     panel.appendChild(speedRow);
+
+    panel.appendChild(mountPackPicker().el);
 
     // Close button
     const closeBtn = ui.button({

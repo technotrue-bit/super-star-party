@@ -33,7 +33,7 @@ import type { Character } from "../characters/characterFactory";
 import type { HudHandle } from "../ui/hud";
 import type { ButtonHandle } from "../ui/button";
 import type { PopupHandle } from "../ui/popup";
-import { addCoins, tryBuyStars, sensibleStarCount, movePrizeBalloon, computeBonusStars, finalRanking, grantStamp, popMinigameBalloon, carnivalSqueeze, type BonusStarKind } from "./economy";
+import { addCoins, tryBuyStars, sensibleStarCount, movePrizeBalloon, computeBonusStars, finalRanking, grantStamp, popMinigameBalloon, carnivalSqueeze, minigameCoinAward, type BonusStarKind } from "./economy";
 import { resolveGreen, resolveGrumpus, consumeFreeStar, consumeDoubleBlue } from "./happenings";
 import { ITEM_DEFS, canUseItem, useItem, turnsLeft, grantFizzyPity, decideShopPurchase, type ShopDecision } from "./items";
 import { openShop } from "../screens/shopScreen";
@@ -1287,11 +1287,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     match.phase = "minigame";
     rollButton.setVisible(false);
     refreshHud();
-    // Pass player packs (MP7). For now default everyone to "midway" so existing minigames still work.
-    // Real pack choice will come from character select / startMatch.
-    const defaultPacks: Record<number, string> = {};
-    match.players.forEach((_, i) => { defaultPacks[i] = "midway"; });
-    const mg = tryPickMinigame(defaultPacks);
+    // Roulette uses the packs players actually own. Disabled packs never deal
+    // (the registry reads the host's saved rotation).
+    const playerPacks: Record<number, string> = {};
+    for (const p of match.players) {
+      if (p.pack) playerPacks[p.id] = p.pack;
+    }
+    const mg = tryPickMinigame(playerPacks);
     if (!mg) {
       // No minigames registered yet — toast and carry on.
       ui.toast("Minigames arrive in Wave 3!", { durationMs: 2200 });
@@ -1311,9 +1313,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     console.log('[turnLoop] minigameRound triggered for turn', match.turn, 'mg=', mg.id);
     match.turn += 1;
     resumeFromMinigame = true;
+    match.lastMinigameId = mg.id;
+    match.lastMinigamePack = mg.pack ?? "midway";
     setPendingMinigame(mg);
 
-    const desc = (mg as any).description || getMinigameDescription(mg.id, mg.name);
+    const coins = minigameCoinAward(mg.pack);
+    const baseDesc = (mg as { description?: string }).description || getMinigameDescription(mg.id, mg.name);
+    const desc = `${baseDesc} Winner takes ${coins} coins.`;
     showMinigamePreview(mg.name, desc).then((started) => {
       console.log('[turnLoop] pre-screen resolved started=', started);
       if (!started) {

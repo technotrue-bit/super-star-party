@@ -6,7 +6,7 @@
 - 4 players, CPUs fill — **Already**: HUMAN=0, 3 CPUs. Good.
 - Turn count 10–50 step 5 — **Already supported** via startMatch(..., totalTurns). UI hook needed in title or select.
 - Everyone starts with 10 coins — **Already**.
-- Each player picks a minigame pack — **TODO**: Add pack picker in characterSelect or new pre-match screen. Packs weight the roulette.
+- Each player picks a minigame pack — **Done**: Character select, title settings, and the pause settings share one picker (`ssp.minigamePacks`, `ssp.humanPack`, `ssp.minigameCoinMultiplier`). The host toggles which packs stay in the roulette (at least one). The human's pack is saved; CPUs draw from the packs left on, with a seed-derived stream so dice rolls do not shift. Those picks weight the roulette.
 - Goal: most Stars, coins tiebreaker — **Already** in ranking().
 
 ### How a Turn Works
@@ -25,12 +25,12 @@
 - Stamp space: land/pass → collect stamp. All 3 = 30 coins jackpot (can fund star same move). — **Done**: Shy Stamp Stand (space 3, before the first star), Goomba Gallery (11), Koopa Kiosk (27). Held stamps live on `player.stamps`; completing the set pays `settings.stampJackpot` (30), clears the held set, and leaves the coins in hand so a star landed later in the same move can be bought. Lifetime count is `player.stampsCollected`.
 
 ### Minigames
-- Roulette from chosen packs.
-- No repeat from a pack until rest used.
-- Chosen player's pack owner gets double coins.
-- Multiple same pack selected → payout ×N (×2/3/4).
-- 2-on-2: partner of chosen also gets double.
-- Lucky Card triples roulette odds. — **Current**: basic registry. **TODO**: Full pack system + multipliers.
+- Roulette from chosen packs. — **Done**: only packs the host left on can deal. Player packs weight the slice.
+- No repeat from a pack until rest used. — **Done**: a pack reshuffles only after every game in it has been dealt.
+- Chosen player's pack owner gets double coins. — **Done**: one owner of the dealt pack pays ×2.
+- Multiple same pack selected → payout ×N (×2/3/4). — **Done**: two, three, or four owners pay ×2, ×3, or ×4. A host multiplier (×1–×4, persisted) scales that pot again. The results card shows the real coin delta.
+- 2-on-2: partner of chosen also gets double. — **TODO**: the results ceremony pays and displays only the winner, and that screen is intentionally untouched here.
+- Lucky Card triples roulette odds. — **Partial**: the roulette still accepts a lucky-player list and triples that pack's weight. No Lucky Card item exists yet, so nothing puts a player on that list.
 
 ### Items (full list to implement)
 - Dash Mushroom: +3 roll
@@ -57,10 +57,11 @@
 
 1. **Prize Balloon instead of Star Balloon** — **Done**: The Grand Prize Balloon floats around the midway (`match.starBalloonPos`). Buying a star pops it and reinflates it at a new spot, with a procedural gasp/pop and confetti.
 
-2. **Carnival Packs** (3 original packs, each 8–10 minigames themed):
-   - **Midway Mayhem** — physical, chaotic, strength/speed (bumpers, cannon, push of war).
-   - **Sideshow Shenanigans** — skill, timing, memory (drum solo, pipe puzzle, memory match).
-   - **Big Top Bash** — party, silly, group chaos (cake dash, balloon pop, coin grab).
+2. **Carnival Packs** (3 original packs; the nine minigames we have are split across them, not 8–10 each yet):
+   - **Midway Mayhem** — physical, chaotic, strength/speed (bumpers, cannon, push of war). — **In rotation.**
+   - **Sideshow Shenanigans** — skill, timing, memory (drum solo, pipe puzzle, memory match). — **In rotation.**
+   - **Big Top Bash** — party, silly, group chaos (cake dash, balloon pop, coin grab). — **In rotation.**
+   The host can switch any pack off before the match. A switched-off pack never deals.
 
 3. **Stamp Star** (third bonus star) — awarded to the player who collected the most (or all three) Shy Guy, Goomba, Koopa stamps. Collecting all three on one turn triggers the 30-coin "Carnival Jackpot" fanfare immediately. — **Partial**: jackpot fanfare (banner + crowd cheer) fires when the held set completes, including mid-move. `finalRanking` counts a Stamp Star from `stampsCollected` when anyone collected at least one. The finale ceremony still announces only Mini Star and Coin Star (**TODO**).
 
@@ -79,9 +80,9 @@ These keep the MP7 structure 100% faithful while making the game feel like *our*
 - BoardData space rebalance + stamp/minigame_balloon types — **Done** (this slice): 3 stamp kinds on the walked lap, 5-coin and 10-coin balloons on the walked lap. The Funhouse Cut still skips spaces 20–25, so those indices are not used for stamps or balloons.
 - Economy: bundle buy + move balloon — **Done** (10 coins, up to 5, discard the unpaid remainder, balloon moves). Stamp jackpot — **Done** (30 coins, held stamps clear, coins available the same move, including a purchase on that same hop).
 - Items: expand defs + effects for new MP7 items
-- Turn loop: Carnival Squeeze, shop-on-pass, and Fizzy Barker pity — **Done**. Pack weighting — **TODO**. Passing logic for stamps, minigame balloons, the Grand Prize Balloon, shops, and the minigame flag — **Done**.
-- Minigame registry: pack support + multipliers
-- Character select or new "Pack Select" moment
+- Turn loop: Carnival Squeeze, shop-on-pass, and Fizzy Barker pity — **Done**. Pack weighting — **Done** (roulette reads each player's pack; disabled packs never deal). Passing logic for stamps, minigame balloons, the Grand Prize Balloon, shops, and the minigame flag — **Done**.
+- Minigame registry: pack support + multipliers — **Done** (rotation filter, no-repeat, owner ×N, host ×1–×4).
+- Character select or new "Pack Select" moment — **Done** (same picker on character select, title settings, and pause settings).
 - Bonus stars: stamp kind is in the ranking math when `stampsCollected > 0`. Finale reveal of Stamp Star — **TODO**.
 - Shop: richer stock matching the list
 - Our touches wired into events/happenings — Balloon Breeze (green space moves the Grand Prize Balloon) **Done**. Fizzy Barker pity **Done** (start of the last-place player's turn in the last 5 turns).

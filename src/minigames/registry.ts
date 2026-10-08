@@ -1,23 +1,31 @@
 /**
- * SUPER STAR PARTY — minigame registry with MP7 pack + roulette rules + our carnival touches.
+ * SUPER STAR PARTY — minigame registry with MP7 pack + roulette rules.
  *
- * Packs (our own):
- * - "midway": physical/chaos (bumper_balls, push_of_war, coin_cannon, cake_dash)
- * - "sideshow": skill/timing (drum_solo, pipe_puzzle, memory_match, balloon_pop)
- * - "bigtap": party/group (coin_grab + future silly ones)
+ * Packs (carnival touches — see packRules.ts):
+ * - "midway": Midway Mayhem (bumper balls, coin cannon, push of war)
+ * - "sideshow": Sideshow Shenanigans (drum solo, pipe puzzle, memory match)
+ * - "bigtop": Big Top Bash (cake dash, balloon pop, coin grab)
  *
- * MP7 rules:
- * - Weighted by who picked the pack
- * - No repeat inside pack until exhausted
- * - Multipliers for multiple players on same pack
- * - Lucky Card triples
+ * Roulette:
+ * - Only packs the host left in rotation can deal.
+ * - Weighted by which players own the pack. Lucky Card (when passed) triples.
+ * - No repeat inside a pack until every game in that pack has been used,
+ *   then that pack's list opens up again.
  */
+import { rng } from "../core/rng";
+import {
+  getEnabledPacks,
+  packOfMinigame,
+  type MinigamePackId,
+  PACK_IDS,
+  normalizePack,
+} from "./packRules";
 
 export interface MinigameEntry {
   id: string;
   name: string;
-  /** Pack for weighting and no-repeat-within-pack. */
-  pack?: "midway" | "sideshow" | "bigtap";
+  /** Pack for weighting, filtering, and no-repeat-within-pack. */
+  pack?: MinigamePackId;
   /** Short description for the pre-screen. */
   description?: string;
 }
@@ -25,36 +33,66 @@ export interface MinigameEntry {
 const REGISTRY: MinigameEntry[] = [];
 const playedByPack = new Map<string, Set<string>>();
 
-import { rng } from "../core/rng";
+function resolvePack(entry: MinigameEntry): MinigamePackId {
+  const explicit = normalizePack(entry.pack);
+  if (entry.pack && explicit) return explicit;
+  return packOfMinigame(entry.id) ?? "midway";
+}
 
-/** Register (called by index.ts). */
+/** Register (called by index.ts and the framework). Re-register updates the pack. */
 export function registerMinigame(entry: MinigameEntry): void {
-  const withPack = { ...entry, pack: entry.pack ?? "midway" as const };
-  if (!REGISTRY.find((e) => e.id === withPack.id)) REGISTRY.push(withPack);
+  const pack = resolvePack(entry);
+  const existing = REGISTRY.find((e) => e.id === entry.id);
+  if (existing) {
+    if (entry.name) existing.name = entry.name;
+    existing.pack = pack;
+    if (entry.description) existing.description = entry.description;
+    return;
+  }
+  REGISTRY.push({ ...entry, pack });
 }
 
 export function resetMinigameTracking(): void {
   playedByPack.clear();
-  for (const p of ["midway", "sideshow", "bigtap"] as const) {
-    playedByPack.set(p, new Set());
-  }
+  for (const p of PACK_IDS) playedByPack.set(p, new Set());
 }
 
-// Initialize on load so first tryPickMinigame never crashes on undefined set
+export function minigameCatalog(): { id: string; name: string; pack: string }[] {
+  return REGISTRY.map((e) => ({
+    id: e.id,
+    name: e.name,
+    pack: e.pack ?? "midway",
+  }));
+}
+
+// Initialize on load so the first pick never crashes on an undefined set.
 resetMinigameTracking();
 
 /**
- * MP7 roulette with pack weighting.
- * playerPacks: which pack each player chose.
+ * MP7 roulette with pack weighting and the host's rotation filter.
+ * playerPacks: which pack each player owns.
  * luckyPlayers: those with Lucky Card active this round (triple weight).
+ * Games whose pack is switched off are never returned.
  */
 export function tryPickMinigame(
   playerPacks: Record<number, string> = {},
-  luckyPlayers: number[] = []
+  luckyPlayers: number[] = [],
 ): MinigameEntry | null {
+  const enabled = new Set<MinigamePackId>(getEnabledPacks());
+  if (enabled.size === 0) return null;
+
+  // A pack that has dealt every one of its games may deal again.
+  for (const pack of enabled) {
+    const games = REGISTRY.filter((m) => m.pack === pack);
+    const played = playedByPack.get(pack) ?? new Set<string>();
+    playedByPack.set(pack, played);
+    if (games.length > 0 && games.every((g) => played.has(g.id))) played.clear();
+  }
+
   const available = REGISTRY.filter((m) => {
     const pack = m.pack ?? "midway";
-    const played = playedByPack.get(pack) ?? new Set();
+    if (!enabled.has(pack)) return false;
+    const played = playedByPack.get(pack) ?? new Set<string>();
     return !played.has(m.id);
   });
   if (available.length === 0) return null;
@@ -64,34 +102,31 @@ export function tryPickMinigame(
   for (const m of available) {
     const pack = m.pack ?? "midway";
     let w = 1;
-    // Players who picked this pack get bigger slice
-    Object.keys(playerPacks).forEach((pidStr) => {
+    for (const pidStr of Object.keys(playerPacks)) {
       const pid = Number(pidStr);
       if (playerPacks[pid] === pack) w += 2;
-    });
-    // Lucky Card
+    }
     for (const pid of luckyPlayers) {
       if (playerPacks[pid] === pack) w *= 3;
     }
-    weights.push(Math.max(1, w));
-    total += Math.max(1, w);
+    const weight = Math.max(1, w);
+    weights.push(weight);
+    total += weight;
   }
 
   let roll = rng.next() * total;
   for (let i = 0; i < available.length; i++) {
     roll -= weights[i];
-    if (roll <= 0) {
-      const chosen = available[i];
-      const pack = chosen.pack ?? "midway";
-      const set = playedByPack.get(pack)!;
-      set.add(chosen.id);
-      return chosen;
-    }
+    if (roll <= 0) return take(available[i]);
   }
-  const chosen = available[0];
+  return take(available[0]);
+}
+
+function take(chosen: MinigameEntry): MinigameEntry {
   const pack = chosen.pack ?? "midway";
-  const set = playedByPack.get(pack)!;
+  const set = playedByPack.get(pack) ?? new Set<string>();
   set.add(chosen.id);
+  playedByPack.set(pack, set);
   return chosen;
 }
 

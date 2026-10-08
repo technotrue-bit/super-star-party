@@ -18,6 +18,7 @@ import { createCharacter, type Character } from "../characters/characterFactory"
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
 import { onViewportChange, viewportSize } from "../ui/viewport";
+import { mountPackPicker } from "../ui/packPicker";
 
 const SLOT_COUNT = roster.length;
 
@@ -48,6 +49,7 @@ function injectSelectStyles(): void {
     .ssp-sel-card--sel:hover{transform:translateY(-13px) scale(1.1)}
     .ssp-sel-card--sel:active{transform:translateY(-7px) scale(1.04);box-shadow:4px 5px 0 ${palette.ink},0 0 22px var(--sel-color)}
     .ssp-sel-ctrls{display:flex;gap:14px;align-items:center;width:100%;max-width:520px;justify-content:center;pointer-events:auto;margin-bottom:8px}
+    .ssp-sel-packs{width:100%;max-width:520px;pointer-events:auto;margin-bottom:8px;max-height:38vh;overflow-y:auto}
     @media(max-width:520px){.ssp-sel-cards{gap:8px}.ssp-sel-card{padding:14px 6px;min-height:72px}.ssp-sel-card__name{font-size:15px}.ssp-sel-card__tag{font-size:12px}.ssp-sel-title{font-size:22px}}
   `;
   document.head.appendChild(style);
@@ -317,6 +319,13 @@ const characterSelectImpl: SelectScreenState & Screen = {
     });
     stage.appendChild(cardRow);
 
+    // Host picks the rotation, their pack, and the coin multiplier
+    // before the match. Same keys as title / pause settings.
+    const packSlot = document.createElement("div");
+    packSlot.className = "ssp-sel-packs";
+    packSlot.appendChild(mountPackPicker({ card: true }).el);
+    stage.appendChild(packSlot);
+
     // Controls row: arrows + big START! button.
     const ctrlRow = document.createElement("div");
     ctrlRow.className = "ssp-sel-ctrls";
@@ -360,6 +369,8 @@ const characterSelectImpl: SelectScreenState & Screen = {
         e.preventDefault();
         this._doSelect((this._selected ?? 0) + 1);
       } else if (e.key === "Enter" || e.key === " ") {
+        const target = e.target as HTMLElement | null;
+        if (target?.closest?.("[data-ssp-pack-picker]")) return;
         e.preventDefault();
         this._confirmStart();
       } else if (e.key === "Escape") {

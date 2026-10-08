@@ -10,6 +10,16 @@ import { screens } from "../screens/screenManager";
 import { world } from "../main";
 import { openShop } from "../screens/shopScreen";
 import { resetWipeRotation } from "../ui/transitions";
+import { minigameCoinAward, minigamePayout, playerCoins } from "../game/economy";
+import { minigameCatalog, minigameCount, resetMinigameTracking, tryPickMinigame } from "../minigames/registry";
+import {
+  getEnabledPacks,
+  getHumanPack,
+  getMinigameCoinMultiplier,
+  setEnabledPacks as saveEnabledPacks,
+  setHumanPack as saveHumanPack,
+  setMinigameCoinMultiplier as saveCoinMultiplier,
+} from "../minigames/packRules";
 
 export interface SSPDebug {
   state(): Record<string, unknown>;
@@ -32,6 +42,22 @@ export interface SSPDebug {
    * (no auto-resolve) so it can be inspected.
    */
   openShop(playerId?: number): Promise<{ bought: string[] }>;
+  /** Host rotation. Returns the packs actually left on (at least one). */
+  setMinigamePacks(ids: string[]): string[];
+  /** Persisted coin scale, 1–4. */
+  setMinigameCoinMultiplier(n: number): number;
+  /** Human's pack. Must be one of the packs in rotation. */
+  setHumanPack(id: string): string;
+  /**
+   * Deal `n` minigames with the live roulette (enabled packs, player packs,
+   * match rng). Resets the no-repeat lists first. Debug only — it consumes
+   * the match rng.
+   */
+  sampleMinigames(n?: number): { id: string; pack: string }[];
+  /** Coins a win would pay for `pack` (or the last dealt minigame). */
+  minigameRewardPreview(pack?: string): number;
+  /** Pay the winner the scaled minigame pot. Returns the coins actually added. */
+  grantMinigamePayout(winnerId?: number, pack?: string): number;
 }
 
 let autoplayOn = false;
@@ -87,6 +113,13 @@ export function installDebugAPI(): void {
         },
         rngSeed: rng.seed,
         autoplay: autoplayOn,
+        minigameRules: {
+          enabledPacks: getEnabledPacks(),
+          coinMultiplier: getMinigameCoinMultiplier(),
+          humanPack: getHumanPack(),
+          count: minigameCount(),
+          catalog: minigameCatalog(),
+        },
         fps: Math.round(fps),
         frameMs: Math.round(frameMs),
       };
@@ -144,6 +177,39 @@ export function installDebugAPI(): void {
     resetWipeRotation() {
       // Re-export so headless probes can reset the deterministic wipe cycle.
       resetWipeRotation();
+    },
+    setMinigamePacks(ids: string[]) {
+      return saveEnabledPacks(ids);
+    },
+    setMinigameCoinMultiplier(n: number) {
+      return saveCoinMultiplier(n);
+    },
+    setHumanPack(id: string) {
+      return saveHumanPack(id);
+    },
+    sampleMinigames(n = 12) {
+      resetMinigameTracking();
+      const packs: Record<number, string> = {};
+      for (const p of match.players) {
+        if (p.pack) packs[p.id] = p.pack;
+      }
+      const out: { id: string; pack: string }[] = [];
+      const count = Math.max(0, Math.floor(n));
+      for (let i = 0; i < count; i++) {
+        const mg = tryPickMinigame(packs);
+        if (!mg) break;
+        out.push({ id: mg.id, pack: mg.pack ?? "midway" });
+      }
+      return out;
+    },
+    minigameRewardPreview(pack?: string) {
+      return minigameCoinAward(pack);
+    },
+    grantMinigamePayout(winnerId = 0, pack?: string) {
+      if (pack) match.lastMinigamePack = pack;
+      const before = playerCoins(winnerId);
+      minigamePayout(winnerId);
+      return playerCoins(winnerId) - before;
     },
   };
   (window as unknown as { __SSP__: SSPDebug }).__SSP__ = api;

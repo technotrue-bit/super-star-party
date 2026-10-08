@@ -287,12 +287,18 @@ const boardScreenImpl: BoardScreenState & Screen = {
     const params = new URLSearchParams(window.location.search);
     if (match.players.length === 0) {
       const seed = Number(params.get("seed") ?? "1");
+      const used = Number.isFinite(seed) ? seed : 1;
+      // Pass the URL seed in so pack assignment and the match share it.
+      // The reset below restarts the dice stream at that seed (pack picks
+      // use their own stream and do not consume this one).
       startMatch(
         roster.map((c) => c.key),
-        roster.map((c) => c.name)
+        roster.map((c) => c.name),
+        10,
+        used,
       );
-      rng.reset(seed); // startMatch reseeds internally — re-seed for the URL
-      match.seed = seed;
+      rng.reset(used);
+      match.seed = used;
     }
     if (params.get("autoplay") === "1") {
       setAutoplay(true);

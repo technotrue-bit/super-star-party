@@ -5,6 +5,7 @@
  */
 import { rng } from "./rng";
 import { resetMinigameTracking } from "../minigames/registry";
+import { assignPlayerPacks } from "../minigames/packRules";
 
 export type SpaceType =
   | "blue"
@@ -120,6 +121,9 @@ export interface MatchState {
   traps: SpaceTrap[];
   /** Set when a Duel Orb fires. Cleared when the 1v1 minigame returns. */
   duel?: DuelState;
+  /** Minigame the roulette just dealt. The coin payout reads its pack. */
+  lastMinigameId: string | null;
+  lastMinigamePack: string | null;
 }
 
 function makePlayer(id: number, kind: string, name: string): PlayerState {
@@ -154,6 +158,8 @@ export const match: MatchState = {
   turnOrder: [0, 1, 2, 3],
   orderRolls: [],
   traps: [],
+  lastMinigameId: null,
+  lastMinigamePack: null,
 };
 
 /** Start a fresh match. Kinds = character keys, e.g. ["pip","bounce",...]. */
@@ -177,6 +183,11 @@ export function startMatch(kinds: string[], names: string[], totalTurns = 10, se
   match.orderRolls = [];
   match.traps = [];
   match.duel = undefined;
+  match.lastMinigameId = null;
+  match.lastMinigamePack = null;
+
+  // Human keeps their saved pack; CPUs draw from packs the host left on.
+  assignPlayerPacks(match.seed, match.players);
 
   // Reset minigame pack tracking for a fresh match (MP7 no-repeat within pack)
   resetMinigameTracking();
