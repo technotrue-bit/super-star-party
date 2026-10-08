@@ -1,18 +1,22 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 
 /**
  * three-mesh-bvh reads Line, Points, and BatchedMesh at init. A Mesh never
  * uses those paths. Redirect the package's `three` import so those classes
  * stay out of the shared Three module (that module lives in the boot bundle).
+ *
+ * fileURLToPath, not URL.pathname: on Windows pathname is `/C:/...`, which
+ * the loader cannot open.
  */
 function bvhThreeFacade(): Plugin {
-  const facade = new URL("./src/render/bvhThreeFacade.ts", import.meta.url).pathname;
+  const facade = fileURLToPath(new URL("./src/render/bvhThreeFacade.ts", import.meta.url));
   return {
     name: "bvh-three-facade",
     enforce: "pre",
     resolveId(source, importer) {
       if (source !== "three" || !importer) return null;
-      if (!importer.includes("/three-mesh-bvh/")) return null;
+      if (!importer.replaceAll("\\", "/").includes("/three-mesh-bvh/")) return null;
       return facade;
     },
   };

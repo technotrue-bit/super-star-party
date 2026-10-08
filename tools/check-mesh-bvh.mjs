@@ -8,18 +8,24 @@
  * - closest hit matches the original Mesh.raycast
  * - skinned and morph meshes are skipped
  * - release drops the tree
+ * - the Vite alias for three-mesh-bvh's `three` import points at a real file
+ *   (URL.pathname is `/C:/...` on Windows and fails this)
  *
  * Run: node tools/check-mesh-bvh.mjs
  */
+import fs from "node:fs";
+import path from "node:path";
 import { createServer } from "vite";
 import * as THREE from "three";
-import { acceleratedRaycast } from "three-mesh-bvh";
 
 const server = await createServer({
   server: { middlewareMode: true },
   appType: "custom",
   logLevel: "error",
   optimizeDeps: { noDiscovery: true },
+  // Bundle the package so its `three` import hits the facade alias.
+  // Externalizing it would skip the path that 404s on Windows.
+  ssr: { noExternal: ["three-mesh-bvh"] },
 });
 
 let failed = 0;
@@ -29,6 +35,11 @@ function check(label, ok) {
 }
 
 try {
+  const importer = path.resolve("node_modules/three-mesh-bvh/src/utils/ExtensionUtilities.js");
+  const resolved = await server.pluginContainer.resolveId("three", importer);
+  const facadeId = resolved && typeof resolved.id === "string" ? resolved.id : "";
+  check("bvh facade alias points at a real file", facadeId.length > 0 && fs.existsSync(facadeId));
+
   const mod = await server.ssrLoadModule("/src/render/meshBvh.ts");
   const original = THREE.Mesh.prototype.raycast;
   check("boot leaves Three's raycast in place", THREE.Mesh.prototype.raycast === original);
@@ -72,7 +83,7 @@ try {
     "dense mesh gets one tree and patches raycast",
     (await mod.attachStaticBoundsTree(dense)) === true &&
       !!dense.boundsTree &&
-      THREE.Mesh.prototype.raycast === acceleratedRaycast
+      THREE.Mesh.prototype.raycast !== original
   );
   const tree = dense.boundsTree;
   check(

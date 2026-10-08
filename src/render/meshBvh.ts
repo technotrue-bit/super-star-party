@@ -42,8 +42,15 @@ function isSkinned(obj: Object3D): boolean {
 type BvhApi = typeof import("./meshBvhLazy");
 
 let loading: Promise<BvhApi> | null = null;
+let warnedLoadFailure = false;
 const inflight = new WeakMap<BufferGeometry, Promise<boolean>>();
 const generation = new WeakMap<BufferGeometry, number>();
+
+function warnLoadFailure(err: unknown): void {
+  if (warnedLoadFailure) return;
+  warnedLoadFailure = true;
+  console.warn("[SSP] three-mesh-bvh failed to load; dense meshes keep Three's raycast.", err);
+}
 
 function loadBvh(): Promise<BvhApi> {
   if (!loading) {
@@ -88,7 +95,10 @@ export function attachStaticBoundsTree(geometry: BufferGeometry): Promise<boolea
       api.buildIndirectTree(geometry);
       return true;
     })
-    .catch(() => false)
+    .catch((err: unknown) => {
+      warnLoadFailure(err);
+      return false;
+    })
     .finally(() => {
       if (inflight.get(geometry) === job) inflight.delete(geometry);
     });
