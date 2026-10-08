@@ -21,7 +21,7 @@
  * (~18.7s), making the squeeze the story of the round.
  */
 import * as THREE from "three";
-import { contactCpuFrozen, isLocalPlayer, localPlayerIndex, stickGround, takeContactPlace, type Minigame, type MinigameContext } from "../framework";
+import { contactCpuFrozen, DASH_BURST, DASH_COOLDOWN, DASH_SPEED, dashDirection, isLocalPlayer, isPracticeBeat, localPlayerIndex, stickGround, takeContactPlace, type Minigame, type MinigameContext } from "../framework";
 import { ui } from "../../ui/kit";
 import { characterColor } from "../../characters/roster";
 import { buildArena, ARENA_R, type ArenaHandle } from "./arena";
@@ -74,6 +74,9 @@ interface Body {
   fallT: number;
   moving: boolean; // last move-anim state (walk vs idle)
   animHoldT: number; // squash/jump hold — don't re-apply move anim during it
+  dashT: number; // seconds left in a human dash burst
+  dashX: number;
+  dashZ: number;
   brain: CpuBrain;
   sim?: XzBody;
 }
@@ -87,7 +90,8 @@ interface HumanInput {
   keyIdleT: number;
   stickX: number; // analog stick, screen +x right, +y down
   stickY: number;
-  lastJumpT: number;
+  dashArmed: boolean;
+  dashCd: number;
 }
 
 interface RoundState {
@@ -147,7 +151,12 @@ export const bumperBallsMinigame: Minigame = {
   id: "bumper_balls",
   name: "Bumper Balls",
   genre: "survival",
-  howTo: "Hold and drag to steer and bump everyone else out of the ring. Last one still in wins.",
+  howTo: "Hold and drag to steer. Tap DASH to burst into the other players and knock them out of the ring. Last one still in wins.",
+  goal: "Knock everyone out of the ring",
+  tap: "DASH",
+  steer: true,
+  tapCooldown: DASH_COOLDOWN,
+  tapSfx: "jump",
 
   setup(ctx: MinigameContext): void {
     /* ---- camera: party top-down on the stage ---- */
@@ -177,7 +186,7 @@ export const bumperBallsMinigame: Minigame = {
       hudEls: null,
       hudTimerEl: null,
       hudTimerAt: 0,
-      human: { held: false, tx: 0.5, ty: 0.5, idleT: 0, keyDir: null, keyIdleT: 0, stickX: 0, stickY: 0, lastJumpT: -10 },
+      human: { held: false, tx: 0.5, ty: 0.5, idleT: 0, keyDir: null, keyIdleT: 0, stickX: 0, stickY: 0, dashArmed: false, dashCd: 0 },
       camBase,
       lookX: 0,
       lookZ: portrait ? 0.5 : 1.0,
@@ -226,6 +235,9 @@ export const bumperBallsMinigame: Minigame = {
         fallT: 0,
         moving: false,
         animHoldT: 0,
+        dashT: 0,
+        dashX: 0,
+        dashZ: 1,
         brain: freshBrain(),
       });
     });
@@ -297,12 +309,7 @@ export const bumperBallsMinigame: Minigame = {
       else if (action === "confirm") {
         const seat = localPlayerIndex(ctx.players);
         const b = state.bodies[seat];
-        if (b && b.alive && isLocalPlayer(ctx.players, b.id) && ctx.time - state.human.lastJumpT > 0.5) {
-          state.human.lastJumpT = ctx.time;
-          b.animHoldT = Math.max(b.animHoldT, 0.45);
-          ctx.characters[b.id]?.anim.jump();
-          ctx.playSfx("jump", { volume: 0.45, pitch: 1.15 });
-        }
+        if (b && b.alive && isLocalPlayer(ctx.players, b.id) && !isPracticeBeat()) state.human.dashArmed = true;
         return;
       } else {
         return;
@@ -318,7 +325,7 @@ export const bumperBallsMinigame: Minigame = {
 
   update(dt: number): void {
     const state = round;
-    if (!state) return;
+    if (!state || isPracticeBeat()) return;
     const ctx = state.ctx;
 
     /* ---- fixed-step accumulator: run whole 1/60s steps only ---- */
@@ -388,6 +395,7 @@ function stepFixed(state: RoundState, dt: number): void {
 
   /* ---- steer + integrate (id order: 0 human, 1-3 CPU) ---- */
   parkLocalSeat(state);
+  state.human.dashCd = Math.max(0, state.human.dashCd - dt);
   const analog = stickGround(ctx.camera, state.human.stickX, state.human.stickY);
   const cpuHold = contactCpuFrozen();
   for (const b of state.bodies) {
@@ -397,6 +405,21 @@ function stepFixed(state: RoundState, dt: number): void {
     let dir: { x: number; z: number } | null = null;
     let maxSpeed = HUMAN_SPEED;
     if (isLocalPlayer(ctx.players, b.id)) {
+      if (state.human.dashArmed) {
+        state.human.dashArmed = false;
+        if (b.alive && state.human.dashCd <= 0) {
+          const yaw = ctx.characters[b.id]?.group.rotation.y ?? 0;
+          const aim = state.human.held ? pointerDir(state, b) : null;
+          const burst = dashDirection(ctx.camera, state.human.stickX, state.human.stickY, yaw, state.human.keyDir, aim);
+          b.dashT = DASH_BURST;
+          b.dashX = burst.x;
+          b.dashZ = burst.z;
+          state.human.dashCd = DASH_COOLDOWN;
+          b.animHoldT = Math.max(b.animHoldT, 0.45);
+          ctx.characters[b.id]?.anim.jump();
+          ctx.playSfx("jump", { volume: 0.45, pitch: 1.15 });
+        }
+      }
       if (analog) {
         dir = { x: analog.x, z: analog.z };
         maxSpeed = HUMAN_SPEED * analog.mag;
@@ -431,6 +454,12 @@ function stepFixed(state: RoundState, dt: number): void {
         b.vx *= ns / sp;
         b.vz *= ns / sp;
       }
+    }
+
+    if (isLocalPlayer(ctx.players, b.id) && b.dashT > 0) {
+      b.dashT = Math.max(0, b.dashT - dt);
+      b.vx = b.dashX * DASH_SPEED;
+      b.vz = b.dashZ * DASH_SPEED;
     }
 
     if (state.physics && b.sim) {
@@ -714,6 +743,7 @@ interface SeatDebug {
   body: { x: number; y: number; z: number };
   model: { x: number; y: number; z: number };
   alive: boolean;
+  speed: number;
   screen: { x: number; y: number };
 }
 interface BBDebug {
@@ -750,6 +780,7 @@ function seatDebug(state: RoundState): SeatDebug[] {
       body: { x: +b.x.toFixed(4), y: 0, z: +b.z.toFixed(4) },
       model,
       alive: b.alive,
+      speed: +Math.hypot(b.vx, b.vz).toFixed(3),
       screen: {
         x: +((seatScratch.x * 0.5 + 0.5) * w).toFixed(2),
         y: +((-seatScratch.y * 0.5 + 0.5) * h).toFixed(2),

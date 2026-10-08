@@ -19,7 +19,7 @@
  * limit is reached, so it always ranks itself before the safety net.
  */
 import * as THREE from "three";
-import { contactCpuFrozen, isLocalPlayer, localPlayerIndex, stickGround, takeContactPlace, type Minigame, type MinigameContext } from "../framework";
+import { contactCpuFrozen, DASH_BURST, DASH_COOLDOWN, DASH_SPEED, dashDirection, isLocalPlayer, isPracticeBeat, localPlayerIndex, stickGround, takeContactPlace, type Minigame, type MinigameContext } from "../framework";
 import { ease } from "../../core/rng";
 import { ui } from "../../ui/kit";
 import { characterColor } from "../../characters/roster";
@@ -89,6 +89,9 @@ interface Body {
   coins: number;
   moving: boolean;
   animHoldT: number; // squash/jump hold — don't re-apply move anim during it
+  dashT: number;
+  dashX: number;
+  dashZ: number;
   brain: CpuBrain;
   sim?: XzBody;
 }
@@ -110,7 +113,8 @@ interface HumanInput {
   keyIdleT: number;
   stickX: number; // analog stick, screen +x right, +y down
   stickY: number;
-  lastHopT: number;
+  dashArmed: boolean;
+  dashCd: number;
 }
 
 interface Pile {
@@ -279,8 +283,8 @@ function injectHudStyles(): void {
 const CORNERS = [
   "top:10px;left:10px",
   "top:10px;right:10px",
-  "bottom:10px;left:10px",
-  "bottom:10px;right:10px",
+  "bottom:calc(188px + env(safe-area-inset-bottom, 0px));left:calc(12px + env(safe-area-inset-left, 0px))",
+  "bottom:calc(188px + env(safe-area-inset-bottom, 0px));right:calc(12px + env(safe-area-inset-right, 0px))",
 ];
 
 function buildHud(state: RoundState): void {
@@ -1064,6 +1068,7 @@ interface SeatDebug {
   body: { x: number; y: number; z: number };
   model: { x: number; y: number; z: number };
   alive: boolean;
+  speed: number;
   screen: { x: number; y: number };
 }
 
@@ -1101,6 +1106,7 @@ function seatDebug(state: RoundState): SeatDebug[] {
       body: { x: +b.x.toFixed(4), y: 0, z: +b.z.toFixed(4) },
       model,
       alive: true,
+      speed: +Math.hypot(b.vx, b.vz).toFixed(3),
       screen: {
         x: +((seatScratch.x * 0.5 + 0.5) * w).toFixed(2),
         y: +((-seatScratch.y * 0.5 + 0.5) * h).toFixed(2),
@@ -1140,7 +1146,12 @@ export const coinGrabMinigame: Minigame = {
   id: "coin_grab",
   name: "Coin Grab",
   genre: "collect",
-  howTo: "Hold and drag to chase the coins, and tap to hop. Whoever has the most when time runs out wins.",
+  howTo: "Hold and drag to chase the coins, and tap DASH for a short burst. Whoever has the most when time runs out wins.",
+  goal: "Grab the most coins",
+  tap: "DASH",
+  steer: true,
+  tapCooldown: DASH_COOLDOWN,
+  tapSfx: "hop",
 
   setup(ctx: MinigameContext): void {
     const cam = ctx.camera;
@@ -1171,7 +1182,7 @@ export const coinGrabMinigame: Minigame = {
       rotShake: 0,
       rotPhase: 0,
       hitStopSteps: 0,
-      human: { held: false, tx: 0.5, ty: 0.5, idleT: 0, keyDir: null, keyIdleT: 0, stickX: 0, stickY: 0, lastHopT: -10 },
+      human: { held: false, tx: 0.5, ty: 0.5, idleT: 0, keyDir: null, keyIdleT: 0, stickX: 0, stickY: 0, dashArmed: false, dashCd: 0 },
       camBase,
       raycaster: new THREE.Raycaster(),
       plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
@@ -1224,6 +1235,9 @@ export const coinGrabMinigame: Minigame = {
         coins: 0,
         moving: false,
         animHoldT: 0,
+        dashT: 0,
+        dashX: 0,
+        dashZ: 1,
         brain: freshBrain(),
       });
 
@@ -1272,12 +1286,7 @@ export const coinGrabMinigame: Minigame = {
       else if (action === "confirm") {
         const seat = localPlayerIndex(ctx.players);
         const b = state.bodies[seat];
-        if (b && isLocalPlayer(ctx.players, b.id) && ctx.time - state.human.lastHopT > 0.6) {
-          state.human.lastHopT = ctx.time;
-          b.animHoldT = Math.max(b.animHoldT, 0.4);
-          ctx.characters[b.id]?.anim.jump();
-          ctx.playSfx("hop", { volume: 0.45, pitch: 1.1 });
-        }
+        if (b && isLocalPlayer(ctx.players, b.id) && !isPracticeBeat()) state.human.dashArmed = true;
         return;
       } else {
         return;
@@ -1293,7 +1302,7 @@ export const coinGrabMinigame: Minigame = {
 
   update(dt: number): void {
     const state = round;
-    if (!state) return;
+    if (!state || isPracticeBeat()) return;
 
     /* ---- fixed-step accumulator: run whole 1/60s steps only ---- */
     state.simTime += dt;
@@ -1394,6 +1403,7 @@ function stepFixed(state: RoundState, dt: number): void {
 
   /* ---- steer + integrate (id order: 0 human, 1-3 CPU) ---- */
   parkLocalSeat(state);
+  state.human.dashCd = Math.max(0, state.human.dashCd - dt);
   const analog = stickGround(ctx.camera, state.human.stickX, state.human.stickY);
   const cpuHold = contactCpuFrozen();
   for (const b of state.bodies) {
@@ -1402,6 +1412,21 @@ function stepFixed(state: RoundState, dt: number): void {
     let dir: { x: number; z: number } | null = null;
     let maxSpeed = HUMAN_SPEED;
     if (isLocalPlayer(ctx.players, b.id)) {
+      if (state.human.dashArmed) {
+        state.human.dashArmed = false;
+        if (state.human.dashCd <= 0) {
+          const yaw = ctx.characters[b.id]?.group.rotation.y ?? 0;
+          const aim = state.human.held ? pointerDir(state, b) : null;
+          const burst = dashDirection(ctx.camera, state.human.stickX, state.human.stickY, yaw, state.human.keyDir, aim);
+          b.dashT = DASH_BURST;
+          b.dashX = burst.x;
+          b.dashZ = burst.z;
+          state.human.dashCd = DASH_COOLDOWN;
+          b.animHoldT = Math.max(b.animHoldT, 0.4);
+          ctx.characters[b.id]?.anim.jump();
+          ctx.playSfx("hop", { volume: 0.45, pitch: 1.1 });
+        }
+      }
       if (analog) {
         dir = { x: analog.x, z: analog.z };
         maxSpeed = HUMAN_SPEED * analog.mag;
@@ -1432,6 +1457,12 @@ function stepFixed(state: RoundState, dt: number): void {
         b.vx *= ns / sp;
         b.vz *= ns / sp;
       }
+    }
+
+    if (isLocalPlayer(ctx.players, b.id) && b.dashT > 0) {
+      b.dashT = Math.max(0, b.dashT - dt);
+      b.vx = b.dashX * DASH_SPEED;
+      b.vz = b.dashZ * DASH_SPEED;
     }
 
     if (state.physics && b.sim) {

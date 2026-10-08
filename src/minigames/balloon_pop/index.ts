@@ -21,7 +21,7 @@
  * the step loop and never consume gameplay rng.
  */
 import * as THREE from "three";
-import { isLocalPlayer, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
+import { isLocalPlayer, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
 import { celGradient } from "../../characters/cel";
@@ -837,6 +837,10 @@ const balloonPop: Minigame = {
   name: "Balloon Pop",
   genre: "target",
   howTo: "Tap the balloons in your column. Pop the most before they float away to win.",
+  goal: "Pop the most balloons",
+  tap: "POP",
+  steer: false,
+  tapSfx: "pop",
 
   setup(ctx: MinigameContext): void {
     const portrait = window.innerWidth / window.innerHeight < 1;
@@ -930,7 +934,7 @@ const balloonPop: Minigame = {
 
   update(dt: number): void {
     const st = state;
-    if (!st || st.finished) return;
+    if (!st || st.finished || isPracticeBeat()) return;
 
     /* ---- fixed-step accumulator: run whole 1/60s steps only ---- */
     st.simTime += dt;

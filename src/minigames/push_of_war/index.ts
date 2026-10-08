@@ -16,7 +16,7 @@
  * to this integrator) when the WASM chunk has loaded. Telemetry: window.__POW__.
  */
 import * as THREE from "three";
-import { isLocalPlayer, type Minigame, type MinigameContext } from "../framework";
+import { isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
 import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
@@ -891,7 +891,11 @@ const pushOfWar: Minigame = {
   id: "push_of_war",
   name: "Push of War",
   genre: "survival",
-  howTo: "Tap as fast as you can to shove the crate. Push it over the other side's line to win.",
+  howTo: "Tap PUSH as fast as you can to shove the crate. Push it over the other side's line to win.",
+  goal: "Shove the crate over their line",
+  tap: "PUSH",
+  steer: false,
+  tapSfx: "pop",
 
   setup(ctx: MinigameContext) {
     const root = new THREE.Group();
@@ -1022,8 +1026,13 @@ const pushOfWar: Minigame = {
     };
     round = st;
 
-    ctx.input.pointer = (_x, _y, down) => { if (down && st.humanTaps < 3) st.humanTaps++; };
-    ctx.input.key = (action) => { if (action === "confirm" && st.humanTaps < 3) st.humanTaps++; };
+    const queuePush = (): void => {
+      if (isPracticeBeat() || st.humanTaps >= 3) return;
+      st.humanTaps++;
+      ctx.playSfx("pop", { volume: 0.32, pitch: 1.5 });
+    };
+    ctx.input.pointer = (_x, _y, down) => { if (down) queuePush(); };
+    ctx.input.key = (action) => { if (action === "confirm") queuePush(); };
 
     const soloName = ctx.players[soloIdx].name;
     ctx.announce(`1 VS 3! ${soloName} vs the Trio!`, { durationMs: 1800, sound: "whoosh" });
@@ -1032,7 +1041,7 @@ const pushOfWar: Minigame = {
 
   update(dt: number) {
     const st = round;
-    if (!st || st.finished) return;
+    if (!st || st.finished || isPracticeBeat()) return;
 
     /* ORCH DEBUG (write-only, no rng, no gameplay effect): where are the 4 avatars really? */
     {

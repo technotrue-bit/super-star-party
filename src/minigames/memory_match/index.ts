@@ -26,7 +26,7 @@
  * deduped by id and by the loader guard below.
  */
 import * as THREE from "three";
-import { automatedSeatIds, isLocalPlayer, type Minigame, type MinigameContext } from "../framework";
+import { automatedSeatIds, isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
 import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
@@ -178,6 +178,10 @@ const memoryMatch: Minigame = {
   name: "Memory Match",
   genre: "memory",
   howTo: "Tap two cards to flip them. Whoever finds the most pairs wins.",
+  goal: "Find the most pairs",
+  tap: "FLIP",
+  steer: true,
+  tapSfx: "hop",
 
   setup(ctx: MinigameContext) {
     const st: MemoryMatchState = {
@@ -340,7 +344,7 @@ const memoryMatch: Minigame = {
 
   update(dt: number) {
     const st = (memoryMatch as unknown as { _st?: MemoryMatchState })._st;
-    if (!st || st.finished) return;
+    if (!st || st.finished || isPracticeBeat()) return;
     // Substep a variable frame into 1/60 slices. The recursive call runs the
     // body once; the flag stops it from slicing again.
     if (!st.stepping) {
