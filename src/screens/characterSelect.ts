@@ -5,12 +5,13 @@
  * tagline card. The selected character steps forward under a bright
  * spotlight; the others sit idle with a "CPU" badge. Tap a card or a
  * character, use arrows/keys to cycle, START! confirms (chosen character
- * becomes the human player, the rest CPU), BACK returns to the title.
+ * becomes the local seat, the rest CPU seats), BACK returns to the title.
  */
 import * as THREE from "three";
 import { world } from "../main";
 import { palette, hex } from "../config/palette";
 import { startMatch } from "../core/game";
+import type { SeatController } from "../core/seat";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
 import { roster } from "../characters/roster";
@@ -452,6 +453,7 @@ const characterSelectImpl: SelectScreenState & Screen = {
     const others = roster.filter((_, i) => i !== selIdx);
     const kinds = [sel.key, ...others.map((c) => c.key)];
     const names = [sel.name, ...others.map((c) => c.name)];
+    const controllers: SeatController[] = ["local", ...others.map(() => "cpu" as const)];
 
     let urlSeed: number | undefined;
     try {
@@ -461,7 +463,7 @@ const characterSelectImpl: SelectScreenState & Screen = {
       /* URL parse must never break the game */
     }
 
-    startMatch(kinds, names, 10, urlSeed);
+    startMatch(kinds, names, 10, urlSeed, controllers);
     audio.sfx.play("fanfare.win");
     screens.goto("board");
   },

@@ -19,6 +19,7 @@
  */
 import * as THREE from "three";
 import { match, ranking, STAMP_LABEL } from "../core/game";
+import { decisions, isPending } from "./decisions";
 import { rng, ease } from "../core/rng";
 import { settings } from "../config/settings";
 import { palette } from "../config/palette";
@@ -41,8 +42,6 @@ import {
   useItem,
   turnsLeft,
   grantFizzyPity,
-  decideShopPurchase,
-  pickAutoItem,
   itemTargets,
   swapGiveChoices,
   swapTakeChoices,
@@ -63,9 +62,6 @@ import { consumeTrap, resolveTrap, trapAt, payCircusToll, growTrees, ageCircuses
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
-
-/** Player 0 is the human; CPU players auto-roll. */
-const HUMAN = 0;
 
 /** Board constants (Fizzy Fairground). */
 const N = fizzyFairground.spaces.length;
@@ -233,7 +229,9 @@ let resumeFromMinigame = false;
 
 setAutoplayHook(() => {
   const l = liveLoop;
-  if (l && l.isWaitingForRoll() && match.currentPlayer === HUMAN) l.rollPressed();
+  // Local seats keep the ROLL button under autoplay. CPUs use their timer,
+  // which is a different rng draw, so the hook must not press for them.
+  if (l && l.isWaitingForRoll() && decisions.usesRollButton(match.currentPlayer)) l.rollPressed();
 });
 
 /* ------------------------------------------------------------------ */
@@ -485,12 +483,16 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     dice.hover(pid);
     rebuildItemBar(pid);
     rollButton.setVisible(true);
-    if (pid === HUMAN) {
+    const roll = decisions.roll(pid);
+    if (roll.mode === "button") {
       rollButton.setEnabled(true);
       S.cpuTimer = 0;
+    } else if (roll.mode === "timer") {
+      rollButton.setEnabled(false);
+      S.cpuTimer = roll.delay;
     } else {
       rollButton.setEnabled(false);
-      S.cpuTimer = 0.9 + rng.next() * 0.6;
+      S.cpuTimer = 0;
     }
   };
 
@@ -549,12 +551,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       player.itemFx.doubleDice = false;
     }
     dice.hover(pid);
-    if (pid !== HUMAN || isAutoplay()) {
-      const key = pickAutoItem(pid);
-      if (key) {
-        const res = useItem(pid, key);
-        if (applyAutoItem(pid, res)) return;
-      }
+    const autoItem = decisions.preRollItem(pid);
+    if (!isPending(autoItem) && autoItem.key && decisions.aim(pid) === "rng") {
+      const res = useItem(pid, autoItem.key);
+      if (applyAutoItem(pid, res)) return;
     }
     armDice(pid);
   };
@@ -638,8 +638,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         S.moveQueue.push(...rest);
       }
     };
-    if (pid !== HUMAN || isAutoplay()) {
-      pick(hopsToStar(branch.to) < hopsToStar(stay) ? branch.to : stay);
+    const lane = decisions.path(pid, stay, branch.to, hopsToStar);
+    if (!isPending(lane)) {
+      pick(lane.to);
       return;
     }
     const content = document.createElement("div");
@@ -895,7 +896,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     S.rolling = false;
     if (S.diceFaces.length < S.rollsNeeded) {
       S.betweenRolls = 0.85;
-      if (pid === HUMAN) rollButton.setEnabled(true);
+      if (decisions.usesRollButton(pid)) rollButton.setEnabled(true);
     } else {
       match.lastDice = [...S.diceFaces];
       const raw = S.diceFaces.reduce((s, f) => s + f, 0);
@@ -942,15 +943,17 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     const holders = match.players
       .filter((p) => p.active && p.id !== rollerId && p.items.includes("poison_mushroom"))
       .map((p) => p.id);
-    const humanChooses = holders.includes(HUMAN) && !isAutoplay();
+    const waiting: number[] = [];
     for (const id of holders) {
-      if (humanChooses && id === HUMAN) continue;
-      spendPoison(id, rollerId);
+      const choice = decisions.poison(id);
+      if (isPending(choice)) waiting.push(id);
+      else if (choice.use) spendPoison(id, rollerId);
     }
-    if (!humanChooses) {
+    if (waiting.length === 0) {
       launchMove(rollerId, raw);
       return;
     }
+    const chooser = waiting[0];
     // diceT is already spent. Drop `rolling` so the dice phase does not
     // call diceLand again while the touch prompt is up.
     S.rolling = false;
@@ -968,7 +971,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       settled = true;
       close();
       S.itemResolving = false;
-      if (use) spendPoison(HUMAN, rollerId);
+      if (use) spendPoison(chooser, rollerId);
       launchMove(rollerId, raw);
     };
     S.poisonAutoCommit = () => finish(true);
@@ -1005,7 +1008,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   const rebuildItemBar = (pid: number): void => {
     itemBar.innerHTML = "";
-    if (pid !== HUMAN || isAutoplay()) return;
+    if (!decisions.choosesLocally(pid)) return;
     const keys = Array.from(new Set(match.players[pid]?.items ?? []));
     for (const key of keys) {
       if (key === "poison_mushroom") continue;
@@ -1028,7 +1031,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     if (!res.ok) {
       ui.toast(res.message, { durationMs: 1400 });
       rebuildItemBar(pid);
-      if (pid === HUMAN) rollButton.setEnabled(true);
+      if (decisions.usesRollButton(pid)) rollButton.setEnabled(true);
       return;
     }
     ui.toast(res.message, { durationMs: 2200 });
@@ -1040,7 +1043,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       const p = match.players[pid];
       if (p) p.itemFx.doubleDice = false;
       rebuildItemBar(pid);
-      if (pid === HUMAN) rollButton.setEnabled(true);
+      if (decisions.usesRollButton(pid)) rollButton.setEnabled(true);
       return;
     }
     if (res.moveTo !== undefined) {
@@ -1061,13 +1064,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       offerPrizeBalloon(pid, () => {
         S.itemResolving = false;
         if (S.disposed || S.phase !== "dice") return;
-        if (pid === HUMAN) rollButton.setEnabled(true);
+        if (decisions.usesRollButton(pid)) rollButton.setEnabled(true);
         rebuildItemBar(pid);
       });
       return;
     }
     rebuildItemBar(pid);
-    if (pid === HUMAN) rollButton.setEnabled(true);
+    if (decisions.usesRollButton(pid)) rollButton.setEnabled(true);
   };
 
   const openTargetPicker = (pid: number, key: string): void => {
@@ -1087,7 +1090,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       settled = true;
       close();
       S.itemResolving = false;
-      if (pid === HUMAN) rollButton.setEnabled(true);
+      if (decisions.usesRollButton(pid)) rollButton.setEnabled(true);
       rebuildItemBar(pid);
     };
     const commit = (target?: number, trade?: { give?: string; take?: string }): void => {
@@ -1098,7 +1101,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       finishBarUse(pid, useItem(pid, key, target, trade));
     };
     // Autoplay that flips on mid-picker chooses with rng and never waits.
-    S.itemAutoCommit = () => commit();
+    S.itemAutoCommit = () => {
+      if (decisions.aim(pid) === "wait") return;
+      commit();
+    };
     const showPlayers = (): void => {
       sheet.replaceChildren();
       for (const id of itemTargets(pid, key)) {
@@ -1161,7 +1167,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const useItemPressed = (pid: number, key: string): void => {
     if (S.phase !== "dice" || S.rolling || S.itemResolving) return;
     if (TARGET_PICK.has(key)) {
-      openTargetPicker(pid, key);
+      const aim = decisions.aim(pid);
+      if (aim === "picker") {
+        openTargetPicker(pid, key);
+        return;
+      }
+      if (aim === "wait") return;
+      finishBarUse(pid, useItem(pid, key));
       return;
     }
     finishBarUse(pid, useItem(pid, key));
@@ -1349,7 +1361,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     }
     const affordable = sensibleStarCount(pid);
     if (affordable <= 0) {
-      if (pid === HUMAN) {
+      if (decisions.usesRollButton(pid)) {
         ui.toast(`A star costs ${settings.starCost} coins!`, { durationMs: 1600 });
       }
       then();
@@ -1370,8 +1382,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         then();
       });
     };
-    if (pid !== HUMAN || isAutoplay()) {
-      commit(affordable);
+    const bundle = decisions.starBundle(pid);
+    if (!isPending(bundle)) {
+      commit(bundle.count);
       return;
     }
     const row = document.createElement("div");
@@ -1388,7 +1401,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       close();
       fn();
     };
-    S.starAutoCommit = () => choose(() => commit(sensibleStarCount(pid)));
+    S.starAutoCommit = () => choose(() => {
+      const again = decisions.starBundle(pid);
+      commit(isPending(again) ? sensibleStarCount(pid) : again.count);
+    });
     for (let n = 1; n <= settings.starBundleMax; n++) {
       const count = n;
       const btn = ui.button({
@@ -1438,9 +1454,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       refreshHud();
       then();
     };
-    if (pid !== HUMAN || isAutoplay()) {
-      const decision = decideShopPurchase(pid);
-      if (decision) toastShop(decision);
+    const autoShop = decisions.shop(pid);
+    if (!isPending(autoShop)) {
+      if (autoShop.decision) toastShop(autoShop.decision);
       else ui.toast("Just looking!", { durationMs: 900 });
       done();
       return;
@@ -1457,8 +1473,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       }
       S.shopOpen = false;
       S.shopAutoCommit = null;
-      const decision = decideShopPurchase(pid);
-      if (decision) toastShop(decision);
+      const choice = decisions.shop(pid);
+      if (!isPending(choice) && choice.decision) toastShop(choice.decision);
+      else if (!isPending(choice)) ui.toast("Just looking!", { durationMs: 900 });
       audio.music.play("board", { intensity: boardIntensity() });
       done();
     };
@@ -1473,8 +1490,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         const force = S.shopDecideOnClose;
         S.shopDecideOnClose = false;
         if (force && res.bought.length === 0) {
-          const decision = decideShopPurchase(pid);
-          if (decision) toastShop(decision);
+          const choice = decisions.shop(pid);
+          if (!isPending(choice) && choice.decision) toastShop(choice.decision);
           else ui.toast("Just looking!", { durationMs: 900 });
         } else {
           for (const key of res.bought) {

@@ -13,7 +13,7 @@ import * as THREE from "three";
 import { world } from "../main";
 import { palette } from "../config/palette";
 import { settings } from "../config/settings";
-import { match, startMatch, rollForTurnOrder } from "../core/game";
+import { match, playerController, startMatch, rollForTurnOrder } from "../core/game";
 import { rng, ease } from "../core/rng";
 import { bus } from "../core/events";
 import { roster } from "../characters/roster";
@@ -868,7 +868,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
       return;
     }
     if (this._mapBtn) {
-      const myTurn = match.currentPlayer === 0 && (match.phase === "dice" || match.phase === "moving");
+      const myTurn = playerController(match.currentPlayer) === "local" && (match.phase === "dice" || match.phase === "moving");
       this._mapBtn.classList.toggle("ssp-map-fab--on", myTurn && !this._mapLook?.isOpen());
     }
     if (this._mapLook?.isOpen()) {

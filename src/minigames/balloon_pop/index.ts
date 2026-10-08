@@ -21,7 +21,7 @@
  * the step loop and never consume gameplay rng.
  */
 import * as THREE from "three";
-import type { Minigame, MinigameContext } from "../framework";
+import { isLocalPlayer, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
 import { celGradient } from "../../characters/cel";
@@ -418,7 +418,7 @@ function buildUi(st: State): void {
     chip.dataset.pid = String(P.id);
     chip.style.cssText =
       "display:flex;align-items:center;gap:7px;background:" +
-      (P.id === 0 ? palette.sun : palette.cream) +
+      (isLocalPlayer(st.ctx.players, P.id) ? palette.sun : palette.cream) +
       ";border:3px solid " +
       palette.ink +
       ";border-radius:999px;padding:4px 14px;font-weight:700;font-size:15px;color:" +
@@ -797,7 +797,7 @@ function stepFixed(st: State, dt: number): void {
     b.group.position.y = b.y;
     // wobble uses fixed t for determinism
     b.group.rotation.z = Math.sin(t * 2.1 + b.phase) * 0.07;
-    if (b.col > 0 && !b.crossedSweet && b.y >= SWEET_MIN) {
+    if (b.col !== localPlayerIndex(st.ctx.players) && !b.crossedSweet && b.y >= SWEET_MIN) {
       b.crossedSweet = true;
       cpuThink(st, b);
     }
@@ -876,7 +876,7 @@ const balloonPop: Minigame = {
     // ---- per-player state (id = playerId = column index) ----
     ctx.players.forEach((p, i) => {
       // CPU accuracy drawn once per player at setup (deterministic order)
-      const accuracy = i === 0 ? 0 : CPU_ACCURACY + (ctx.rng() - 0.5) * 0.12;
+      const accuracy = p.controller === "local" ? 0 : CPU_ACCURACY + (ctx.rng() - 0.5) * 0.12;
       st.players.push({
         id: p.id,
         x: L.colX[i],
@@ -906,20 +906,21 @@ const balloonPop: Minigame = {
     ctx.announce("BALLOON POP!", { durationMs: 1500, sound: null });
 
     // ---- input: tap a balloon (or confirm pops the highest one) ----
+    const humanCol = localPlayerIndex(ctx.players);
     ctx.input.pointer = (x: number, y: number, down: boolean): void => {
       if (!down || st.finished) return;
       const hit = pickAt(st, x, y);
-      const b = hitTest(st, 0, hit.x, hit.y);
-      if (b) popBalloon(st, 0, b, true);
+      const b = hitTest(st, humanCol, hit.x, hit.y);
+      if (b) popBalloon(st, humanCol, b, true);
     };
     ctx.input.key = (action: string): void => {
       if (action !== "confirm" || st.finished) return;
       let top: Balloon | null = null;
       for (const b of st.balloons) {
-        if (b.col !== 0) continue;
+        if (b.col !== humanCol) continue;
         if (!top || b.y > top.y) top = b;
       }
-      if (top) popBalloon(st, 0, top, true);
+      if (top) popBalloon(st, humanCol, top, true);
     };
 
     // Fresh telemetry mirror per round (critic probes read window.__BP__).
