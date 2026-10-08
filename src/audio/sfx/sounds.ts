@@ -633,6 +633,53 @@ const crowdAah: SfxDef = {
   },
 };
 
+/** Two voices lean together, then a warm chord — the Carnival Squeeze hug. */
+const hug: SfxDef = {
+  build: (ctx, out, t, o) => {
+    const stops: StopFn[] = [];
+    const p = semitone(o.pitch);
+    stops.push(
+      tone(ctx, out, t, 392 * p, 0.22, {
+        type: "sine",
+        vol: o.vol * 0.28,
+        slideTo: 330 * p,
+        slideTime: 0.16,
+        decay: 0.16,
+      }),
+    );
+    stops.push(
+      tone(ctx, out, t, 262 * p, 0.22, {
+        type: "sine",
+        vol: o.vol * 0.28,
+        slideTo: 330 * p,
+        slideTime: 0.16,
+        decay: 0.16,
+      }),
+    );
+    for (const freq of [262, 330, 392, 523]) {
+      stops.push(
+        tone(ctx, out, t + 0.12, freq * p, 0.55, {
+          type: "triangle",
+          vol: o.vol * 0.16,
+          attack: 0.04,
+          decay: 0.4,
+        }),
+      );
+    }
+    stops.push(
+      noise(ctx, out, t + 0.08, 0.45, {
+        type: "bandpass",
+        freq: 500,
+        sweepTo: 900,
+        q: 1.1,
+        vol: o.vol * 0.12,
+        attack: 0.08,
+      }),
+    );
+    return () => stops.forEach((s) => s());
+  },
+};
+
 const crowdOoh: SfxDef = {
   gap: 300,
   route: "crowd",
@@ -669,6 +716,7 @@ export const SFX: Record<string, SfxDef> = {
   boing,
   whoosh,
   pop,
+  hug,
   "balloon.gasp": balloonGasp,
   "fanfare.win": fanfareWin,
   "fanfare.lose": fanfareLose,

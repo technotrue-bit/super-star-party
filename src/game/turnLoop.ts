@@ -6,7 +6,9 @@
  *
  * Owns ALL match-flow logic: dice (deterministic rng + forced-dice debug
  * hook), per-tile hop movement with the Funhouse Cut shortcut, space effects
- * (blue / red / Grand Prize Balloon / shop / green / grumpus), item use before rolling,
+ * (blue / red / Grand Prize Balloon / shop / green / grumpus), shops on pass,
+ * Carnival Squeeze when a move ends on a shared space, Fizzy Barker pity
+ * in the last 5 turns, item use before rolling,
  * minigame-round gating, bonus stars and the final podium. Every beat plays
  * its SFX, the music intensity follows the phase, and bus events keep the
  * crowd reactions + debug API live.
@@ -16,7 +18,7 @@
  * human's roll via the autoplay hook.
  */
 import * as THREE from "three";
-import { match } from "../core/game";
+import { match, ranking, STAMP_LABEL } from "../core/game";
 import { rng, ease } from "../core/rng";
 import { settings } from "../config/settings";
 import { palette } from "../config/palette";
@@ -31,10 +33,9 @@ import type { Character } from "../characters/characterFactory";
 import type { HudHandle } from "../ui/hud";
 import type { ButtonHandle } from "../ui/button";
 import type { PopupHandle } from "../ui/popup";
-import { addCoins, tryBuyStars, sensibleStarCount, movePrizeBalloon, computeBonusStars, finalRanking, grantStamp, popMinigameBalloon, type BonusStarKind } from "./economy";
-import { STAMP_LABEL } from "../core/game";
+import { addCoins, tryBuyStars, sensibleStarCount, movePrizeBalloon, computeBonusStars, finalRanking, grantStamp, popMinigameBalloon, carnivalSqueeze, type BonusStarKind } from "./economy";
 import { resolveGreen, resolveGrumpus, consumeFreeStar, consumeDoubleBlue } from "./happenings";
-import { ITEM_DEFS, canUseItem, useItem } from "./items";
+import { ITEM_DEFS, canUseItem, useItem, turnsLeft, grantFizzyPity, decideShopPurchase, type ShopDecision } from "./items";
 import { openShop } from "../screens/shopScreen";
 import { tryPickMinigame } from "../minigames/registry";
 import { setPendingMinigame } from "../minigames/framework";
@@ -265,6 +266,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     starCeremonyThen: (() => void) | null;
     /** If autoplay flips on while the human bundle popup is up, buy this. */
     starAutoCommit: (() => void) | null;
+    /** If autoplay flips on while the human shop is open, close it and decide. */
+    shopAutoCommit: (() => void) | null;
+    /** Human closed the shop because autoplay started; buy if they bought nothing. */
+    shopDecideOnClose: boolean;
     // results
     resultSteps: Array<() => void>;
     resultTimer: number;
@@ -306,6 +311,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     starCeremonyCount: 1,
     starCeremonyThen: null,
     starAutoCommit: null,
+    shopAutoCommit: null,
+    shopDecideOnClose: false,
     resultSteps: [],
     resultTimer: 0,
     circusToll: null,
@@ -390,8 +397,45 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     hud.showBanner(`TURN ${match.turn}`, { durationMs: 900 });
     pause(0.95, () => {
       hud.showBanner(`${player.name}'S TURN!`, { durationMs: 1150 });
-      pause(0.75, beginDice);
+      pause(0.75, () => offerFizzyPity(pid, beginDice));
     });
+  };
+
+  /**
+   * Fizzy Barker pity. Once, at the start of a player's turn (before the die),
+   * during the last `settings.pityLastTurns` turns: if `ranking()` currently
+   * lists them last, they receive one bag item they do not already hold.
+   * Start-of-turn (not once per round) so the gift is in the bag before they
+   * roll, and so a player who climbs out of last place mid-round is not paid
+   * for a lead they no longer have. The rng draw happens here, before dice,
+   * and only when a gift is actually given.
+   */
+  const offerFizzyPity = (pid: number, then: () => void): void => {
+    if (turnsLeft() > settings.pityLastTurns) {
+      then();
+      return;
+    }
+    const order = ranking();
+    const last = order[order.length - 1];
+    if (last !== pid) {
+      then();
+      return;
+    }
+    const key = grantFizzyPity(pid);
+    if (!key) {
+      ui.toast("Aw, tough luck kid, your bag's already full!", { durationMs: 2000 });
+      audio.sfx.play("sad");
+      pause(1.1, then);
+      return;
+    }
+    const name = ITEM_DEFS[key]?.name ?? key;
+    bus.emit("pity:gift", { player: pid, item: key });
+    audio.sfx.play("happening.magic");
+    hud.showBanner("FIZZY BARKER!", { durationMs: 1500 });
+    ui.toast(`Aw, tough luck kid, here's a ${name} on the house!`, { durationMs: 2400 });
+    chars[pid]?.anim.cheer();
+    refreshHud();
+    pause(1.2, then);
   };
 
   const beginDice = (): void => {
@@ -517,9 +561,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   /**
    * Stamp spaces and minigame balloons resolve the moment a hop arrives,
-   * whether the player is passing through or landing. Other space types
-   * still resolve only on the final tile.
-   * Returns true when this space was one of those two.
+   * whether the player is passing through or landing.
+   * Shops are offered separately, on pass and on land.
+   * Red, blue, green, and grumpus still resolve only on the final tile.
+   * Returns true when this space was a stamp or a minigame balloon.
    */
   const arriveCarnival = (pid: number, space: number, landed: boolean): boolean => {
     const sp = fizzyFairground.spaces[wrap(space)];
@@ -650,8 +695,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         break;
       }
       case "shop": {
-        shopSpace(pid);
-        return; // async
+        offerShop(pid, finishEffect);
+        return; // async for the human; CPUs and autoplay decide and continue
       }
       case "green": {
         happeningSpace(pid, "green");
@@ -674,6 +719,21 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const finishEffect = (): void => {
     refreshHud();
     pause(0.9, nextTurn);
+  };
+
+  /**
+   * Group hug when this move ended on a space another player already occupies.
+   * Everyone on the tile is paid, including a third or fourth. Passing through
+   * does not call this — only the final hop.
+   */
+  const playCarnivalSqueeze = (pid: number): void => {
+    const ids = carnivalSqueeze(pid);
+    if (ids.length < 2) return;
+    audio.sfx.play("hug");
+    for (const id of ids) chars[id]?.anim.squash();
+    hud.showBanner("GROUP HUG!", { durationMs: 1200 });
+    ui.toast(`GROUP HUG! +${settings.squeezeCoins} coins each`, { durationMs: 1800 });
+    refreshHud();
   };
 
   const finishTurn = (): void => {
@@ -1041,36 +1101,78 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     });
   };
 
-  const shopSpace = (pid: number): void => {
+  const toastShop = (decision: ShopDecision): void => {
+    const def = ITEM_DEFS[decision.key];
+    const label = def?.name ?? decision.key;
+    ui.toast(decision.placedOn !== undefined ? `Set ${label}!` : `Bought ${label}!`, { durationMs: 1500 });
+  };
+
+  /**
+   * Offer the gumball shop, then continue (finish the landing, or keep hopping).
+   * The human gets the stall and chooses. CPUs, and the human while
+   * `__SSP__.autoplay(true)` is on, buy one affordable item or leave — no modal,
+   * so a pass never waits on a click. If autoplay flips on mid-visit, the stall
+   * closes and that same decision runs when they bought nothing yet.
+   */
+  const offerShop = (pid: number, then: () => void): void => {
+    const done = (): void => {
+      if (S.disposed) return;
+      refreshHud();
+      then();
+    };
+    if (pid !== HUMAN || isAutoplay()) {
+      const decision = decideShopPurchase(pid);
+      if (decision) toastShop(decision);
+      else ui.toast("Just looking!", { durationMs: 900 });
+      done();
+      return;
+    }
     S.shopOpen = true;
+    S.shopDecideOnClose = false;
     rollButton.setEnabled(false);
-    // Autoplay runs must never stall on the modal shop. The real shop opens
-    // (so the economy moment is live) but auto-resolves after a real beat so
-    // the flow keeps moving.
-    const shopPromise: Promise<{ bought: string[] }> = openShop(pid, {
-      autoCloseMs: isAutoplay() ? 1200 : undefined,
-    });
-    // MP7-style: the shop has its own cheerful music-box jingle while open.
-    // It replaces the board track for the duration of the shop visit, then
-    // restores it when the popup resolves.
+    S.shopAutoCommit = () => {
+      S.shopDecideOnClose = true;
+      const btn = document.querySelector<HTMLElement>("[data-shop-close]");
+      if (btn) {
+        btn.click();
+        return;
+      }
+      S.shopOpen = false;
+      S.shopAutoCommit = null;
+      const decision = decideShopPurchase(pid);
+      if (decision) toastShop(decision);
+      audio.music.play("board", { intensity: boardIntensity() });
+      done();
+    };
+    // The stall has its own cheerful music-box jingle while the human is choosing.
     audio.music.play("shop", { intensity: 0.35 });
-    shopPromise
+    openShop(pid)
       .then((res) => {
         if (S.disposed) return;
         S.shopOpen = false;
+        S.shopAutoCommit = null;
         audio.music.play("board", { intensity: boardIntensity() });
-        for (const key of res.bought) {
-          const def = ITEM_DEFS[key];
-          ui.toast(`Bought ${def?.name ?? key}!`, { durationMs: 1600 });
+        const force = S.shopDecideOnClose;
+        S.shopDecideOnClose = false;
+        if (force && res.bought.length === 0) {
+          const decision = decideShopPurchase(pid);
+          if (decision) toastShop(decision);
+          else ui.toast("Just looking!", { durationMs: 900 });
+        } else {
+          for (const key of res.bought) {
+            const def = ITEM_DEFS[key];
+            ui.toast(`Bought ${def?.name ?? key}!`, { durationMs: 1600 });
+          }
         }
-        if (res.bought.length > 0) audio.sfx.play("shop.buy");
-        refreshHud();
-        finishEffect();
+        done();
       })
       .catch(() => {
         if (S.disposed) return;
         S.shopOpen = false;
-        finishEffect();
+        S.shopAutoCommit = null;
+        S.shopDecideOnClose = false;
+        audio.music.play("board", { intensity: boardIntensity() });
+        done();
       });
   };
 
@@ -1304,6 +1406,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       fn();
       return;
     }
+    // Same for the stall: close it and let the automatic visit decide.
+    if (isAutoplay() && S.shopOpen && S.shopAutoCommit) {
+      const fn = S.shopAutoCommit;
+      S.shopAutoCommit = null;
+      fn();
+      return;
+    }
 
     // Star ceremony runs INSTEAD of the pause chain — it's a staged presentation
     // beat. It draws no gameplay rng, so the seeded simulation stays identical.
@@ -1367,22 +1476,27 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
             board.clearHighlights();
             board.setHighlight(S.hopTo, true);
             refreshHud();
+            // Ending the move on someone else's space: everyone there gets the hug.
+            // Coins land before the space effect, so they can fund a star or a shop.
+            playCarnivalSqueeze(pid);
             if (S.afterMove === "effect") enterSpaceEffect(pid);
             else finishTurn();
           } else {
-            // Passing a stamp or minigame balloon pays out on the hop,
-            // before the rest of the move (so a jackpot can fund a star
-            // landed later in the same roll). The Grand Prize Balloon is
-            // the same kind of pass: buy, then keep hopping.
-            arriveCarnival(pid, S.hopTo, false);
+            // Pass fires stamps, minigame balloons, the Grand Prize Balloon, and shops.
+            // Red, blue, green, and grumpus stay land-only.
             const resumeMove = (): void => {
               const branch = JUNCTIONS.find((j) => j.from === S.hopTo);
               const hopsLeft = S.moveQueue.length - S.moveIdx;
               if (branch && hopsLeft > 0) offerJunction(pid, hopsLeft);
               else startHop(pid);
             };
-            if (S.hopTo === match.starBalloonPos) offerPrizeBalloon(pid, resumeMove);
-            else resumeMove();
+            arriveCarnival(pid, S.hopTo, false);
+            const afterPrize = (): void => {
+              if (board.spaceType(S.hopTo) === "shop") offerShop(pid, resumeMove);
+              else resumeMove();
+            };
+            if (S.hopTo === match.starBalloonPos) offerPrizeBalloon(pid, afterPrize);
+            else afterPrize();
           }
         }
         break;
@@ -1437,6 +1551,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     S.starPopup?.destroy();
     S.starPopup = null;
     S.starAutoCommit = null;
+    S.shopAutoCommit = null;
+    S.shopDecideOnClose = false;
     liveLoop = null;
   };
 

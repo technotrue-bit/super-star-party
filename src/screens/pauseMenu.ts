@@ -478,7 +478,7 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
     const starsP = document.createElement("p");
     starsP.style.margin = "0";
     starsP.innerHTML =
-      "Everyone starts with <b>10 coins</b>. Pass or land on the <b>Grand Prize Balloon</b> to buy up to <b>5 stars</b> at <b>10 coins</b> each. Unpaid stars in a bundle are discarded, then the balloon pops and moves. Stars decide the winner!";
+      "Everyone starts with <b>10 coins</b>. Pass or land on the <b>Grand Prize Balloon</b> to buy up to <b>5 stars</b> at <b>10 coins</b> each. Unpaid stars in a bundle are discarded, then the balloon pops and moves. End your move on a space someone else is standing on and everyone there gets a <b>group hug: +2 coins</b>. Stars decide the winner!";
     rules.appendChild(starsP);
 
     const mini = document.createElement("h4");
@@ -496,7 +496,7 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
     const itemsP = document.createElement("p");
     itemsP.style.margin = "0";
     itemsP.innerHTML =
-      "Visit the <b>Gumball Shop</b> (🛒) to buy items: <b>Mushroom</b> (roll twice), <b>Warp Whistle</b> (teleport), <b>Zappy</b> (steal 5 coins).";
+      "Pass or land on the <b>Gumball Shop</b> (🛒) to buy items: <b>Mushroom</b> (roll twice), <b>Warp Whistle</b> (teleport), <b>Zappy</b> (steal 5 coins). In the <b>last 5 turns</b>, Fizzy Barker gives the last-place player one free item at the start of their turn.";
     rules.appendChild(itemsP);
 
     panel.appendChild(rules);

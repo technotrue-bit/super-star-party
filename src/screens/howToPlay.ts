@@ -245,7 +245,7 @@ const howToImpl: HowToState & Screen = {
       "🍄",
       palette.mint,
       "ITEMS & THE GUMBALL SHOP",
-      "Land on a shop space (🛒) or reach the shop to buy an item from the gumball machine:"
+      "Pass or land on a shop space (🛒) to buy an item from the gumball machine. You choose; computer players decide on their own:"
     );
     const itemChips = document.createElement("div");
     itemChips.className = "ssp-howto-card__space";
