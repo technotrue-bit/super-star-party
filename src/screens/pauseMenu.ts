@@ -10,7 +10,9 @@
  *   SETTINGS       — inline sub-panel with live MUSIC + SFX sliders (via
  *                    setMusicGain/setSfxGain, persisted to the SAME
  *                    localStorage keys the title uses) and a 1x/1.5x/2x
- *                    game-speed selector (persisted; applies next match).
+ *                    game-speed selector (persisted; applies next match), and
+ *                    an EFFECTS toggle (Off / Low / High, persisted, applies
+ *                    immediately). Off does not load the postprocessing chunk.
  *   HOW TO PLAY    — compact rules card INSIDE the panel (leaving the board
  *                    would destroy the match, so the rules come to you).
  *   QUIT TO TITLE  — confirm step ("Quit this match? All progress is lost.")
@@ -26,10 +28,12 @@
  * consistent everywhere.
  */
 import { palette } from "../config/palette";
+import { effectsQualityChoices, type EffectsQuality } from "../config/settings";
 import { ui } from "../ui/kit";
 import { audio } from "../audio/audioEngine";
 import { getMusicGain, setMusicGain, getSfxGain, setSfxGain } from "../ui/sound";
 import { mountPackPicker } from "../ui/packPicker";
+import { getEffectsQuality, setEffectsQuality } from "../render/postFx";
 
 /* ------------------------------------------------------------------ */
 /*  localStorage keys (MUST match src/screens/titleScreen.ts)          */
@@ -421,11 +425,44 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
     speedRow.appendChild(btns);
     sub.appendChild(speedRow);
 
+    const fxRow = document.createElement("div");
+    fxRow.className = "ssp-pause-speed";
+    const fxLabel = document.createElement("span");
+    fxLabel.textContent = "✨ EFFECTS";
+    fxRow.appendChild(fxLabel);
+    const fxBtns = document.createElement("div");
+    fxBtns.className = "ssp-pause-speedbtns";
+    const fxBtnEls: HTMLButtonElement[] = [];
+    const paintFx = (current: EffectsQuality): void => {
+      for (const el of fxBtnEls) {
+        const on = el.dataset.fx === current;
+        el.classList.toggle("ssp-pause-speedbtn--sel", on);
+        el.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+    };
+    for (const choice of effectsQualityChoices) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ssp-pause-speedbtn";
+      b.dataset.fx = choice;
+      b.textContent = choice.toUpperCase();
+      b.setAttribute("aria-label", `Effects ${choice}`);
+      b.addEventListener("click", () => {
+        audio.sfx.play("pop");
+        paintFx(setEffectsQuality(choice, true));
+      });
+      fxBtnEls.push(b);
+      fxBtns.appendChild(b);
+    }
+    paintFx(getEffectsQuality());
+    fxRow.appendChild(fxBtns);
+    sub.appendChild(fxRow);
+
     sub.appendChild(mountPackPicker().el);
 
     const note = document.createElement("p");
     note.className = "ssp-pause-note";
-    note.textContent = "Game speed applies at the start of the next match.";
+    note.textContent = "Game speed applies at the start of the next match. Effects apply right away: Off is the lightest, High adds a soft glow.";
     sub.appendChild(note);
 
     panel.appendChild(sub);

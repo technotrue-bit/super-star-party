@@ -14,6 +14,9 @@ import fs from "node:fs";
 const OUT = "tools/critic/frames/smoke";
 fs.mkdirSync(OUT, { recursive: true });
 
+const fxArg = (process.env.SSP_FX ?? "").trim().toLowerCase();
+const fxQuery = fxArg === "off" || fxArg === "low" || fxArg === "high" ? `&fx=${fxArg}` : "";
+
 const errors = [];
 let page;
 
@@ -61,13 +64,13 @@ page.on("console", (m) => { if (m.type() === "error") errors.push(m.text().slice
 page.on("pageerror", (e) => errors.push("PAGEERROR: " + String(e).slice(0, 160)));
 
 console.log("1. boot");
-await page.goto("http://localhost:5177/?audio=1&speed=8", { waitUntil: "domcontentloaded" });
+await page.goto(`http://localhost:5177/?audio=1&speed=8${fxQuery}`, { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(2500);
 let st = await state();
 console.log("   screen:", st.screen, "| canvas:", await page.evaluate(() => {
   const c = document.querySelector("canvas");
   return c ? `${c.width}x${c.height}` : "none";
-}));
+}), "| effects:", await page.evaluate(() => window.__SSP__?.effectsQuality?.() ?? window.__SSP__?.state?.()?.effectsQuality ?? "n/a"));
 await page.screenshot({ path: `${OUT}/01-title.png` });
 
 console.log("2. PLAY ->");
@@ -86,7 +89,29 @@ await page.screenshot({ path: `${OUT}/03-board.png` });
 
 console.log("4. ROLL! -> (human click)");
 const before = st.positions;
-await clickText(/roll/i, "ROLL");
+// The turn-order ceremony is wall-clock (~5s) and ignores an early ROLL.
+// Click once the button is actually enabled. A CPU who goes first moves
+// a token without that click.
+let rollReady = "timeout";
+try {
+  const handle = await page.waitForFunction(() => {
+    const players = window.__SSP__?.state?.()?.match?.players ?? [];
+    if (players.some((p) => p.space !== 0)) return "moved";
+    const btn = Array.from(document.querySelectorAll("button")).find((b) =>
+      /^roll!$/i.test((b.textContent || "").trim())
+    );
+    if (!btn || btn.disabled || btn.offsetParent === null) return false;
+    const style = getComputedStyle(btn);
+    if (style.display === "none" || style.pointerEvents === "none") return false;
+    if (parseFloat(style.opacity) <= 0.5) return false;
+    return "ready";
+  }, null, { timeout: 20000 });
+  rollReady = await handle.jsonValue();
+} catch {
+  rollReady = "timeout";
+}
+console.log("   roll ready:", rollReady);
+if (rollReady !== "moved") await clickText(/^roll!$/i, "ROLL");
 let sawDie = "hidden", moved = false;
 for (let i = 0; i < 40; i++) {
   const s = await page.evaluate(() => window.__DIE_STATE ?? "n/a");

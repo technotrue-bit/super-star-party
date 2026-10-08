@@ -14,6 +14,7 @@ import { installDebugAPI, tickFrame, autoplayTick, isAutoplay } from "./core/deb
 import { bus } from "./core/events";
 import { audio, unlock } from "./audio/audioEngine";
 import { fitAppToViewport, onViewportChange, viewportSize } from "./ui/viewport";
+import { installPostFx, renderPostFx, resizePostFx } from "./render/postFx";
 
 export const world = {
   renderer: null as THREE.WebGLRenderer | null,
@@ -53,6 +54,7 @@ function boot(): void {
   world.renderer = renderer;
   world.scene = scene;
   world.camera = camera;
+  installPostFx(renderer, scene, camera);
 
   // URL params for critics: ?seed=N&screen=NAME&autoplay=1&audio=0&speed=2
   const params = new URLSearchParams(window.location.search);
@@ -107,6 +109,7 @@ function boot(): void {
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h, false);
+    resizePostFx(w, h);
   };
   onViewportChange(fit);
   fit();
@@ -135,7 +138,7 @@ function boot(): void {
     if (isAutoplay()) autoplayTick();
     screens.update(dt);
     screens.render();
-    renderer.render(scene, camera);
+    renderPostFx();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

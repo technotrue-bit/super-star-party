@@ -6,6 +6,19 @@ Mixamo animations exported and retargeted). Do not commit raw Mixamo source
 files — only the exported glTF/GLB. Orchestrated by Hermes (the Captain's agent) with
 builder/critic subagent waves. Live progress: `/progress.html`.
 
+## Rendering
+
+Vanilla Three.js. Dense static meshes can build a three-mesh-bvh tree, loaded
+only when a mesh is dense enough. The post look is pmndrs `postprocessing`
+(MIT): one `EffectPass` plus the `RenderPass`. Low is FXAA and a light
+vignette. High adds a half-resolution bloom on the brightest stars and coins.
+There is no tone map, so the cel colors stay as they are, and no SSAO, SSR,
+or depth of field. Quality is Off / Low / High (`?fx=`, the pause menu, and
+`window.__SSP__.effectsQuality()`). Off does not load the library. Phones and
+low-DPR displays default to Low; a desktop pointer with DPR above 1 defaults
+to High. The choice is visual only. Gameplay, the rng, and the dice do not
+read it.
+
 ## The game (scope)
 
 4 characters race around **Fizzy Fairground** (a carnival board) collecting
@@ -92,4 +105,6 @@ verbatim back to the builder. No fixed round cap — loop until wowed.
 
 `window.__SSP__` → `state()` `goto(s)` `advance(n)` `autoplay(b)` `rollDice(f)`
 `seed(n)` `reset()` `audioLevels()` `perf()` `startMatch(kinds)`
-URLs: `?seed=7&screen=showcase&autoplay=1&audio=0&speed=2`
+`effectsQuality()` `setEffectsQuality(q)`
+`state().effectsQuality` is `"off"`, `"low"`, or `"high"`.
+URLs: `?seed=7&screen=showcase&autoplay=1&audio=0&speed=2&fx=off`

@@ -2,6 +2,34 @@
  * SUPER STAR PARTY — tuning numbers. No magic numbers in gameplay code.
  * Wave agents may ADD keys; never rename/remove keys other agents use.
  */
+
+/** Post look. Off does not load the postprocessing chunk. */
+export const effectsQualityChoices = ["off", "low", "high"] as const;
+export type EffectsQuality = (typeof effectsQualityChoices)[number];
+
+/** Same key the pause menu writes. `?fx=` overrides it for one session. */
+export const EFFECTS_QUALITY_STORAGE_KEY = "ssp.effectsQuality";
+
+export function isEffectsQuality(value: string | null | undefined): value is EffectsQuality {
+  return value === "off" || value === "low" || value === "high";
+}
+
+/**
+ * High on a desktop pointer with DPR above 1.
+ * Low on a phone, a coarse pointer, a narrow window, or a low-DPR display.
+ * Off is only a manual choice.
+ */
+export function defaultEffectsQuality(): EffectsQuality {
+  if (typeof window === "undefined") return "low";
+  const dpr = window.devicePixelRatio || 1;
+  const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  const narrow = window.matchMedia?.("(max-width: 820px)").matches ?? false;
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  const mobile = coarse || narrow || /Mobi|Android|iPhone|iPad|iPod/i.test(ua);
+  if (mobile || dpr <= 1) return "low";
+  return "high";
+}
+
 export const settings = {
   // ---- engine ----
   maxDelta: 1 / 20, // clamp frame delta (s)
@@ -115,4 +143,22 @@ export const settings = {
   bannerTime: 1.8, // big banner text hold (s)
   coinTweenTime: 0.5,
   popupTime: 1.6, // space-result popup hold (s)
+
+  // ---- post ----
+  // One EffectPass on Low and High (FXAA + vignette; High also blooms).
+  // Bloom's mip chain starts at half resolution inside that pass.
+  // Off skips the library. Live choice: defaultEffectsQuality(), then
+  // localStorage, then ?fx=. Gameplay does not read these numbers.
+  effects: {
+    bloomThreshold: 0.9, // only the hottest highlights (stars, coin glints)
+    bloomSmoothing: 0.08,
+    bloomIntensity: 0.4,
+    bloomRadius: 0.4,
+    bloomLevels: 4, // mip count; each level is half the one above
+    vignetteOffset: 0.35,
+    vignetteDarknessLow: 0.26,
+    vignetteDarknessHigh: 0.4,
+    fxaaSamplesLow: 8,
+    fxaaSamplesHigh: 12,
+  },
 } as const;
