@@ -836,6 +836,7 @@ const balloonPop: Minigame = {
   id: "balloon_pop",
   name: "Balloon Pop",
   genre: "target",
+  howTo: "Tap the balloons in your column. Pop the most before they float away to win.",
 
   setup(ctx: MinigameContext): void {
     const portrait = window.innerWidth / window.innerHeight < 1;

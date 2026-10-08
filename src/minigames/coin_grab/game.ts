@@ -1076,6 +1076,7 @@ export const coinGrabMinigame: Minigame = {
   id: "coin_grab",
   name: "Coin Grab",
   genre: "collect",
+  howTo: "Hold and drag to chase the coins, and tap to hop. Whoever has the most when time runs out wins.",
 
   setup(ctx: MinigameContext): void {
     const cam = ctx.camera;

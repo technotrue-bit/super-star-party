@@ -26,7 +26,10 @@ export interface MinigameEntry {
   name: string;
   /** Pack for weighting, filtering, and no-repeat-within-pack. */
   pack?: MinigamePackId;
-  /** Short description for the pre-screen. */
+  /**
+   * Phone how-to for the START MINI GAME card: controls and how to win.
+   * Copied from the minigame's required `howTo` when the module loads.
+   */
   description?: string;
 }
 
@@ -57,12 +60,28 @@ export function resetMinigameTracking(): void {
   for (const p of PACK_IDS) playedByPack.set(p, new Set());
 }
 
-export function minigameCatalog(): { id: string; name: string; pack: string }[] {
+export function minigameCatalog(): { id: string; name: string; pack: string; description: string }[] {
   return REGISTRY.map((e) => ({
     id: e.id,
     name: e.name,
     pack: e.pack ?? "midway",
+    description: e.description?.trim() ?? "",
   }));
+}
+
+/** How-to blurb registered for this id, if the module has loaded. */
+export function minigameDescription(id: string): string | undefined {
+  const text = REGISTRY.find((e) => e.id === id)?.description?.trim();
+  return text || undefined;
+}
+
+/** Every registered minigame must have a non-empty how-to. */
+export function assertMinigameHowTos(): void {
+  for (const entry of REGISTRY) {
+    if (!entry.description?.trim()) {
+      throw new Error(`[minigames] '${entry.id}' is registered without a how-to`);
+    }
+  }
 }
 
 // Initialize on load so the first pick never crashes on an undefined set.

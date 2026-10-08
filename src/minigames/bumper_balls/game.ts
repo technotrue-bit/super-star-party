@@ -145,6 +145,7 @@ export const bumperBallsMinigame: Minigame = {
   id: "bumper_balls",
   name: "Bumper Balls",
   genre: "survival",
+  howTo: "Hold and drag to steer and bump everyone else out of the ring. Last one still in wins.",
 
   setup(ctx: MinigameContext): void {
     /* ---- camera: party top-down on the stage ---- */

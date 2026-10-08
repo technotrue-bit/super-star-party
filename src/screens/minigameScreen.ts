@@ -49,6 +49,7 @@ import {
   type MinigameContext,
   type MinigameEntry,
 } from "../minigames/framework";
+import { minigameDescription } from "../minigames/registry";
 import { isContactMinigame, loadRapier } from "../physics/contact";
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
@@ -1004,19 +1005,21 @@ const minigameScreenImpl: MgScreenState & Screen = {
   },
 };
 
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"]/g, (ch) => {
+    if (ch === "&") return "&amp;";
+    if (ch === "<") return "&lt;";
+    if (ch === ">") return "&gt;";
+    return "&quot;";
+  });
+}
+
+/**
+ * How-to for the START card. Registered games supply this as `howTo`
+ * (controls and how to win). The fallback is only for an unknown id.
+ */
 export function getMinigameDescription(id: string, name: string): string {
-  const map: Record<string, string> = {
-    balloon_pop: "Pop balloons before they float away! Quick reflexes win big points.",
-    bumper_balls: "Bump other players out of the shrinking ring. Last one standing wins!",
-    cake_dash: "Race through the obstacle course. Avoid the forks and be first to the finish!",
-    coin_cannon: "Aim and fire coins into the moving baskets. Most coins in the basket wins.",
-    coin_grab: "Grab as many coins as you can before time runs out. Watch out for the others!",
-    drum_solo: "Hit the drums in time with the beat. Perfect timing scores the most points.",
-    memory_match: "Flip cards and find the matches. Memory is key to victory.",
-    pipe_puzzle: "Guide the water through the pipes to the exit. Solve it fast!",
-    push_of_war: "Push the crate to the other team's side! Teamwork and strength matter here.",
-  };
-  return map[id] || `Play ${name} and show your skills!`;
+  return minigameDescription(id) ?? `Play ${name} and show your skills!`;
 }
 
 export async function showMinigamePreview(name: string, description: string): Promise<boolean> {
@@ -1026,8 +1029,8 @@ export async function showMinigamePreview(name: string, description: string): Pr
     root.innerHTML = `
       <div style="background:${palette.ink};border:5px solid ${palette.cream};border-radius:20px;padding:20px 16px;width:min(92vw, 420px);max-height:calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px);overflow-y:auto;box-sizing:border-box;text-align:center;box-shadow:0 8px 0 ${palette.ink};">
         <div style="font-size:clamp(26px, 8vw, 44px);font-weight:700;color:${palette.sun};margin-bottom:4px;line-height:1.05;text-shadow:0 3px 0 ${palette.ink};">MINI GAME TIME!</div>
-        <div style="font-size:clamp(22px, 6vw, 34px);font-weight:700;color:${palette.cream};margin-bottom:8px;line-height:1.1;">${name}</div>
-        <div style="color:${palette.cream};font-size:17px;line-height:1.4;margin-bottom:18px;">${description}</div>
+        <div style="font-size:clamp(22px, 6vw, 34px);font-weight:700;color:${palette.cream};margin-bottom:8px;line-height:1.1;">${escapeHtml(name)}</div>
+        <div id="mg-howto" data-mg-howto style="color:${palette.cream};font-size:16px;line-height:1.35;margin-bottom:14px;">${escapeHtml(description)}</div>
         <div style="color:${palette.cream};opacity:0.75;font-size:14px;margin-bottom:16px;">Get ready, then start.</div>
         <button id="mg-start-btn" style="background:${palette.sunDeep};color:${palette.ink};border:4px solid ${palette.ink};border-radius:14px;padding:14px 20px;min-height:56px;width:100%;font-size:22px;font-weight:700;cursor:pointer;touch-action:manipulation;font-family:inherit;">START MINI GAME</button>
       </div>

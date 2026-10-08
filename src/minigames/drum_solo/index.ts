@@ -596,6 +596,7 @@ const drumSolo: Minigame = {
   id: "drum_solo",
   name: "Drum Solo",
   genre: "rhythm",
+  howTo: "Tap when the shrinking ring lands on the target. The best timing wins.",
 
   setup(ctx: MinigameContext) {
     const st: DrumSoloState = {

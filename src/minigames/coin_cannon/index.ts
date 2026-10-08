@@ -785,6 +785,7 @@ const coinCannon: Minigame = {
   id: "coin_cannon",
   name: "Coin Cannon",
   genre: "timing",
+  howTo: "Tap to fire a coin into the moving basket. The highest score wins.",
 
   setup(ctx: MinigameContext): void {
     const st: State = {

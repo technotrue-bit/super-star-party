@@ -156,6 +156,7 @@ const pipePuzzle: Minigame = {
   id: "pipe_puzzle",
   name: "Pipe Puzzle",
   genre: "puzzle",
+  howTo: "Tap a pipe to turn it. Connect the water to the star more times than the others to win.",
 
   setup(ctx: MinigameContext) {
     const st: PipeState = {

@@ -169,6 +169,7 @@ const memoryMatch: Minigame = {
   id: "memory_match",
   name: "Memory Match",
   genre: "memory",
+  howTo: "Tap two cards to flip them. Whoever finds the most pairs wins.",
 
   setup(ctx: MinigameContext) {
     const st: MemoryMatchState = {
