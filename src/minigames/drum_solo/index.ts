@@ -35,7 +35,7 @@
  * orchestrator's index.ts wiring (if any) is deduped by id.
  */
 import * as THREE from "three";
-import { automatedSeatIds, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
+import { automatedSeatIds, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
@@ -598,6 +598,10 @@ const drumSolo: Minigame = {
   name: "Drum Solo",
   genre: "rhythm",
   howTo: "Tap when the shrinking ring lands on the target. The best timing wins.",
+  goal: "Hit the ring on time",
+  tap: "HIT",
+  steer: false,
+  tapSfx: "pop",
 
   setup(ctx: MinigameContext) {
     const st: DrumSoloState = {
@@ -704,7 +708,7 @@ const drumSolo: Minigame = {
 
   update(dt: number) {
     const st = (drumSolo as unknown as { _st?: DrumSoloState })._st;
-    if (!st || st.finished) return;
+    if (!st || st.finished || isPracticeBeat()) return;
     const ctx = st.ctx;
     const t = ctx.time;
 

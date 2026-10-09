@@ -23,7 +23,7 @@
  * moment it loads — no edits to src/minigames/index.ts required.
  */
 import * as THREE from "three";
-import { isLocalPlayer, type Minigame, type MinigameContext } from "../framework";
+import { isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
 import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
@@ -157,6 +157,10 @@ const pipePuzzle: Minigame = {
   name: "Pipe Puzzle",
   genre: "puzzle",
   howTo: "Tap a pipe to turn it. Connect the water to the star more times than the others to win.",
+  goal: "Connect the pipes to the star",
+  tap: "TURN",
+  steer: true,
+  tapSfx: "hop",
 
   setup(ctx: MinigameContext) {
     const st: PipeState = {
@@ -305,7 +309,7 @@ const pipePuzzle: Minigame = {
 
   update(dt: number) {
     const st = (pipePuzzle as unknown as { _st?: PipeState })._st;
-    if (!st || st.finished) return;
+    if (!st || st.finished || isPracticeBeat()) return;
     const ctx = st.ctx;
     st.time += dt;
     st.phaseT += dt;

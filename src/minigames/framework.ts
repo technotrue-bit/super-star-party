@@ -6,6 +6,9 @@
  *   interface Minigame {
  *     id: string;  name: string;  genre: MinigameGenre;
  *     howTo: string;         // one or two sentences: touch controls + how to win
+ *     goal: string;          // one line shown in practice and the opening seconds
+ *     tap: string | null;    // TAP verb (DASH, PUSH). Null hides a dead button
+ *     steer: boolean;        // false hides the MOVE stick
  *     setup(ctx): void;      // build your arena ONCE per round
  *     update(dt): void;      // advance the game; call ctx.finish(ranking) when done
  *     teardown(): void;      // remove + dispose EVERYTHING you added to ctx.scene
@@ -147,6 +150,8 @@ export function stickGround(
 
 /**
  * Probe-only controls on `window.__SSP_CONTACT__`.
+ * Dev and CI (`npm run dev`, or a build with VITE_SSP_TEST=1) honor it.
+ * A production build ignores the object, so a page cannot park seats.
  * Absent during normal play, so the CPU branch and the rng stream stay as they are.
  */
 interface ContactProbeHook {
@@ -155,10 +160,109 @@ interface ContactProbeHook {
   placeLocal?: { x: number; z: number } | null;
 }
 
+/** True when this build may honor the contact probe hook. */
+export function contactProbeLive(): boolean {
+  if (import.meta.env.DEV) return true;
+  const flag = import.meta.env.VITE_SSP_TEST;
+  return flag === "1" || flag === "true";
+}
+
 function contactHook(): ContactProbeHook | null {
-  if (typeof window === "undefined") return null;
+  if (typeof window === "undefined" || !contactProbeLive()) return null;
   const hook = (window as unknown as { __SSP_CONTACT__?: ContactProbeHook }).__SSP_CONTACT__;
   return hook ?? null;
+}
+
+/**
+ * Practice beat. The screen sets this while the local player tries the
+ * controls. Sim steps must return before any rng draw, CPU choice, score,
+ * knockout, or timer advance. Autoplay and online rooms never set it.
+ */
+let practiceBeat = false;
+
+export function setPracticeBeat(on: boolean): void {
+  practiceBeat = on;
+}
+
+export function isPracticeBeat(): boolean {
+  return practiceBeat;
+}
+
+/** How long a contact dash stays at burst speed, then the wait before the next. */
+export const DASH_BURST = 0.18;
+export const DASH_COOLDOWN = 0.9;
+/** Modest bump above a walk (bumper 4.5, coin grab 5). One short burst, then the cap returns. */
+export const DASH_SPEED = 8.2;
+
+let tapCd = 0;
+let tapCdMax = 0;
+/** True once a game ticks the TAP cooldown from its own fixed step. */
+let tapSimClock = false;
+
+export function armTapCooldown(seconds: number): void {
+  const s = Math.max(0, seconds);
+  tapCdMax = s;
+  tapCd = s;
+}
+
+export function tapReady(): boolean {
+  return tapCd <= 0;
+}
+
+/** 1 just fired, 0 ready. The TAP ring uses this. */
+export function tapCooldownRatio(): number {
+  if (tapCdMax <= 0 || tapCd <= 0) return 0;
+  return tapCd / tapCdMax;
+}
+
+export function tickTapCooldown(dt: number): void {
+  if (tapCd > 0) tapCd = Math.max(0, tapCd - dt);
+}
+
+/**
+ * A game with a sim-time TAP cooldown calls this in setup, then calls
+ * tickTapCooldown(FIXED_DT) once per fixed step. The screen then stops
+ * ticking it during play, so the ring and gate follow the same clock as
+ * the game's dash (dropped steps and a stalled sim hold the cooldown too).
+ */
+export function useSimTapClock(): void {
+  tapSimClock = true;
+}
+
+export function tapClockIsSim(): boolean {
+  return tapSimClock;
+}
+
+export function resetTapCooldown(): void {
+  tapCd = 0;
+  tapCdMax = 0;
+  tapSimClock = false;
+}
+
+/**
+ * Unit ground direction for a human dash.
+ * Stick wins, then a pointer aim, then a held key, then the way the avatar faces.
+ * No rng.
+ */
+export function dashDirection(
+  camera: THREE.Camera,
+  stickX: number,
+  stickY: number,
+  facingYaw: number,
+  keyDir: { x: number; z: number } | null,
+  pointerDir: { x: number; z: number } | null,
+): { x: number; z: number } {
+  const analog = stickGround(camera, stickX, stickY);
+  const raw = analog
+    ? { x: analog.x, z: analog.z }
+    : pointerDir
+      ? pointerDir
+      : keyDir && (keyDir.x !== 0 || keyDir.z !== 0)
+        ? keyDir
+        : { x: Math.sin(facingYaw), z: Math.cos(facingYaw) };
+  const len = Math.hypot(raw.x, raw.z);
+  if (len < 1e-6) return { x: Math.sin(facingYaw), z: Math.cos(facingYaw) };
+  return { x: raw.x / len, z: raw.z / len };
 }
 
 /** True only when a probe has asked CPU seats to hold still. */
@@ -225,6 +329,22 @@ export interface Minigame {
    * does not typecheck without it, and registration refuses a blank one.
    */
   howTo: string;
+  /**
+   * One line during the practice beat and the first seconds of play.
+   * The win condition, short enough to read while holding the phone.
+   */
+  goal: string;
+  /**
+   * Verb on the TAP button (DASH, PUSH, JUMP). Null hides the button
+   * because TAP does nothing in this game.
+   */
+  tap: string | null;
+  /** False hides the MOVE stick. The game never reads a direction. */
+  steer: boolean;
+  /** Seconds TAP must wait after a fire. 0 means mash. Omit for 0. */
+  tapCooldown?: number;
+  /** Sound for a practice TAP. A live round keeps the game's own sound. */
+  tapSfx?: string;
   setup(ctx: MinigameContext): void;
   update(dt: number): void;
   teardown(): void;

@@ -11,10 +11,14 @@
  * Exits non-zero when any check fails.
  */
 import { chromium } from "@playwright/test";
+import fs from "node:fs";
 
 const BASE = process.env.SSP_URL ?? "http://127.0.0.1:5177";
 const EXPECT_TRANSPORT = (process.env.SSP_EXPECT_TRANSPORT ?? "").trim();
+const PROD = process.env.SSP_PROD === "1";
 const VIEW = { width: 390, height: 844 };
+const SHOTS = process.env.SSP_SHOTS ?? "/opt/cursor/artifacts";
+fs.mkdirSync(SHOTS, { recursive: true });
 
 const reasons = [];
 function fail(message) {
@@ -65,6 +69,139 @@ async function readMirror(page, id) {
   }, id);
 }
 
+async function waitPhase(page, phase) {
+  await page.waitForFunction((name) => document.body.dataset.mgPhase === name, phase, { timeout: 20000 });
+}
+
+async function shootPractice(page, id) {
+  const name = id.replaceAll("_", "-");
+  const path = `${SHOTS}/practice-${name}.png`;
+  await page.screenshot({ path });
+  console.log(`   practice shot ${path}`);
+}
+
+async function assertTeach(page, id, verb) {
+  const ui = await page.evaluate(() => {
+    const box = (el) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const s = getComputedStyle(el);
+      return {
+        w: r.width,
+        h: r.height,
+        text: (el.textContent || "").replace(/\s+/g, " ").trim(),
+        shown: s.display !== "none" && s.visibility !== "hidden" && r.width > 0 && r.height > 0,
+      };
+    };
+    const goal = document.querySelector("[data-mg-goal]");
+    const label = document.querySelector(".ssp-act__label");
+    const act = document.querySelector(".ssp-act");
+    const marker = document.querySelector("[data-seat-marker='0']");
+    return {
+      phase: document.body.dataset.mgPhase ?? "",
+      goal: box(goal),
+      label: box(label),
+      act: box(act),
+      marker: box(marker),
+      you: marker?.classList.contains("ssp-seat--you") ?? false,
+    };
+  });
+  console.log(
+    `   teach phase=${ui.phase} goal="${ui.goal?.text ?? ""}" tap="${ui.label?.text ?? ""}" marker=${ui.marker?.shown} you=${ui.you}`,
+  );
+  if (ui.phase !== "practice") fail(`${id}: expected the practice beat, phase is ${ui.phase}`);
+  if (!ui.goal?.shown || !ui.goal.text) fail(`${id}: goal line is not visible`);
+  if (!ui.act?.shown) fail(`${id}: TAP button is hidden`);
+  if (ui.label?.text !== verb) fail(`${id}: TAP label is "${ui.label?.text ?? ""}", wanted ${verb}`);
+  if (!ui.marker?.shown) fail(`${id}: own-seat marker for seat 0 is missing`);
+  if (!ui.you) fail(`${id}: YOU tag is missing during practice`);
+}
+
+async function readClock(page, id) {
+  return page.evaluate((gameId) => {
+    if (gameId === "bumper_balls") {
+      const mirror = window.__BB__;
+      return { t: mirror?.t ?? null, score: (mirror?.elimOrder ?? []).length };
+    }
+    if (gameId === "coin_grab") {
+      const mirror = window.__CG__;
+      const chips = mirror?.chips ?? [];
+      return { t: mirror?.t ?? null, score: chips.reduce((sum, n) => sum + n, 0) };
+    }
+    const mirror = window.__POW__;
+    const contributions = mirror?.contributions ?? [];
+    return { t: mirror?.t ?? null, score: contributions.reduce((sum, n) => sum + n, 0) };
+  }, id);
+}
+
+async function assertPracticeFrozen(page, id) {
+  const before = await readClock(page, id);
+  await page.waitForTimeout(450);
+  const after = await readClock(page, id);
+  console.log(`   practice clock ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
+  if (before.t !== 0 || after.t !== 0) fail(`${id}: practice advanced the timer (${before.t} -> ${after.t})`);
+  if (before.score !== 0 || after.score !== 0) {
+    fail(`${id}: practice changed the score (${before.score} -> ${after.score})`);
+  }
+}
+
+async function assertDash(page) {
+  await placeLocal(page, "bumper_balls", 0, 0);
+  const before = await page.evaluate(() => {
+    const seat = window.__BB__?.seats?.find((s) => s.controller === "local");
+    return seat?.speed ?? null;
+  });
+  const box = await page.locator(".ssp-act").boundingBox();
+  if (!box) {
+    fail("bumper_balls: TAP button missing for the dash");
+    return;
+  }
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  let speed = before;
+  try {
+    await page.waitForFunction(() => {
+      const seat = window.__BB__?.seats?.find((s) => s.controller === "local");
+      return (seat?.speed ?? 0) >= 6;
+    }, null, { timeout: 2500 });
+    speed = await page.evaluate(() => window.__BB__?.seats?.find((s) => s.controller === "local")?.speed ?? null);
+  } catch {
+    speed = await page.evaluate(() => window.__BB__?.seats?.find((s) => s.controller === "local")?.speed ?? null);
+  }
+  console.log(`   dash speed ${before} -> ${speed}`);
+  if (typeof speed !== "number" || speed < 6) {
+    fail(`bumper_balls: TAP did not dash (speed ${before} -> ${speed})`);
+  } else {
+    console.log("   TAP dashed");
+  }
+}
+
+async function checkProdHook(page) {
+  console.log("\nprod hook");
+  await boot(page);
+  await openGame(page, "bumper_balls");
+  await waitPhase(page, "play");
+  const start = await readMirror(page, "bumper_balls");
+  await page.evaluate(() => {
+    const hook = (window.__SSP_CONTACT__ ??= {});
+    hook.freezeCpu = true;
+    hook.placeLocal = { x: 0, z: 0 };
+  });
+  await page.waitForFunction(() => (window.__BB__?.t ?? 0) > 0.45, null, { timeout: 8000 });
+  const end = await readMirror(page, "bumper_balls");
+  const local = (end.seats ?? []).find((seat) => seat.controller === "local");
+  const dist = local ? Math.hypot(local.body.x, local.body.z) : 99;
+  const cpuMoved = (end.seats ?? []).some((seat) => {
+    if (seat.controller === "local") return false;
+    const was = (start.seats ?? []).find((other) => other.id === seat.id);
+    if (!was) return false;
+    return Math.hypot(seat.body.x - was.body.x, seat.body.z - was.body.z) > 0.2;
+  });
+  console.log(`   local dist from parked origin=${dist.toFixed(2)} cpuMoved=${cpuMoved}`);
+  if (dist < 0.8) fail("prod build honored __SSP_CONTACT__ placeLocal");
+  if (!cpuMoved) fail("prod build honored __SSP_CONTACT__ freezeCpu");
+  else console.log("   prod build ignored __SSP_CONTACT__");
+}
+
 async function waitForStick(page) {
   await page.waitForFunction(() => {
     const stick = document.querySelector(".ssp-touch.ssp-touch--on .ssp-stick");
@@ -89,6 +226,35 @@ const DRAG_SIM_SEC = 0.2;
  */
 const AXIS_TOLERANCE_DEG = 35;
 const MIN_AXIS_PX = 6;
+/**
+ * Coin grab's vertical drags hold longer. From rest the seat covers
+ * 0.5 * ACCEL * t^2 = 6 * t^2 units (ACCEL 12, the 5 u/s cap is not reached
+ * before 0.42s), so 0.2s is only 0.24u. Its steep portrait camera maps that to
+ * about 36px/u on screen-y for "down", which left 4.5-5.8px against the 6px floor.
+ * 0.35s is 0.74u, about 26px, four times the floor. Coin grab has no ring edge,
+ * so the longer hold cannot knock the seat out.
+ */
+const COIN_GRAB_VERTICAL_SIM_SEC = 0.35;
+
+function dragSimSec(id, drag) {
+  return id === "coin_grab" && drag.axis === "y" ? COIN_GRAB_VERTICAL_SIM_SEC : DRAG_SIM_SEC;
+}
+
+/**
+ * Wait until the local model sits back on its body.
+ * The mirror's screen point is the model, and the walk hop lifts it about 0.14u,
+ * so a sample mid-hop shifts screen-y by a few pixels.
+ */
+async function settledLocalSeat(page, id) {
+  const deadline = Date.now() + 4000;
+  let seat = await localSeat(page, id);
+  while (Date.now() < deadline) {
+    if (seat && gap(seat) <= 0.02) return seat;
+    await page.waitForTimeout(30);
+    seat = await localSeat(page, id);
+  }
+  return seat;
+}
 
 function mirrorTime(gameId) {
   const mirror = gameId === "bumper_balls" ? window.__BB__ : window.__CG__;
@@ -148,17 +314,18 @@ async function dragStick(page, id, dx, dy, simSec) {
   if (!box) throw new Error("move stick is not on screen");
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
+  // Sample the parked, settled seat before the press so no early motion is lost.
+  const before = await settledLocalSeat(page, id);
   await page.mouse.move(cx, cy);
   await page.mouse.down();
   await page.mouse.move(cx + dx, cy + dy);
-  const before = await localSeat(page, id);
   const start = await simTime(page, id);
   try {
     await waitSim(page, id, start, simSec);
   } finally {
     await releasePointer(page);
   }
-  const after = await localSeat(page, id);
+  const after = await settledLocalSeat(page, id);
   if (!before?.screen || !after?.screen) return null;
   return {
     dx: after.screen.x - before.screen.x,
@@ -256,6 +423,12 @@ async function checkArena(page, id) {
     }
   }
 
+  await waitPhase(page, "practice");
+  await page.waitForTimeout(180);
+  await shootPractice(page, id);
+  await assertTeach(page, id, "DASH");
+  await assertPracticeFrozen(page, id);
+  await waitPhase(page, "play");
   await waitForStick(page);
   const drags = [
     { name: "up", dx: 0, dy: -52, axis: "y", sign: -1, label: "up" },
@@ -266,7 +439,7 @@ async function checkArena(page, id) {
   ];
   for (const drag of drags) {
     await placeLocal(page, id, 0, 0);
-    const moved = await dragStick(page, id, drag.dx, drag.dy, DRAG_SIM_SEC);
+    const moved = await dragStick(page, id, drag.dx, drag.dy, dragSimSec(id, drag));
     assertMoved(id, drag.name, moved, drag);
     await assertAliveGap(page, id, "after " + drag.name);
   }
@@ -285,6 +458,7 @@ async function checkArena(page, id) {
     console.log("   local seat still alive");
   }
   await assertAliveGap(page, id, "after the survival drag");
+  if (id === "bumper_balls") await assertDash(page);
 }
 
 async function checkPush(page) {
@@ -297,7 +471,12 @@ async function checkPush(page) {
   if (EXPECT_TRANSPORT && snap.transport !== EXPECT_TRANSPORT) {
     fail(`push_of_war: party transport is ${snap.transport}, wanted ${EXPECT_TRANSPORT}`);
   }
-  await waitForStick(page);
+  await waitPhase(page, "practice");
+  await page.waitForTimeout(180);
+  await shootPractice(page, "push_of_war");
+  await assertTeach(page, "push_of_war", "PUSH");
+  await assertPracticeFrozen(page, "push_of_war");
+  await waitPhase(page, "play");
   const before = await page.evaluate(() => window.__POW__?.contributions?.[0] ?? null);
   const box = await page.locator(".ssp-act").boundingBox();
   if (!box) {
@@ -332,10 +511,13 @@ const errors = [];
 page.on("pageerror", (err) => errors.push(String(err).slice(0, 240)));
 
 try {
-  console.log(`contact control probe @ ${BASE} viewport ${VIEW.width}x${VIEW.height}`);
-  await checkArena(page, "bumper_balls");
-  await checkArena(page, "coin_grab");
-  await checkPush(page);
+  console.log(`contact control probe @ ${BASE} viewport ${VIEW.width}x${VIEW.height}${PROD ? " prod" : ""}`);
+  if (PROD) await checkProdHook(page);
+  else {
+    await checkArena(page, "bumper_balls");
+    await checkArena(page, "coin_grab");
+    await checkPush(page);
+  }
   if (errors.length) fail(`page errors: ${errors.join(" | ")}`);
 } catch (err) {
   fail(err?.message ?? String(err));

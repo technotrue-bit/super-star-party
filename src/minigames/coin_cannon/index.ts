@@ -14,7 +14,7 @@
  * frame-rate independent.
  */
 import * as THREE from "three";
-import { isLocalPlayer, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
+import { isLocalPlayer, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import { registerMinigame } from "../registry";
 import { palette, hex } from "../../config/palette";
 import { celGradient } from "../../characters/cel";
@@ -787,6 +787,10 @@ const coinCannon: Minigame = {
   name: "Coin Cannon",
   genre: "timing",
   howTo: "Tap to fire a coin into the moving basket. The highest score wins.",
+  goal: "Fire coins into the basket",
+  tap: "FIRE",
+  steer: false,
+  tapSfx: "ui.click",
 
   setup(ctx: MinigameContext): void {
     const st: State = {
@@ -892,7 +896,7 @@ const coinCannon: Minigame = {
 
   update(dt: number): void {
     const st = state;
-    if (!st || st.finished) return;
+    if (!st || st.finished || isPracticeBeat()) return;
     const { ctx } = st;
     st.t += dt;
 

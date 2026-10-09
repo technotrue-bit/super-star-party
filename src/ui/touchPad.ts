@@ -1,6 +1,8 @@
 /**
  * Phone controls for every minigame.
  * A left thumb stick steers; a right button fires the confirm action.
+ * The button wears the game's verb (DASH, PUSH, JUMP). A dead verb is hidden.
+ * Desktop shows a key hint instead of the thumb controls.
  * Parent this to #app (positioned) so it sits in the visible phone area,
  * not under the Safari toolbar.
  */
@@ -10,6 +12,12 @@ export interface TouchPad {
   show(): void;
   hide(): void;
   destroy(): void;
+  /** Verb null hides TAP. steer false hides MOVE. keys is the desktop hint. */
+  configure(opts: { verb: string | null; steer: boolean; keys: string }): void;
+  /** 1 = just fired, 0 = ready. Drives the cooldown ring. */
+  setCooldown(ratio: number): void;
+  pulse(): void;
+  deny(): void;
 }
 
 let stylesInjected = false;
@@ -66,13 +74,59 @@ function injectStyles(): void {
       box-shadow: 0 5px 0 ${palette.ink};
       color: ${palette.cream};
       font-family: Fredoka, sans-serif;
-      font-size: 28px; font-weight: 700;
+      font-size: 16px; font-weight: 700; letter-spacing: 0.04em;
       display: flex; align-items: center; justify-content: center;
+    }
+    .ssp-act .ssp-act__label {
+      position: static; transform: none;
+      font-size: 16px; letter-spacing: 0.04em;
+    }
+    .ssp-act__ring {
+      position: absolute; inset: -7px;
+      width: calc(100% + 14px); height: calc(100% + 14px);
+      transform: rotate(-90deg);
+      pointer-events: none;
+      opacity: 0;
+    }
+    .ssp-act__ring circle {
+      fill: none;
+      stroke: ${palette.cream};
+      stroke-width: 3.5;
+      stroke-linecap: round;
     }
     .ssp-act:active, .ssp-act--down {
       transform: translateY(3px);
       box-shadow: 0 2px 0 ${palette.ink};
     }
+    .ssp-act--pulse { animation: sspActPulse .22s ease-out; }
+    @keyframes sspActPulse {
+      0% { transform: scale(1); }
+      40% { transform: scale(1.12); }
+      100% { transform: scale(1); }
+    }
+    .ssp-act--deny { animation: sspActDeny .2s ease-out; }
+    @keyframes sspActDeny {
+      0% { transform: translateX(0); filter: saturate(1); }
+      25% { transform: translateX(-4px); filter: saturate(0.35); }
+      50% { transform: translateX(4px); filter: saturate(0.35); }
+      100% { transform: translateX(0); filter: saturate(1); }
+    }
+    .ssp-keys {
+      position: absolute; left: 50%;
+      bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+      transform: translateX(-50%);
+      pointer-events: none;
+      font-family: Fredoka, sans-serif;
+      font-size: 16px; font-weight: 700; letter-spacing: 0.04em;
+      color: ${palette.cream};
+      background: ${palette.ink};
+      border: 3px solid ${palette.cream};
+      border-radius: 999px;
+      padding: 8px 16px;
+      box-shadow: 0 4px 0 ${palette.ink};
+      white-space: nowrap;
+    }
+    .ssp-keys--deny { animation: sspActDeny .2s ease-out; }
   `;
   document.head.appendChild(style);
 }
@@ -82,6 +136,12 @@ export function steerAction(dx: number, dy: number): "up" | "down" | "left" | "r
   if (Math.hypot(dx, dy) < 0.28) return null;
   if (Math.abs(dx) > Math.abs(dy)) return dx < 0 ? "left" : "right";
   return dy < 0 ? "up" : "down";
+}
+
+/** Phones and the touch playtest get thumb controls. A mouse gets the key hint. */
+export function prefersTouchControls(): boolean {
+  if (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0) return true;
+  return window.matchMedia("(pointer: coarse)").matches;
 }
 
 export function createTouchPad(opts: {
@@ -109,13 +169,29 @@ export function createTouchPad(opts: {
   act.type = "button";
   act.className = "ssp-act";
   act.setAttribute("aria-label", "Action");
-  act.textContent = "★";
   const actLabel = document.createElement("div");
   actLabel.className = "ssp-act__label";
   actLabel.textContent = "TAP";
-  act.appendChild(actLabel);
+  const ring = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  ring.setAttribute("class", "ssp-act__ring");
+  ring.setAttribute("viewBox", "0 0 36 36");
+  ring.setAttribute("data-tap-ring", "");
+  const ringCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  ringCircle.setAttribute("cx", "18");
+  ringCircle.setAttribute("cy", "18");
+  ringCircle.setAttribute("r", "15.5");
+  ringCircle.setAttribute("pathLength", "100");
+  ringCircle.setAttribute("stroke-dasharray", "100");
+  ringCircle.setAttribute("stroke-dashoffset", "0");
+  ring.appendChild(ringCircle);
+  act.append(actLabel, ring);
 
-  root.append(stick, act);
+  const keys = document.createElement("div");
+  keys.className = "ssp-keys";
+  keys.setAttribute("data-mg-keys", "");
+  keys.style.display = "none";
+
+  root.append(stick, act, keys);
   host.appendChild(root);
 
   let stickId: number | null = null;
@@ -124,6 +200,8 @@ export function createTouchPad(opts: {
   let raf = 0;
   let actionId: number | null = null;
   let actionTimer = 0;
+  let verbText: string | null = "TAP";
+  let steerOn = true;
 
   const placeKnob = (dx: number, dy: number): void => {
     const max = 36;
@@ -205,9 +283,23 @@ export function createTouchPad(opts: {
   act.addEventListener("pointerup", onActUp);
   act.addEventListener("pointercancel", onActUp);
 
+  const applyLayout = (): void => {
+    const touch = prefersTouchControls();
+    const showAct = touch && !!verbText;
+    const showStick = touch && steerOn;
+    act.style.display = showAct ? "flex" : "none";
+    act.setAttribute("aria-hidden", showAct ? "false" : "true");
+    stick.style.display = showStick ? "block" : "none";
+    stick.setAttribute("aria-hidden", showStick ? "false" : "true");
+    const hint = keys.textContent ?? "";
+    const showKeys = !touch && hint.length > 0;
+    keys.style.display = showKeys ? "block" : "none";
+  };
+
   return {
     show(): void {
       root.classList.add("ssp-touch--on");
+      applyLayout();
     },
     hide(): void {
       root.classList.remove("ssp-touch--on");
@@ -217,6 +309,37 @@ export function createTouchPad(opts: {
     destroy(): void {
       this.hide();
       root.remove();
+    },
+    configure(next): void {
+      verbText = next.verb;
+      steerOn = next.steer;
+      const word = next.verb ?? "";
+      actLabel.textContent = word;
+      act.setAttribute("aria-label", word || "Action");
+      if (word) act.dataset.tapVerb = word;
+      else delete act.dataset.tapVerb;
+      keys.textContent = next.keys;
+      applyLayout();
+    },
+    setCooldown(ratio: number): void {
+      const clamped = Math.min(1, Math.max(0, ratio));
+      ringCircle.setAttribute("stroke-dashoffset", String((1 - clamped) * 100));
+      ring.style.opacity = clamped > 0.02 ? "1" : "0";
+    },
+    pulse(): void {
+      // Clear both feedback classes, reflow, then add one so it restarts.
+      act.classList.remove("ssp-act--pulse", "ssp-act--deny");
+      keys.classList.remove("ssp-keys--deny");
+      void act.offsetWidth;
+      if (act.style.display !== "none") act.classList.add("ssp-act--pulse");
+    },
+    deny(): void {
+      act.classList.remove("ssp-act--pulse", "ssp-act--deny");
+      keys.classList.remove("ssp-keys--deny");
+      void act.offsetWidth;
+      void keys.offsetWidth;
+      if (act.style.display !== "none") act.classList.add("ssp-act--deny");
+      else keys.classList.add("ssp-keys--deny");
     },
   };
 }

@@ -41,17 +41,26 @@ import { ui } from "../ui/kit";
 import { characterColor } from "../characters/roster";
 import { createCharacter, type Character } from "../characters/characterFactory";
 import { awardMinigameResult, playerCoins } from "../game/economy";
+import { isAutoplay } from "../core/debug";
 import {
+  armTapCooldown,
   consumePendingMinigame,
   loadMinigame,
+  resetTapCooldown,
   setPendingMinigame,
+  setPracticeBeat,
+  stickGround,
+  tapClockIsSim,
+  tapCooldownRatio,
+  tapReady,
+  tickTapCooldown,
   type Minigame,
   type MinigameContext,
   type MinigameEntry,
 } from "../minigames/framework";
 import { minigameDescription } from "../minigames/registry";
 import { isContactMinigame, loadRapier } from "../physics/contact";
-import { cpuPlayout, setCpuPlayout } from "../net/mode";
+import { cpuPlayout, onlineMatch, partyAssist, setCpuPlayout } from "../net/mode";
 import { isHost, publishMinigame } from "../net/session";
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
@@ -80,6 +89,46 @@ function injectMinigameStyles(): void {
 .ssp-mg-results { display:flex; flex-direction:column; gap:8px; text-align:left; font-size:17px; }
 .ssp-mg-results__row { background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:14px; padding:8px 12px; box-shadow:0 3px 0 ${palette.ink}; }
 .ssp-mg-results__row--win { background:${palette.sun}; font-weight:700; }
+.ssp-mg-goal {
+  position: fixed; left: 50%; top: calc(72px + env(safe-area-inset-top, 0px));
+  transform: translateX(-50%);
+  z-index: 76; pointer-events: none;
+  max-width: min(92vw, 420px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: ${palette.ink};
+  color: ${palette.cream};
+  border: 3px solid ${palette.cream};
+  box-shadow: 0 4px 0 ${palette.ink};
+  font-family: Fredoka, sans-serif;
+  font-size: 16px; font-weight: 700; letter-spacing: 0.01em;
+  text-align: center; line-height: 1.25;
+  display: none;
+}
+.ssp-mg-goal--on { display: block; }
+.ssp-seat {
+  position: fixed; z-index: 74; pointer-events: none;
+  display: none; color: ${palette.sun};
+}
+.ssp-seat--on { display: flex; flex-direction: column; align-items: center; min-width: 28px; min-height: 18px; }
+.ssp-seat__you {
+  background: ${palette.ink};
+  color: ${palette.cream};
+  border: 3px solid var(--ssp-seat, ${palette.sun});
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-family: Fredoka, sans-serif;
+  font-size: 13px; font-weight: 700; letter-spacing: 0.08em;
+  box-shadow: 0 2px 0 ${palette.ink};
+  white-space: nowrap;
+}
+.ssp-seat__arrow { display: none; width: 0; height: 0;
+  border-left: 10px solid transparent; border-right: 10px solid transparent;
+  border-bottom: 16px solid currentColor;
+  filter: drop-shadow(0 2px 0 ${palette.ink});
+}
+.ssp-seat--edge .ssp-seat__arrow { display: block; }
+.ssp-seat:not(.ssp-seat--you) .ssp-seat__you { display: none; }
 `;
   document.head.appendChild(style);
 }
@@ -443,7 +492,7 @@ function cancelHudCoinsTween(): void {
 /*  Screen state                                                       */
 /* ------------------------------------------------------------------ */
 
-type MgPhase = "vs-splash" | "countdown" | "play" | "results";
+type MgPhase = "vs-splash" | "countdown" | "practice" | "go" | "play" | "results";
 
 interface MgScreenState {
   _active?: boolean;
@@ -472,6 +521,18 @@ interface MgScreenState {
   _onPointerUp?: (e: PointerEvent) => void;
   _onKeyDown?: (e: KeyboardEvent) => void;
   _touch?: TouchPad;
+  _goalEl?: HTMLDivElement;
+  _seatEl?: HTMLDivElement;
+  _seatMark?: THREE.Group;
+  _markScratch?: THREE.Vector3;
+  _pose?: { ch: Character; x: number; y: number; z: number }[];
+  _stickX?: number;
+  _stickY?: number;
+  _practiceKey?: { x: number; z: number } | null;
+  _practiceKeyT?: number;
+  _practiceT?: number;
+  _goT?: number;
+  _bursts?: { mesh: THREE.Mesh; life: number }[];
   _vsT?: number;
   _vsSkip?: boolean;
   _vsSeed?: () => number;
@@ -481,6 +542,325 @@ interface MgScreenState {
 }
 
 const COUNT_TICKS = ["3", "2", "1"];
+const PRACTICE_SEC = 2.6;
+const GO_BEAT = 0.48;
+const GOAL_HOLD = 4.2;
+
+/** Autoplay, party assist, and online rooms skip the lesson so timing stays put. */
+function skipPracticeBeat(): boolean {
+  return isAutoplay() || partyAssist() || onlineMatch() || cpuPlayout();
+}
+
+function teachKeys(mg: Minigame): string {
+  const parts: string[] = [];
+  if (mg.steer) parts.push("WASD move");
+  if (mg.tap) parts.push(`Space = ${mg.tap}`);
+  return parts.join("  ·  ");
+}
+
+function keyDirFrom(action: string): { x: number; z: number } | null {
+  if (action === "up") return { x: 0, z: -1 };
+  if (action === "down") return { x: 0, z: 1 };
+  if (action === "left") return { x: -1, z: 0 };
+  if (action === "right") return { x: 1, z: 0 };
+  return null;
+}
+
+function localSeat(self: MgScreenState): { index: number; color: string; char: Character | undefined } {
+  const players = self._ctx?.players ?? [];
+  const found = players.findIndex((p) => p.controller === "local");
+  const index = found >= 0 ? found : 0;
+  return {
+    index,
+    color: players[index]?.color ?? palette.sun,
+    char: self._chars?.[index],
+  };
+}
+
+function ensureGoal(self: MgScreenState): void {
+  if (self._goalEl?.isConnected) return;
+  const el = document.createElement("div");
+  el.className = "ssp-mg-goal";
+  el.setAttribute("data-mg-goal", "");
+  document.body.appendChild(el);
+  self._goalEl = el;
+}
+
+function applyTeach(self: MgScreenState): void {
+  const mg = self._minigame;
+  if (!mg) return;
+  ensureGoal(self);
+  if (self._goalEl) {
+    self._goalEl.textContent = mg.goal;
+    self._goalEl.dataset.mgGoal = mg.goal;
+    self._goalEl.classList.add("ssp-mg-goal--on");
+  }
+  self._touch?.configure({
+    verb: mg.tap,
+    steer: mg.steer,
+    keys: teachKeys(mg),
+  });
+}
+
+function ensureMarker(self: MgScreenState): void {
+  const seat = localSeat(self);
+  const ch = seat.char;
+  if (!ch || self._seatMark) return;
+  const players = self._ctx?.players ?? [];
+  const seatId = players[seat.index]?.id ?? seat.index;
+  const color = hex(seat.color);
+  const group = new THREE.Group();
+  group.name = "ssp-seat-mark";
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.62, 0.86, 28),
+    new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.95 }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.06;
+  const arrow = new THREE.Mesh(
+    new THREE.ConeGeometry(0.2, 0.38, 4),
+    new THREE.MeshBasicMaterial({ color }),
+  );
+  arrow.position.y = 2.05;
+  arrow.rotation.x = Math.PI;
+  group.add(ring, arrow);
+  ch.group.add(group);
+  self._seatMark = group;
+
+  const el = document.createElement("div");
+  el.className = "ssp-seat ssp-seat--on";
+  el.dataset.seatMarker = String(seatId);
+  el.style.color = seat.color;
+  el.style.setProperty("--ssp-seat", seat.color);
+  const you = document.createElement("div");
+  you.className = "ssp-seat__you";
+  you.textContent = "YOU";
+  const edge = document.createElement("div");
+  edge.className = "ssp-seat__arrow";
+  el.append(you, edge);
+  document.body.appendChild(el);
+  self._seatEl = el;
+  self._markScratch = new THREE.Vector3();
+}
+
+function snapshotPose(self: MgScreenState): void {
+  self._pose = (self._chars ?? []).map((ch) => ({
+    ch,
+    x: ch.group.position.x,
+    y: ch.group.position.y,
+    z: ch.group.position.z,
+  }));
+}
+
+function restorePose(self: MgScreenState): void {
+  for (const pose of self._pose ?? []) {
+    pose.ch.group.position.set(pose.x, pose.y, pose.z);
+  }
+  self._pose = undefined;
+}
+
+function edgePoint(w: number, h: number, dx: number, dy: number): { x: number; y: number } {
+  const inset = 36;
+  const hw = Math.max(1, w / 2 - inset);
+  const hh = Math.max(1, h / 2 - inset);
+  if (Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4) return { x: w / 2, y: inset };
+  const s = Math.min(hw / Math.abs(dx), hh / Math.abs(dy));
+  return { x: w / 2 + dx * s, y: h / 2 + dy * s };
+}
+
+function tickMarker(self: MgScreenState): void {
+  const el = self._seatEl;
+  const cam = world.camera;
+  const ch = localSeat(self).char;
+  const scratch = self._markScratch;
+  if (!el || !cam || !ch || !scratch) return;
+  el.classList.add("ssp-seat--on");
+  ch.group.getWorldPosition(scratch);
+  scratch.y += 1.65;
+  cam.updateMatrixWorld();
+  scratch.project(cam);
+  const w = window.innerWidth || 1;
+  const h = window.innerHeight || 1;
+  const sx = (scratch.x * 0.5 + 0.5) * w;
+  const sy = (-scratch.y * 0.5 + 0.5) * h;
+  const behind = scratch.z > 1;
+  const margin = 28;
+  const arrow = el.querySelector<HTMLElement>(".ssp-seat__arrow");
+  const on = !behind && sx >= margin && sx <= w - margin && sy >= margin && sy <= h - margin;
+  if (on) {
+    el.classList.remove("ssp-seat--edge");
+    el.style.left = `${sx}px`;
+    el.style.top = `${sy}px`;
+    el.style.transform = "translate(-50%, -130%)";
+    if (arrow) arrow.style.transform = "";
+    return;
+  }
+  let dx = sx - w / 2;
+  let dy = sy - h / 2;
+  if (behind) {
+    dx = -dx;
+    dy = -dy;
+  }
+  const pt = edgePoint(w, h, dx, dy);
+  el.classList.add("ssp-seat--edge");
+  el.style.left = `${pt.x}px`;
+  el.style.top = `${pt.y}px`;
+  el.style.transform = "translate(-50%, -50%)";
+  if (arrow) arrow.style.transform = `rotate(${Math.atan2(dy, dx) + Math.PI / 2}rad)`;
+}
+
+function tickPracticeMove(self: MgScreenState, dt: number): void {
+  const ch = localSeat(self).char;
+  const cam = world.camera;
+  if (!ch || !cam) return;
+  self._practiceKeyT = (self._practiceKeyT ?? 0) + dt;
+  if ((self._practiceKeyT ?? 0) > 0.35) self._practiceKey = null;
+  const analog = stickGround(cam, self._stickX ?? 0, self._stickY ?? 0);
+  const dir = analog ?? self._practiceKey;
+  if (!dir) return;
+  const speed = 4.4;
+  const ox = ch.group.position.x + dir.x * speed * dt;
+  const oz = ch.group.position.z + dir.z * speed * dt;
+  const pose = self._pose?.find((p) => p.ch === ch);
+  if (pose && Math.hypot(ox - pose.x, oz - pose.z) > 3.2) return;
+  ch.group.position.x = ox;
+  ch.group.position.z = oz;
+  ch.setFacing(Math.atan2(dir.x, dir.z));
+}
+
+function spawnBurst(self: MgScreenState): void {
+  const scene = self._ctx?.scene;
+  const ch = localSeat(self).char;
+  if (!scene || !ch) return;
+  const color = hex(localSeat(self).color);
+  const mesh = new THREE.Mesh(
+    new THREE.RingGeometry(0.12, 0.34, 18),
+    new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.95 }),
+  );
+  mesh.rotation.x = -Math.PI / 2;
+  const at = new THREE.Vector3();
+  ch.group.getWorldPosition(at);
+  mesh.position.set(at.x, 0.16, at.z);
+  scene.add(mesh);
+  if (!self._bursts) self._bursts = [];
+  self._bursts.push({ mesh, life: 0.28 });
+}
+
+function tickBursts(self: MgScreenState, dt: number): void {
+  const list = self._bursts;
+  if (!list || list.length === 0) return;
+  for (let i = list.length - 1; i >= 0; i--) {
+    const burst = list[i];
+    burst.life -= dt;
+    const k = 1 - Math.max(0, burst.life) / 0.28;
+    const scale = 1 + k * 2.4;
+    burst.mesh.scale.setScalar(scale);
+    const mat = burst.mesh.material as THREE.MeshBasicMaterial;
+    mat.opacity = Math.max(0, 1 - k);
+    if (burst.life <= 0) {
+      burst.mesh.removeFromParent();
+      burst.mesh.geometry.dispose();
+      mat.dispose();
+      list.splice(i, 1);
+    }
+  }
+}
+
+function teachTap(self: MgScreenState): void {
+  const phase = self._phase;
+  if (phase !== "practice" && phase !== "play") return;
+  const mg = self._minigame;
+  if (!mg?.tap) return;
+  const wait = mg.tapCooldown ?? 0;
+  if (wait > 0 && !tapReady()) {
+    self._touch?.deny();
+    return;
+  }
+  if (wait > 0) armTapCooldown(wait);
+  self._touch?.pulse();
+  spawnBurst(self);
+  if (phase === "practice") {
+    if (mg.tapSfx) self._ctx?.playSfx(mg.tapSfx, { volume: 0.45, pitch: 1.12 });
+    const ch = localSeat(self).char;
+    const cam = world.camera;
+    if (ch && cam) {
+      const analog = stickGround(cam, self._stickX ?? 0, self._stickY ?? 0);
+      const raw = analog ?? self._practiceKey ?? {
+        x: Math.sin(ch.group.rotation.y),
+        z: Math.cos(ch.group.rotation.y),
+      };
+      const len = Math.hypot(raw.x, raw.z) || 1;
+      const pose = self._pose?.find((p) => p.ch === ch);
+      const nx = ch.group.position.x + (raw.x / len) * 0.9;
+      const nz = ch.group.position.z + (raw.z / len) * 0.9;
+      if (!pose || Math.hypot(nx - pose.x, nz - pose.z) <= 3.4) {
+        ch.group.position.x = nx;
+        ch.group.position.z = nz;
+      }
+      ch.setFacing(Math.atan2(raw.x, raw.z));
+      ch.anim.jump();
+    }
+    return;
+  }
+  document.body.dataset.sspAction = "1";
+  self._ctx?.input.key("confirm");
+}
+
+function showGo(self: MgScreenState): void {
+  const el = self._countEl;
+  if (el) {
+    el.textContent = "GO!";
+    el.classList.remove("ssp-mg-count--pop", "ssp-mg-count--go", "ssp-mg-count--out");
+    void el.offsetHeight;
+    el.classList.add("ssp-mg-count--pop", "ssp-mg-count--go");
+  }
+  audio.sfx.play("minigame.go");
+  const flash = self._flashEl;
+  if (flash) {
+    flash.style.background = palette.mint;
+    try {
+      flash.animate(
+        [{ opacity: 0 }, { opacity: 0.5, offset: 0.25 }, { opacity: 0 }],
+        { duration: 500, easing: "ease-out" },
+      );
+    } catch {
+      flash.style.opacity = "0";
+    }
+  }
+}
+
+function beginPractice(self: MgScreenState): void {
+  setPracticeBeat(true);
+  self._phase = "practice";
+  self._practiceT = 0;
+  self._practiceKey = null;
+  self._practiceKeyT = 0;
+  document.body.dataset.mgPhase = "practice";
+  snapshotPose(self);
+  ensureMarker(self);
+  applyTeach(self);
+  self._seatEl?.classList.add("ssp-seat--you");
+  self._touch?.show();
+}
+
+function beginGo(self: MgScreenState): void {
+  setPracticeBeat(false);
+  restorePose(self);
+  self._phase = "go";
+  self._goT = 0;
+  self._practiceKey = null;
+  document.body.dataset.mgPhase = "go";
+  self._seatEl?.classList.remove("ssp-seat--you");
+  showGo(self);
+}
+
+function tickTeach(self: MgScreenState, dt: number): void {
+  // In play a sim-clocked game ticks the cooldown from its fixed step.
+  if (self._phase !== "play" || !tapClockIsSim()) tickTapCooldown(dt);
+  self._touch?.setCooldown(tapCooldownRatio());
+  tickBursts(self, dt);
+  tickMarker(self);
+}
 
 // When the pre-screen was already shown (and clicked) while the board was still
 // panning for "MINI GAME TIME", the enter() should skip re-showing the card
@@ -700,11 +1080,21 @@ const minigameScreenImpl: MgScreenState & Screen = {
         if ((e.key === " " || e.key === "Enter") && self._phase === "vs-splash") {
           self._vsSkip = true;
         }
-        if (self._phase !== "play" || !self._ctx) return;
         const action = keyAction(e.key);
         if (!action) return;
+        if (self._phase === "practice") {
+          e.preventDefault();
+          if (action === "confirm") teachTap(self);
+          else {
+            self._practiceKey = keyDirFrom(action);
+            self._practiceKeyT = 0;
+          }
+          return;
+        }
+        if (self._phase !== "play" || !self._ctx) return;
         e.preventDefault();
-        self._ctx.input.key(action);
+        if (action === "confirm") teachTap(self);
+        else self._ctx.input.key(action);
       };
       window.addEventListener("pointerdown", self._onPointerDown);
       window.addEventListener("pointermove", self._onPointerMove);
@@ -714,18 +1104,23 @@ const minigameScreenImpl: MgScreenState & Screen = {
 
       self._touch = createTouchPad({
         onSteer: (action) => {
+          if (self._phase === "practice") {
+            self._practiceKey = keyDirFrom(action);
+            self._practiceKeyT = 0;
+            return;
+          }
           if (self._phase !== "play") return;
           document.body.dataset.sspSteer = action;
           self._ctx?.input.key(action);
         },
         onStick: (x, y) => {
+          self._stickX = x;
+          self._stickY = y;
           if (self._phase !== "play") return;
           self._ctx?.input.stick?.(x, y);
         },
         onAction: () => {
-          if (self._phase !== "play") return;
-          document.body.dataset.sspAction = "1";
-          self._ctx?.input.key("confirm");
+          teachTap(self);
         },
       });
 
@@ -794,6 +1189,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
         self._vsSkip = false;
         buildVsSplash(self, mg.name, themeColor);
         self._phase = "vs-splash";
+        document.body.dataset.mgPhase = "vs-splash";
         self._countdownT = 0;
         self._tick = -1;
       };
@@ -816,12 +1212,30 @@ const minigameScreenImpl: MgScreenState & Screen = {
           if (vsRoot?.isConnected) vsRoot.remove();
           (this as unknown as { _vsRoot?: HTMLDivElement })._vsRoot = undefined;
           this._vsTimer = undefined;
-          this._phase = "countdown";
-          this._countdownT = 0;
-          this._tick = -1;
+          if (skipPracticeBeat()) {
+            this._phase = "countdown";
+            document.body.dataset.mgPhase = "countdown";
+            this._countdownT = 0;
+            this._tick = -1;
+          } else {
+            beginPractice(this);
+          }
           // Clear the splash banner from the UI queue
           ui.clearFeedback();
         }
+        break;
+      }
+      case "practice": {
+        this._practiceT = (this._practiceT ?? 0) + dt;
+        tickPracticeMove(this, dt);
+        tickTeach(this, dt);
+        if ((this._practiceT ?? 0) >= PRACTICE_SEC) beginGo(this);
+        break;
+      }
+      case "go": {
+        this._goT = (this._goT ?? 0) + dt;
+        tickTeach(this, dt);
+        if ((this._goT ?? 0) >= GO_BEAT) this._beginPlay();
         break;
       }
       case "countdown": {
@@ -866,6 +1280,8 @@ const minigameScreenImpl: MgScreenState & Screen = {
       }
       case "play": {
         this._playT = (this._playT ?? 0) + dt;
+        tickTeach(this, dt);
+        if ((this._playT ?? 0) > GOAL_HOLD) this._goalEl?.classList.remove("ssp-mg-goal--on");
         if (!this._finished) {
           this._minigame?.update(dt);
           // Safety net: a minigame that never calls finish must not hang
@@ -955,7 +1371,11 @@ const minigameScreenImpl: MgScreenState & Screen = {
 
   _beginPlay() {
     this._phase = "play";
+    document.body.dataset.mgPhase = "play";
+    setPracticeBeat(false);
     this._playT = 0;
+    ensureMarker(this);
+    applyTeach(this);
     // Clear the GO! countdown overlay so it never overlaps play or results.
     const el = this._countEl;
     if (el) {
@@ -982,6 +1402,8 @@ const minigameScreenImpl: MgScreenState & Screen = {
 
   exit() {
     this._active = false;
+    setPracticeBeat(false);
+    resetTapCooldown();
     setCpuPlayout(false);
     // Destroy ceremony first (removes podium, DOM, restores characters).
     this._ceremony?.destroy();
@@ -1019,6 +1441,14 @@ const minigameScreenImpl: MgScreenState & Screen = {
     this._countEl = undefined;
     this._flashEl?.remove();
     this._flashEl = undefined;
+    this._goalEl?.remove();
+    this._goalEl = undefined;
+    this._seatEl?.remove();
+    this._seatEl = undefined;
+    this._seatMark = undefined;
+    this._bursts = undefined;
+    this._pose = undefined;
+    delete document.body.dataset.mgPhase;
     if (this._onPointerDown) window.removeEventListener("pointerdown", this._onPointerDown);
     if (this._onPointerMove) window.removeEventListener("pointermove", this._onPointerMove);
     if (this._onPointerUp) {

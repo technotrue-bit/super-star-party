@@ -21,7 +21,7 @@
  * distance (tie → smaller playerId).
  */
 import * as THREE from "three";
-import { isLocalPlayer, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
+import { isLocalPlayer, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import type { Character } from "../../characters/characterFactory";
 import { palette, hex } from "../../config/palette";
 import { Course, FINISH_X, START_X, LANE_Z } from "./course";
@@ -843,6 +843,7 @@ function stepRace(): void {
 }
 
 function update(dt: number): void {
+  if (isPracticeBeat()) return;
   const ctx = S.ctx;
   if (!ctx || !S.course || S.phase === "idle") return;
 
@@ -939,6 +940,10 @@ export function loadCakeDash(): Promise<Minigame> {
     name: "Cake Dash",
     genre: "race",
     howTo: "Tap to jump the snacks in your lane. First one to the cake wins.",
+    goal: "Jump the snacks and reach the cake",
+    tap: "JUMP",
+    steer: false,
+    tapSfx: "jump",
     setup,
     update,
     teardown,
