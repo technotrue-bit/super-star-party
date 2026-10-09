@@ -36,6 +36,19 @@ export const palette = {
   woodDark: "#A96B33",
   metal: "#9FB4C7",
 
+  // ---- time of day (lively board: day -> golden dusk -> night) ----
+  // Day is the boot look (ink background, white hemi over ink ground, white key).
+  duskSky: "#E8734F", // coral sunset background + fog
+  duskHemi: "#FF8A2E", // golden-hour sky light (low green: the grass turns olive-gold)
+  duskGround: "#7A3A5A", // plum-rose bounce light
+  duskKey: "#FF6A12", // low orange sun
+  nightSky: "#160F3A", // deep night background + fog
+  nightHemi: "#5848E8", // blue-violet sky light (low green: the checker turns teal/indigo)
+  nightGround: "#1A0F45", // deep indigo bounce light
+  nightKey: "#6E6AF0", // violet moonlight
+  lampWarm: "#FFB547", // lamp halo + string-light bulbs after dusk
+  lampHot: "#FFF2C2", // lamp core at night
+
   // ---- characters ----
   heroPip: "#FFB62E", // Pip — orange star kid
   heroBounce: "#3FA9F5", // Bounce — blue spring rabbit

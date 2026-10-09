@@ -316,6 +316,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
     // ---- board ----
     const board = buildBoardScene(fizzyFairground);
     this._board = board;
+    // Lively time of day snaps to this turn's look before the first frame.
+    board.setTimeOfDay(match.turn, match.totalTurns);
 
     // 3D pipped die — arcs, tumbles, lands on the sim's face.
     // Falls back to the DOM die if the 3D die throws.
@@ -874,6 +876,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
       const myTurn = playerController(match.currentPlayer) === "local" && (match.phase === "dice" || match.phase === "moving");
       this._mapBtn.classList.toggle("ssp-map-fab--on", myTurn && !this._mapLook?.isOpen());
     }
+    this._board?.setTimeOfDay(match.turn, match.totalTurns);
     if (this._mapLook?.isOpen()) {
       this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
       this._board?.update(dt);

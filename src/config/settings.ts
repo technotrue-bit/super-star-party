@@ -160,6 +160,12 @@ export const settings = {
     crowdCheerTime: 1.3, // hop cheer length (s)
     crowdLeanTime: 1.1, // lean-in "ooh" length (s)
     crowdSlumpTime: 1.6, // slump "aah" length (s)
+    // Day -> dusk -> night (lively/timeOfDay.ts, lively/night.ts). The target
+    // look depends on match.turn only; the board eases toward it.
+    nightTween: 1.6, // seconds (time constant) to ease into a new turn's light
+    fireworks: true, // lazy fireworks chunk in the last five turns
+    fireworkShells: 5, // concurrent shells
+    fireworkSparks: 50, // sparks per shell (shells * sparks <= 256)
   },
 
   // ---- match-screen party camera ----

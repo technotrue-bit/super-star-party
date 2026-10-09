@@ -45,9 +45,13 @@ function boot(): void {
   const camera = new THREE.PerspectiveCamera(45, boot.w / boot.h, 0.1, 400);
 
   // Basic lights — screens may add their own; these guarantee nothing is black.
+  // Named so the lively board's time of day (board/lively/night.ts) can find,
+  // drive, and restore them.
   const hemi = new THREE.HemisphereLight(0xffffff, 0x2b1d4e, 1.1);
+  hemi.name = "world:hemi";
   scene.add(hemi);
   const key = new THREE.DirectionalLight(0xffffff, 1.6);
+  key.name = "world:key";
   key.position.set(6, 14, 8);
   key.castShadow = true;
   scene.add(key);

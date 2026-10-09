@@ -41,7 +41,8 @@ import { dropOut, partyView } from "../net/session";
 import { livelyDebug, livelyReact } from "../board/lively/landFx";
 import { livelyShotsDebug } from "../board/lively/shots";
 import { crowdDebug } from "../board/lively/crowd";
-import type { WebGLRenderer } from "three";
+import type { nightDebug } from "../board/lively/night";
+import { Color, Light, HemisphereLight, type Fog, type WebGLRenderer } from "three";
 
 export interface SSPDebug {
   state(): Record<string, unknown>;
@@ -74,6 +75,20 @@ export interface SSPDebug {
   livelyShots(): ReturnType<typeof livelyShotsDebug>;
   /** Lively crowd reactions and worst-case cost. Inactive with ?lively=0. */
   livelyCrowd(): ReturnType<typeof crowdDebug>;
+  /**
+   * Lively time of day: phase, the applied hemi/key/fog/background, lamp
+   * glow, the LAST 5 marquee, the fireworks chunk (imports, loaded) and the
+   * night group's worst-case cost. Inactive with ?lively=0. Async: the
+   * module rides in the board chunk, not the boot bundle.
+   */
+  livelyNight(): Promise<ReturnType<typeof nightDebug>>;
+  /**
+   * Probe aid: light the board as if it were `turn` (null: follow the match).
+   * Cosmetic only; match.turn and every gameplay path are untouched.
+   */
+  livelyNightTurn(turn: number | null): Promise<ReturnType<typeof nightDebug>>;
+  /** Top-level lights, fog, and background of the shared scene (rig comparisons). */
+  sceneRig(): SceneRig;
   /**
    * Frame-stamped turn-loop beats: every turn:start, dice:roll, dice:land,
    * player:land, and match.phase change, with the frame index and summed
@@ -168,6 +183,39 @@ export interface PerfSample {
   triangles: number;
   points: number;
   lines: number;
+}
+
+export interface SceneRig {
+  lights: { type: string; name: string; color: string; ground: string | null; intensity: number; castShadow: boolean; position: number[] }[];
+  fog: { type: string; color: string; near?: number; far?: number; density?: number } | null;
+  background: string | null;
+}
+
+function sceneRig(): SceneRig {
+  const scene = world.scene;
+  if (!scene) return { lights: [], fog: null, background: null };
+  const lights: SceneRig["lights"] = [];
+  for (const c of scene.children) {
+    if (!(c instanceof Light)) continue;
+    lights.push({
+      type: c.type,
+      name: c.name,
+      color: c.color.getHexString(),
+      ground: c instanceof HemisphereLight ? c.groundColor.getHexString() : null,
+      intensity: +c.intensity.toFixed(4),
+      castShadow: c.castShadow,
+      position: [c.position.x, c.position.y, c.position.z].map((v) => +v.toFixed(3)),
+    });
+  }
+  // Flags, not instanceof: keeps FogExp2 out of the boot bundle.
+  const f = scene.fog as (Fog & { isFogExp2?: boolean; density?: number }) | null;
+  const fog = !f
+    ? null
+    : f.isFogExp2
+      ? { type: "FogExp2", color: f.color.getHexString(), density: f.density }
+      : { type: "Fog", color: f.color.getHexString(), near: f.near, far: f.far };
+  const bg = scene.background instanceof Color ? scene.background.getHexString() : scene.background ? "non-color" : null;
+  return { lights, fog, background: bg };
 }
 
 export interface RngMark {
@@ -392,6 +440,18 @@ export function installDebugAPI(): void {
     },
     livelyCrowd() {
       return crowdDebug();
+    },
+    livelyNight() {
+      return import("../board/lively/night").then((m) => m.nightDebug());
+    },
+    livelyNightTurn(turn: number | null) {
+      return import("../board/lively/night").then((m) => {
+        m.setNightTurnOverride(turn);
+        return m.nightDebug();
+      });
+    },
+    sceneRig() {
+      return sceneRig();
     },
     phaseLog() {
       return phaseMarks.map((m) => ({ ...m }));
