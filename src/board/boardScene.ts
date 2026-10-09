@@ -9,7 +9,7 @@
  */
 import * as THREE from "three";
 import { world } from "../main";
-import { settings } from "../config/settings";
+import { settings, livelyEnabled } from "../config/settings";
 import { palette } from "../config/palette";
 import { ease } from "../core/rng";
 import type { SpaceType } from "../core/game";
@@ -28,9 +28,14 @@ import {
   buildGrandPrizeBalloon,
   buildGrumpyFace,
   buildStartArrow,
+  buildBunting,
+  buildCarousel,
+  buildSky,
+  buildSearchlight,
   toonMat,
   type Prop,
 } from "./boardScenery";
+import { createLandFx, type LandFx, type LandReaction } from "./lively/landFx";
 import { attachStaticBoundsIn, releaseStaticBoundsIn } from "../render/meshBvh";
 
 export interface BoardScene {
@@ -50,6 +55,12 @@ export interface BoardScene {
   highlight(i: number): void;
   /** Turn off all highlights. */
   clearHighlights(): void;
+  /**
+   * Cosmetic reaction on space i: "hop" dips the disk, a space type
+   * ("blue", "red", "green", "star", ...) plays that type's landing.
+   * No-op with `?lively=0`. Never touches match state.
+   */
+  react(i: number, kind: LandReaction): void;
   /** Advance idle animations (ferris, stars, pennants, highlights). */
   update(dt: number): void;
   /**
@@ -314,10 +325,12 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
     }
   }
   // lamp posts near three spaced-out spots around the loop
+  const lampTops = new Map<number, THREE.Vector3>();
   for (const i of [1, 15, 24]) {
     const sp = def.spaces[wrapIndex(i, n)];
     const [lx, lz] = outward(sp.x, sp.y, 2.1);
     props.push(buildLampPost(kit, lx, lz));
+    lampTops.set(i, new THREE.Vector3(lx, 2.95, lz));
   }
   // balloon clusters near each tent (inset from settings so they clear the
   // loop edge and stay beside the tent on the grass)
@@ -338,6 +351,44 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
   // Rigid static props only. Under the cutoff this builds no tree and does
   // not load three-mesh-bvh. A dense glTF prop added here would.
   void attachStaticBoundsIn(group);
+
+  // ---- lively board: ambient loops + landing reactions (cosmetic) -------------------
+  // Added after the static-bounds pass: these all move. `?lively=0` skips it all.
+  let landFx: LandFx | null = null;
+  if (livelyEnabled()) {
+    const lively = new THREE.Group();
+    lively.name = "lively";
+    // Bunting runs down the west side, lamp 24 to lamp 1. The 15-24 pair sits
+    // on a diagonal across the top row of disks, so it gets no strand.
+    const strands: Array<[THREE.Vector3, THREE.Vector3]> = [];
+    const west = [lampTops.get(24), lampTops.get(1)];
+    if (west[0] && west[1]) strands.push([west[0], west[1]]);
+    // Searchlight on the south grass east of the tents. The beam sweeps a
+    // faint wedge of light back and forth across the loop.
+    const sx = bounds.maxX - 4.8;
+    const sz = bounds.maxY + 4.2;
+    const ambient: Prop[] = [
+      buildBunting(kit, strands, { x: cx, z: cy }),
+      buildCarousel(kit, bounds.minX - 2.4, bounds.maxY + 1.2),
+      buildSky(kit, bounds),
+      buildSearchlight(sx, sz, Math.atan2(-(cy - sz), cx - sx)),
+    ];
+    for (const p of ambient) {
+      lively.add(p.root);
+      props.push(p);
+    }
+    group.add(lively);
+    landFx = createLandFx({
+      root: lively,
+      spaceCount: n,
+      spaceGroup: (i) => spaceGroups[wrapIndex(i, n)],
+      spacePos: (i) => {
+        const sp = def.spaces[wrapIndex(i, n)];
+        return new THREE.Vector3(sp.x, 0, sp.y);
+      },
+      rimColor: (type) => DISK_RIM[type as SpaceType] ?? palette.sun,
+    });
+  }
 
   // ---- the BoardScene contract -------------------------------------------------------
   const scene: BoardScene = {
@@ -388,6 +439,10 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
       }
     },
 
+    react(i: number, kind: LandReaction): void {
+      landFx?.react(i, kind);
+    },
+
     setPrizeBalloon(index: number | null): void {
       if (index === null) {
         prize.root.visible = false;
@@ -407,6 +462,7 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
       if (disposed) return;
       t += dt;
       for (const p of props) p.update?.(t, dt);
+      landFx?.update(dt);
       if (
         prize.root.visible &&
         prizeShown !== null &&
@@ -454,11 +510,14 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      landFx?.dispose();
+      landFx = null;
       releaseStaticBoundsIn(group);
       world.scene?.remove(group);
       const geoms = new Set<THREE.BufferGeometry>();
       const mats = new Set<THREE.Material>();
       group.traverse((obj) => {
+        if (obj instanceof THREE.InstancedMesh) obj.dispose();
         if (obj instanceof THREE.Mesh) {
           geoms.add(obj.geometry);
           const m = obj.material;

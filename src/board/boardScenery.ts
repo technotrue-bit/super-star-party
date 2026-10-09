@@ -4,10 +4,12 @@
  * colored ONLY from the palette. Everything casts/receives shadows.
  */
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { palette } from "../config/palette";
 import type { StampKind } from "../core/game";
 import { settings } from "../config/settings";
 import type { BoardTextures } from "./boardTextures";
+import { fxMulberry32 } from "./lively/fxRng";
 
 export interface Prop {
   root: THREE.Object3D;
@@ -691,4 +693,331 @@ export function buildStartArrow(kit: BoardTextures): THREE.Object3D {
   root.add(base, tip);
   root.position.y = 0.15;
   return root;
+}
+
+// ---- lively ambient loops ------------------------------------------------------------
+// Cosmetic only, built only when settings.livelyEnabled(). Each prop is ONE
+// draw call (merged vertex-coloured geometry or one InstancedMesh), casts no
+// shadow, and animates from the board's accumulated time `t`, so the pause
+// freeze stops them with everything else. Jitter comes from a private
+// fixed-seed stream, never the match generator.
+const L = settings.lively;
+
+/** Paint a whole geometry one colour (RGB, or RGBA when alpha is given). */
+function paint(geo: THREE.BufferGeometry, color: string, alpha?: number): THREE.BufferGeometry {
+  const c = new THREE.Color(color);
+  const count = geo.getAttribute("position").count;
+  const size = alpha === undefined ? 3 : 4;
+  const arr = new Float32Array(count * size);
+  for (let i = 0; i < count; i++) {
+    arr[i * size] = c.r;
+    arr[i * size + 1] = c.g;
+    arr[i * size + 2] = c.b;
+    if (size === 4) arr[i * size + 3] = alpha!;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(arr, size));
+  return geo;
+}
+
+/** Merge painted parts into one geometry and free the parts. */
+function mergeParts(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const merged = mergeGeometries(parts, false);
+  for (const p of parts) p.dispose();
+  if (!merged) throw new Error("[SSP] lively scenery merge failed");
+  return merged;
+}
+
+/** Cel material that takes its colour from vertex/instance colour. */
+function livelyToon(kit: BoardTextures, opts?: { vertexColors?: boolean; side?: THREE.Side }): THREE.MeshToonMaterial {
+  return new THREE.MeshToonMaterial({
+    color: palette.white,
+    gradientMap: kit.grad,
+    vertexColors: opts?.vertexColors ?? false,
+    side: opts?.side ?? THREE.FrontSide,
+  });
+}
+
+function quiet<T extends THREE.Object3D>(obj: T, name: string): T {
+  obj.name = name;
+  obj.castShadow = false;
+  obj.receiveShadow = false;
+  obj.userData.lively = true;
+  return obj;
+}
+
+/**
+ * Bunting strung between lamp-post tops: one instanced pennant per slot,
+ * each pennant carrying its own stretch of string, so a strand reads as a
+ * continuous line. Pennants swing about the string in a travelling wave.
+ */
+export function buildBunting(
+  kit: BoardTextures,
+  strands: Array<[THREE.Vector3, THREE.Vector3]>,
+  center: { x: number; z: number }
+): Prop {
+  // Unit pennant: string bar along the top edge (x -0.5..0.5), tip at y = -1.
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(
+      [-0.5, 0, 0, 0.5, 0, 0, 0, -1, 0, -0.5, 0.07, 0, 0.5, 0.07, 0, 0.5, 0, 0, -0.5, 0.07, 0, 0.5, 0, 0, -0.5, 0, 0],
+      3
+    )
+  );
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(new Array(27).fill(0).map((_, i) => (i % 3 === 2 ? 1 : 0)), 3));
+
+  const slots: { x: number; y: number; z: number; yaw: number; slope: number; w: number }[] = [];
+  for (const [a, b] of strands) {
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const hl = Math.hypot(dx, dz);
+    const count = Math.max(4, Math.round(hl / L.buntingSpacing));
+    const w = hl / count;
+    // Bow the strand away from the loop so the pennants clear the disks.
+    let nx = -dz / hl;
+    let nz = dx / hl;
+    const mx = (a.x + b.x) / 2 - center.x;
+    const mz = (a.z + b.z) / 2 - center.z;
+    if (nx * mx + nz * mz < 0) {
+      nx = -nx;
+      nz = -nz;
+    }
+    for (let j = 0; j < count; j++) {
+      const u = (j + 0.5) / count;
+      const arc = 4 * u * (1 - u);
+      const y = a.y + (b.y - a.y) * u - L.buntingSag * arc;
+      const dydu = b.y - a.y - L.buntingSag * 4 * (1 - 2 * u);
+      // Heading follows the bowed curve: d/du of (a + d*u + n*bow*arc).
+      const ddu = L.buntingBow * 4 * (1 - 2 * u);
+      const tx = dx + nx * ddu;
+      const tz = dz + nz * ddu;
+      slots.push({
+        x: a.x + dx * u + nx * L.buntingBow * arc,
+        y,
+        z: a.z + dz * u + nz * L.buntingBow * arc,
+        yaw: Math.atan2(-tz, tx),
+        slope: Math.atan2(dydu, Math.hypot(tx, tz)),
+        w: w * (Math.hypot(tx, tz) / hl),
+      });
+    }
+  }
+
+  const mesh = quiet(new THREE.InstancedMesh(geo, livelyToon(kit, { side: THREE.DoubleSide }), slots.length), "lively:bunting");
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  mesh.frustumCulled = false;
+  const colors = [palette.candy, palette.sun, palette.bubble, palette.mint, palette.berry];
+  const c = new THREE.Color();
+  for (let k = 0; k < slots.length; k++) mesh.setColorAt(k, c.set(colors[k % colors.length]));
+  const dummy = new THREE.Object3D();
+  dummy.rotation.order = "YZX";
+
+  const place = (t: number): void => {
+    for (let k = 0; k < slots.length; k++) {
+      const s = slots[k];
+      dummy.position.set(s.x, s.y, s.z);
+      dummy.rotation.set(Math.sin(t * 1.7 - k * 0.45) * 0.32, s.yaw, s.slope);
+      dummy.scale.set(s.w, 0.5, 1);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(k, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+  place(0);
+
+  return { root: mesh, update: (t: number) => place(t) };
+}
+
+/** Carousel: platform, striped canopy, centre pole, six horses. One merged mesh that turns. */
+export function buildCarousel(kit: BoardTextures, x: number, z: number): Prop {
+  const parts: THREE.BufferGeometry[] = [];
+  const add = (geo: THREE.BufferGeometry, color: string, px: number, py: number, pz: number, ry = 0): void => {
+    if (ry) geo.rotateY(ry);
+    geo.translate(px, py, pz);
+    parts.push(paint(geo, color));
+  };
+  add(new THREE.CylinderGeometry(2.2, 2.35, 0.3, 20), palette.cream, 0, 0.15, 0);
+  add(new THREE.CylinderGeometry(2.36, 2.36, 0.1, 20, 1, true), palette.candy, 0, 0.25, 0);
+  add(new THREE.CylinderGeometry(0.16, 0.16, 2.7, 8), palette.sun, 0, 1.6, 0);
+  add(new THREE.CylinderGeometry(2.55, 2.55, 0.3, 20, 1, true), palette.sun, 0, 2.85, 0);
+  // Two-tone canopy: a candy cone with a cream cone just inside it, offset in yaw
+  // so the faces alternate and read as stripes.
+  add(new THREE.ConeGeometry(2.65, 1.15, 10), palette.candy, 0, 3.55, 0);
+  add(new THREE.ConeGeometry(2.66, 1.16, 10), palette.cream, 0, 3.55, 0, Math.PI / 10);
+  add(new THREE.SphereGeometry(0.2, 8, 6), palette.sun, 0, 4.25, 0);
+  const horseColors = [palette.candy, palette.bubble, palette.mint, palette.sun, palette.berry, palette.white];
+  for (let i = 0; i < 6; i++) {
+    const a = (i * Math.PI) / 3;
+    const hx = Math.cos(a) * 1.55;
+    const hz = Math.sin(a) * 1.55;
+    const face = -a; // body along the tangent
+    const lift = i % 2 === 0 ? 0.25 : 0; // staggered heights, like a ride frozen mid-bob
+    add(new THREE.CylinderGeometry(0.035, 0.035, 2.5, 6), palette.metal, hx, 1.55, hz);
+    const body = new THREE.BoxGeometry(0.22, 0.3, 0.7);
+    body.rotateY(face);
+    add(body, horseColors[i], hx, 1.0 + lift, hz);
+    const head = new THREE.BoxGeometry(0.18, 0.34, 0.2);
+    head.translate(0, 0.12, 0.36);
+    head.rotateY(face);
+    add(head, horseColors[i], hx, 1.12 + lift, hz);
+  }
+  const mesh = quiet(new THREE.Mesh(mergeParts(parts), livelyToon(kit, { vertexColors: true })), "lively:carousel");
+  mesh.position.set(x, 0, z);
+  return {
+    root: mesh,
+    update(t: number) {
+      mesh.rotation.y = t * L.carouselSpin;
+    },
+  };
+}
+
+/**
+ * Drifting clouds and a lapping flock of birds, one instanced mesh. Clouds
+ * ride east-west lanes outside the space loop and shrink away at the lane
+ * ends before wrapping. Birds are two flapping wings each.
+ */
+export function buildSky(
+  kit: BoardTextures,
+  bounds: { minX: number; maxX: number; minY: number; maxY: number }
+): Prop {
+  const fx = fxMulberry32(0x5c1e5);
+  const cx = (bounds.minX + bounds.maxX) / 2;
+  const cz = (bounds.minY + bounds.maxY) / 2;
+  const span = (bounds.maxX - bounds.minX) / 2 + 14;
+  // Lanes sit just outside the loop on both long sides, low enough that the
+  // landscape (north) and portrait (south) cameras each catch one pair at
+  // the frame edge without covering spaces.
+  const clouds = [
+    { z: bounds.minY - 3.8, y: 6, speed: 1, s: 1.1 },
+    { z: bounds.minY - 6.3, y: 8, speed: 0.7, s: 1.4 },
+    { z: bounds.maxY + 6.8, y: 5.5, speed: 0.85, s: 1.2 },
+    { z: bounds.maxY + 8.8, y: 7, speed: 0.6, s: 1.45 },
+  ].map((c, i) => ({ ...c, x0: fx() * span * 2 + i * 7 }));
+  const PUFFS: [number, number, number, number][] = [
+    [0, 0, 0, 1.25],
+    [-1.25, -0.25, 0.15, 0.85],
+    [1.2, -0.2, -0.1, 0.95],
+  ];
+  const BIRDS = 5;
+  const birds = Array.from({ length: BIRDS }, (_, k) => ({
+    back: Math.ceil(k / 2) * 0.05,
+    side: k === 0 ? 0 : (k % 2 === 0 ? 1 : -1) * Math.ceil(k / 2) * 0.7,
+    phase: fx() * Math.PI * 2,
+  }));
+  const total = clouds.length * PUFFS.length + BIRDS * 2;
+
+  const geo = new THREE.IcosahedronGeometry(1, 1);
+  const mesh = quiet(new THREE.InstancedMesh(geo, livelyToon(kit), total), "lively:sky");
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  mesh.frustumCulled = false;
+  const col = new THREE.Color();
+  for (let k = 0; k < total; k++) {
+    mesh.setColorAt(k, col.set(k < clouds.length * PUFFS.length ? palette.white : palette.ink));
+  }
+
+  const dummy = new THREE.Object3D();
+  const birdM = new THREE.Matrix4();
+  const rotM = new THREE.Matrix4();
+  const wingM = new THREE.Matrix4();
+  const outM = new THREE.Matrix4();
+  const rx = (bounds.maxX - bounds.minX) / 2 + 2;
+  const rz = (bounds.maxY - bounds.minY) / 2 + 1;
+
+  const place = (t: number): void => {
+    // Index loops only: this runs every frame and must not allocate.
+    let k = 0;
+    for (let ci = 0; ci < clouds.length; ci++) {
+      const c = clouds[ci];
+      const travel = c.x0 + t * L.cloudDrift * c.speed;
+      const x = cx - span + (((travel % (span * 2)) + span * 2) % (span * 2));
+      const edge = Math.min(1, (span - Math.abs(x - cx)) / 4);
+      for (let pi = 0; pi < PUFFS.length; pi++) {
+        const p = PUFFS[pi];
+        const os = p[3];
+        dummy.position.set(x + p[0] * c.s, c.y + p[1] * c.s, c.z + p[2] * c.s);
+        dummy.rotation.set(0, 0, 0);
+        const r = os * c.s * Math.max(0.001, edge);
+        dummy.scale.set(r * 1.2, r * 0.75, r);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(k++, dummy.matrix);
+      }
+    }
+    const lap = t * L.birdLap;
+    for (let bi = 0; bi < birds.length; bi++) {
+      const b = birds[bi];
+      const th = lap - b.back;
+      const ex = Math.cos(th);
+      const ez = Math.sin(th);
+      // Tangent of the ellipse, used for heading and for the side offset.
+      const tx = -rx * ez;
+      const tz = rz * ex;
+      const tl = Math.hypot(tx, tz) || 1;
+      const yaw = Math.atan2(tx, tz);
+      const sx = (tz / tl) * b.side;
+      const sz = (-tx / tl) * b.side;
+      dummy.position.set(cx + rx * ex + sx, 7 + Math.sin(t * 1.3 + b.phase) * 0.35, cz + rz * ez + sz);
+      dummy.rotation.set(0, yaw, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      birdM.copy(dummy.matrix);
+      const flap = 0.15 + 0.55 * Math.sin(t * 9 + b.phase);
+      for (let side = -1; side <= 1; side += 2) {
+        rotM.makeRotationZ(side * flap);
+        wingM.makeScale(0.32, 0.035, 0.12).setPosition(side * 0.3, 0, 0);
+        outM.multiplyMatrices(birdM, rotM).multiply(wingM);
+        mesh.setMatrixAt(k++, outM);
+      }
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+  place(0);
+
+  return {
+    root: mesh,
+    update: (t: number) => place(t),
+  };
+}
+
+/**
+ * Searchlight on a pedestal: pedestal, lamp head, and a fading beam cone in
+ * one vertex-coloured mesh (beam alpha falls to 0 at the far end). The whole
+ * mesh sweeps back and forth about its own vertical axis.
+ */
+export function buildSearchlight(x: number, z: number, aimYaw: number): Prop {
+  // Low and long: from the high party camera a steep beam foreshortens to
+  // nothing, a shallow one reads as a wedge of light sweeping the loop.
+  const ELEV = 0.42; // beam elevation above the horizon (rad)
+  const LEN = 17;
+  const parts: THREE.BufferGeometry[] = [];
+  parts.push(paint(new THREE.CylinderGeometry(0.3, 0.45, 1.1, 10).translate(0, 0.55, 0), palette.woodDark, 1));
+  const tilt = (geo: THREE.BufferGeometry): THREE.BufferGeometry => geo.rotateZ(-(Math.PI / 2 - ELEV)).translate(0, 1.25, 0);
+  parts.push(paint(tilt(new THREE.CylinderGeometry(0.3, 0.36, 0.6, 12)), palette.ink, 1));
+  parts.push(paint(tilt(new THREE.CylinderGeometry(0.27, 0.27, 0.02, 12).translate(0, 0.31, 0)), palette.sun, 1));
+  const beam = new THREE.CylinderGeometry(3, 0.26, LEN, 16, 4, true).translate(0, LEN / 2 + 0.3, 0);
+  // Fade along the beam before tilting, while y still measures distance.
+  const pos = beam.getAttribute("position");
+  const c = new THREE.Color(palette.white);
+  const rgba = new Float32Array(pos.count * 4);
+  for (let i = 0; i < pos.count; i++) {
+    const u = Math.min(1, Math.max(0, (pos.getY(i) - 0.3) / LEN));
+    rgba[i * 4] = c.r;
+    rgba[i * 4 + 1] = c.g;
+    rgba[i * 4 + 2] = c.b;
+    rgba[i * 4 + 3] = 0.42 * Math.pow(1 - u, 1.2);
+  }
+  beam.setAttribute("color", new THREE.BufferAttribute(rgba, 4));
+  parts.push(tilt(beam));
+  const mesh = quiet(
+    new THREE.Mesh(
+      mergeParts(parts),
+      new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false })
+    ),
+    "lively:searchlight"
+  );
+  mesh.position.set(x, 0, z);
+  return {
+    root: mesh,
+    update(t: number) {
+      mesh.rotation.y = aimYaw + Math.sin(t * L.searchSweep) * 0.8;
+    },
+  };
 }

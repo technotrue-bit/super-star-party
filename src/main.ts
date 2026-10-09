@@ -10,7 +10,7 @@ import { settings } from "./config/settings";
 import { palette } from "./config/palette";
 import { rng } from "./core/rng";
 import { screens } from "./screens/screenManager";
-import { installDebugAPI, tickFrame, autoplayTick, isAutoplay } from "./core/debug";
+import { installDebugAPI, tickFrame, tickRender, instrumentRenderer, autoplayTick, isAutoplay } from "./core/debug";
 import { bus } from "./core/events";
 import { audio, unlock } from "./audio/audioEngine";
 import { fitAppToViewport, onViewportChange, viewportSize } from "./ui/viewport";
@@ -37,6 +37,7 @@ function boot(): void {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.NoToneMapping; // cel look: keep raw colors
   container.appendChild(renderer.domElement);
+  instrumentRenderer(renderer);
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(palette.ink);
@@ -140,6 +141,7 @@ function boot(): void {
     screens.update(dt);
     screens.render();
     renderPostFx();
+    tickRender();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
