@@ -34,6 +34,7 @@ import { screens } from "./screenManager";
 import { openShop } from "./shopScreen";
 import { onViewportChange, viewportSize } from "../ui/viewport";
 import { createMapLook, type MapLook } from "../ui/mapLook";
+import { applyCameraShots } from "../board/lively/shots";
 
 /* ------------------------------------------------------------------ */
 /*  Scoped styles (injected once; every color from the palette)        */
@@ -936,24 +937,10 @@ const boardScreenImpl: BoardScreenState & Screen = {
       let pos = this._followPos.clone();
       let lk = this._followLook.clone();
 
-      // Dice punch still takes priority (committed shot during roll)
-      if (this._punch) {
-        const p = this._punch;
-        p.t += dt;
-        let k: number;
-        if (p.t < 0.45) {
-          const q = p.t / 0.45;
-          k = 1 - Math.pow(1 - q, 3);
-        } else if (p.t < 1.55) {
-          k = 1;
-        } else {
-          const q = Math.min(1, (p.t - 1.55) / 0.45);
-          k = 1 - (1 - Math.pow(1 - q, 3));
-        }
-        pos.lerpVectors(pos, p.pos, k);
-        lk.lerpVectors(lk, p.look, k);
-        if (p.t > 2.05) this._punch = null;
-      }
+      // Lively swoops (lively/shots.ts) ride on the follow camera; the dice
+      // punch still takes priority (committed shot during roll) and pauses
+      // them, as does a ceremony holdCamera.
+      this._punch = applyCameraShots(dt, pos, lk, this._punch ?? null, !!this._camHold, this._board);
 
       cam.position.copy(pos);
       cam.lookAt(lk);

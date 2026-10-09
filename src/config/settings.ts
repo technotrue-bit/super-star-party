@@ -40,6 +40,21 @@ export function livelyEnabled(): boolean {
   return new URLSearchParams(window.location.search).get("lively") !== "0";
 }
 
+/** `?speed=` playback multiplier (main.ts scales the frame dt by it). */
+export function playSpeed(): number {
+  if (typeof window === "undefined") return 1;
+  const s = Number(new URLSearchParams(window.location.search).get("speed") ?? "1");
+  return Number.isFinite(s) && s > 0 ? s : 1;
+}
+
+let reducedMotionQuery: MediaQueryList | null = null;
+/** The same `prefers-reduced-motion: reduce` query the UI styles honour. */
+export function prefersReducedMotion(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  reducedMotionQuery ??= window.matchMedia("(prefers-reduced-motion: reduce)");
+  return reducedMotionQuery.matches;
+}
+
 export const settings = {
   // ---- engine ----
   maxDelta: 1 / 20, // clamp frame delta (s)
@@ -129,6 +144,22 @@ export const settings = {
     cloudDrift: 0.9, // world units/s cloud drift
     birdLap: 0.16, // rad/s bird flock lap around the board
     searchSweep: 0.45, // rad/s searchlight sweep
+    // Camera shots (lively/shots.ts). Durations are board seconds, so speed=N
+    // already plays them N times faster; above shotMaxSpeed they are skipped.
+    // Off under prefers-reduced-motion.
+    shots: true,
+    shotMaxSpeed: 6,
+    shotQueue: 2, // queued shots waiting behind the active one (oldest dropped)
+    shotMaxWait: 1.2, // board seconds a queued shot may wait while the camera is free
+    shotMaxAge: 5, // board seconds from trigger to start, however long a hold/punch lasted
+    shotCancelTime: 0.25, // fade back to the follow camera when a punch or hold cuts in
+    // Crowd (lively/crowd.ts): two bleachers of Fizzlings beside the tents.
+    crowd: true,
+    crowdPerBleacher: 16,
+    crowdStagger: 0.28, // max per-spectator reaction delay (s)
+    crowdCheerTime: 1.3, // hop cheer length (s)
+    crowdLeanTime: 1.1, // lean-in "ooh" length (s)
+    crowdSlumpTime: 1.6, // slump "aah" length (s)
   },
 
   // ---- match-screen party camera ----

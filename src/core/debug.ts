@@ -5,7 +5,7 @@
  */
 import { match, snapshot, startMatch } from "./game";
 import { rng } from "./rng";
-import { bus } from "./events";
+import { bus, type SSPEventMap } from "./events";
 import { audio } from "../audio/audioEngine";
 import { screens } from "../screens/screenManager";
 import { world } from "../main";
@@ -39,6 +39,8 @@ import { rapierStatus, runContactScenario as runRapierContactScenario } from "..
 import { setOnlineMatch, setPartyAssist } from "../net/mode";
 import { dropOut, partyView } from "../net/session";
 import { livelyDebug, livelyReact } from "../board/lively/landFx";
+import { livelyShotsDebug } from "../board/lively/shots";
+import { crowdDebug } from "../board/lively/crowd";
 import type { WebGLRenderer } from "three";
 
 export interface SSPDebug {
@@ -68,6 +70,19 @@ export interface SSPDebug {
   lively(): ReturnType<typeof livelyDebug>;
   /** Fire a lively reaction on a space ("hop" or a space type). False when lively is off. */
   livelyReact(space: number, kind: string): boolean;
+  /** Lively camera shot counters (fired per trigger kind, dropped, stale...). */
+  livelyShots(): ReturnType<typeof livelyShotsDebug>;
+  /** Lively crowd reactions and worst-case cost. Inactive with ?lively=0. */
+  livelyCrowd(): ReturnType<typeof crowdDebug>;
+  /**
+   * Frame-stamped turn-loop beats: every turn:start, dice:roll, dice:land,
+   * player:land, and match.phase change, with the frame index and summed
+   * game time. With `?fixedstep=1` every frame is the same game dt, so two
+   * runs of one seed can be compared frame for frame.
+   */
+  phaseLog(): PhaseMark[];
+  /** Emit a bus event (probe aid for presentation listeners). */
+  emit(event: string, payload: unknown): void;
   startMatch(kinds: string[], names?: string[]): void;
   /** Debug-only: jump to end-of-match (set phase='ended' for finale wiring). */
   endMatch(): void;
@@ -161,6 +176,34 @@ export interface RngMark {
   draws: number;
 }
 
+export interface PhaseMark {
+  frame: number;
+  /** Summed game dt (s) since boot. */
+  t: number;
+  event: string;
+  turn: number;
+  player: number;
+  phase: string;
+}
+
+const phaseMarks: PhaseMark[] = [];
+const PHASE_MARKS_MAX = 5000;
+let frameCount = 0;
+let gameTime = 0;
+let lastPhase = "";
+
+function markPhase(event: string): void {
+  if (phaseMarks.length >= PHASE_MARKS_MAX) return;
+  phaseMarks.push({
+    frame: frameCount,
+    t: +gameTime.toFixed(4),
+    event,
+    turn: match.turn,
+    player: match.currentPlayer,
+    phase: match.phase,
+  });
+}
+
 const rngMarks: RngMark[] = [];
 const RNG_MARKS_MAX = 2000;
 
@@ -192,7 +235,9 @@ export function setAutoplayHook(fn: (() => void) | null): void {
 }
 
 /** Called by the main loop each frame. */
-export function tickFrame(deltaMs: number): void {
+export function tickFrame(deltaMs: number, gameDt = 0): void {
+  frameCount++;
+  gameTime += gameDt;
   frameMs = deltaMs;
   fps = deltaMs > 0 ? 1000 / deltaMs : 60;
   if (frameRingLen === FRAME_WINDOW) frameRingSum -= frameRing[frameRingAt];
@@ -226,6 +271,10 @@ export function instrumentRenderer(renderer: WebGLRenderer): void {
 
 /** Called by the main loop after the frame's last render. */
 export function tickRender(): void {
+  if (match.phase !== lastPhase) {
+    lastPhase = match.phase;
+    markPhase(`phase:${match.phase}`);
+  }
   if (!tallyRenderer) return;
   const r = tallyRenderer.info.render;
   lastRender.calls = renderTally.calls + (tallyBanked ? 0 : r.calls);
@@ -337,6 +386,18 @@ export function installDebugAPI(): void {
     },
     livelyReact(space: number, kind: string) {
       return livelyReact(space, kind);
+    },
+    livelyShots() {
+      return livelyShotsDebug();
+    },
+    livelyCrowd() {
+      return crowdDebug();
+    },
+    phaseLog() {
+      return phaseMarks.map((m) => ({ ...m }));
+    },
+    emit(event: string, payload: unknown) {
+      bus.emit(event as keyof SSPEventMap, payload as never);
     },
     startMatch(kinds: string[], names?: string[]) {
       // Preserve the current seed (set via __SSP__.seed(n)) so critic
@@ -468,6 +529,16 @@ export function installDebugAPI(): void {
   bus.on("turn:start", () => markRng("turn:start"));
   bus.on("minigame:start", () => markRng("minigame:start"));
   bus.on("minigame:end", () => markRng("minigame:end"));
+  // Read-only listeners for phaseLog().
+  // match:start also fires when the board returns from a minigame; only a
+  // fresh match (turn 1) restarts the log.
+  bus.on("match:start", () => {
+    if (match.turn <= 1) phaseMarks.length = 0;
+    markPhase("match:start");
+  });
+  for (const ev of ["turn:start", "dice:roll", "dice:land", "player:land", "minigame:start", "minigame:end"] as const) {
+    bus.on(ev, () => markPhase(ev));
+  }
   (window as unknown as { __SSP__: SSPDebug }).__SSP__ = api;
   console.log("[SSP] debug API installed — window.__SSP__");
 }

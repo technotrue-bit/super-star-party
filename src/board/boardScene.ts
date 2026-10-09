@@ -36,6 +36,7 @@ import {
   type Prop,
 } from "./boardScenery";
 import { createLandFx, type LandFx, type LandReaction } from "./lively/landFx";
+import { createCrowd, type Crowd } from "./lively/crowd";
 import { attachStaticBoundsIn, releaseStaticBoundsIn } from "../render/meshBvh";
 
 export interface BoardScene {
@@ -355,6 +356,7 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
   // ---- lively board: ambient loops + landing reactions (cosmetic) -------------------
   // Added after the static-bounds pass: these all move. `?lively=0` skips it all.
   let landFx: LandFx | null = null;
+  let crowd: Crowd | null = null;
   if (livelyEnabled()) {
     const lively = new THREE.Group();
     lively.name = "lively";
@@ -388,6 +390,25 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
       },
       rimColor: (type) => DISK_RIM[type as SpaceType] ?? palette.sun,
     });
+    // Crowd bleachers in the two gaps of the south tent row, pulled toward
+    // the loop so the tent canopies don't cover them, facing the board.
+    // Own group, so slice 1's lively budget stays its own.
+    if (settings.lively.crowd) {
+      const crowdRoot = new THREE.Group();
+      crowdRoot.name = "lively-crowd";
+      group.add(crowdRoot);
+      const [mid, west, east] = settings.board.tentSpots;
+      const gap = (a: { x: number; z: number }, b: { x: number; z: number }) => ({
+        x: (a.x + b.x) / 2,
+        z: (a.z + b.z) / 2 - 2.4,
+      });
+      crowd = createCrowd({
+        root: crowdRoot,
+        spots: [gap(west, mid), gap(mid, east)],
+        face: { x: cx, z: cy },
+        gradientMap: kit.grad,
+      });
+    }
   }
 
   // ---- the BoardScene contract -------------------------------------------------------
@@ -463,6 +484,7 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
       t += dt;
       for (const p of props) p.update?.(t, dt);
       landFx?.update(dt);
+      crowd?.update(dt);
       if (
         prize.root.visible &&
         prizeShown !== null &&
@@ -512,6 +534,8 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
       disposed = true;
       landFx?.dispose();
       landFx = null;
+      crowd?.dispose();
+      crowd = null;
       releaseStaticBoundsIn(group);
       world.scene?.remove(group);
       const geoms = new Set<THREE.BufferGeometry>();
