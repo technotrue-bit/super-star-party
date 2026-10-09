@@ -15,6 +15,7 @@ import { ease } from "../core/rng";
 import type { SpaceType } from "../core/game";
 import { fizzyFairground, type BoardDef } from "./boardData";
 import { buildKit, type BoardTextures } from "./boardTextures";
+import { buildBoardLanes } from "./boardLanes";
 import {
   buildTent,
   buildFerrisWheel,
@@ -118,18 +119,6 @@ const DISK_RIM: Record<SpaceType, string> = {
   minigame_balloon: palette.candyDeep,
 };
 
-/** Capsule (rounded strip) shape along +X, length `len`, width `w`. */
-function capsuleShape(len: number, w: number): THREE.Shape {
-  const s = new THREE.Shape();
-  const r = w / 2;
-  s.moveTo(0, r);
-  s.lineTo(len, r);
-  s.absarc(len, 0, r, Math.PI / 2, -Math.PI / 2, true);
-  s.lineTo(0, -r);
-  s.absarc(0, 0, r, -Math.PI / 2, Math.PI / 2, true);
-  return s;
-}
-
 interface RingState {
   ring: THREE.Mesh;
   on: boolean;
@@ -173,48 +162,7 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
     const s = def.spaces[wrapIndex(i, n)];
     return new THREE.Vector2(s.x, s.y);
   };
-  const addPathSegment = (a: THREE.Vector2, b: THREE.Vector2, width: number, y: number, color: string): void => {
-    const dx = b.x - a.x;
-    const dz = b.y - a.y;
-    const len = Math.hypot(dx, dz);
-    if (len < 0.001) return;
-    const geo = new THREE.ShapeGeometry(capsuleShape(len, width));
-    geo.rotateX(-Math.PI / 2);
-    const mesh = new THREE.Mesh(geo, toonMat(kit, color));
-    mesh.position.set((a.x + b.x) / 2, y, (a.y + b.y) / 2);
-    mesh.rotation.y = Math.atan2(-dz, dx);
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  };
-  // One CLOSED track per lane, joined at each junction. Drawing the spaces as
-  // one 44-long chain wrapped the last outer space into the first inner one and
-  // threw two long diagonals straight across the board (the "crazy and laney"
-  // look). Rings now close on themselves and the lanes meet at the junctions.
-  const drawPath = (a: THREE.Vector2, b: THREE.Vector2): void => {
-    addPathSegment(a, b, B.pathWidth + 0.34, 0.02, palette.pathEdge);
-    addPathSegment(a, b, B.pathWidth, 0.05, palette.path);
-  };
-  for (const loop of def.loops) {
-    for (let i = 0; i < loop.length; i++) {
-      drawPath(pos2(loop[i]), pos2(loop[(i + 1) % loop.length]));
-    }
-  }
-  for (const j of def.junctions ?? []) {
-    drawPath(pos2(j.from), pos2(j.to));
-  }
-  if (def.shortcut) {
-    const a = pos2(def.shortcut.from);
-    const b = pos2(def.shortcut.to);
-    const d = b.clone().sub(a);
-    // Bend the cut slightly toward the loop interior so it clears the
-    // in-between spaces and reads as a diagonal shortcut, not a straight chord.
-    const perp = new THREE.Vector2(-d.y, d.x).normalize();
-    const bend = a.clone().add(d.clone().multiplyScalar(0.5)).add(perp.multiplyScalar(0.8));
-    addPathSegment(a, bend, B.pathWidth + 0.34, 0.02, palette.pathEdge);
-    addPathSegment(a, bend, B.pathWidth, 0.05, palette.path);
-    addPathSegment(bend, b, B.pathWidth + 0.34, 0.02, palette.pathEdge);
-    addPathSegment(bend, b, B.pathWidth, 0.05, palette.path);
-  }
+  // Lanes are built by boardLanes.ts and added after the static-bounds pass below.
 
   // ---- space disks -----------------------------------------------------------------
   const diskGeo = new THREE.CylinderGeometry(settings.tileRadius * 0.96, settings.tileRadius, B.diskHeight, 32);
@@ -364,6 +312,9 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
   // Rigid static props only. Under the cutoff this builds no tree and does
   // not load three-mesh-bvh. A dense glTF prop added here would.
   void attachStaticBoundsIn(group);
+  // Lanes go in AFTER the static-bounds pass: the merged lane geometry is over
+  // the BVH triangle cutoff and would otherwise load three-mesh-bvh on every board.
+  for (const m of buildBoardLanes(def, kit)) group.add(m);
 
   // ---- lively board: ambient loops + landing reactions (cosmetic) -------------------
   // Added after the static-bounds pass: these all move. `?lively=0` skips it all.
