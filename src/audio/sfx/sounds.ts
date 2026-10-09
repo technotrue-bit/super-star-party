@@ -232,6 +232,62 @@ const land: SfxDef = {
   },
 };
 
+/** Blue landing: soft thud plus a bright two-note coin chirp. */
+const landBlue: SfxDef = {
+  gap: 120,
+  build: (ctx, out, t, o) => {
+    const stops: StopFn[] = [];
+    const p = semitone(o.pitch);
+    stops.push(noise(ctx, out, t, 0.06, { type: "lowpass", freq: 300, vol: o.vol * 0.3 }));
+    stops.push(tone(ctx, out, t + 0.02, 1318.5 * p, 0.09, { type: "square", vol: o.vol * 0.09, decay: 0.06 }));
+    stops.push(
+      tone(ctx, out, t + 0.08, 1975.5 * p, 0.22, {
+        type: "sine",
+        vol: o.vol * 0.24,
+        decay: 0.16,
+        partials: [{ mult: 2, amp: 0.18 }],
+      }),
+    );
+    return () => stops.forEach((s) => s());
+  },
+};
+
+/** Red landing: heavy thud and a sagging wobble. */
+const landRed: SfxDef = {
+  gap: 120,
+  build: (ctx, out, t, o) => {
+    const stops: StopFn[] = [];
+    const p = semitone(o.pitch);
+    stops.push(noise(ctx, out, t, 0.12, { type: "lowpass", freq: 220, vol: o.vol * 0.45 }));
+    stops.push(
+      tone(ctx, out, t, 240 * p, 0.32, {
+        type: "triangle",
+        vol: o.vol * 0.3,
+        slideTo: 120 * p,
+        slideTime: 0.28,
+        decay: 0.24,
+        vibRate: 9,
+        vibDepth: 40,
+      }),
+    );
+    return () => stops.forEach((s) => s());
+  },
+};
+
+/** Green landing: light thud and a rising sparkle arpeggio. */
+const landGreen: SfxDef = {
+  gap: 120,
+  build: (ctx, out, t, o) => {
+    const stops: StopFn[] = [];
+    const p = semitone(o.pitch);
+    stops.push(noise(ctx, out, t, 0.05, { type: "lowpass", freq: 320, vol: o.vol * 0.25 }));
+    const notes: Array<[number, number]> = [1046.5, 1318.5, 1568, 2093].map((f) => [f * p, 0.14]);
+    stops.push(arp(ctx, out, t + 0.03, notes, { type: "sine", vol: o.vol * 0.2, gap: 0.04 }));
+    stops.push(noise(ctx, out, t + 0.05, 0.25, { type: "highpass", freq: 6000, vol: o.vol * 0.08 }));
+    return () => stops.forEach((s) => s());
+  },
+};
+
 const boing: SfxDef = {
   build: (ctx, out, t, o) => {
     const p = semitone(o.pitch);
@@ -711,6 +767,9 @@ export const SFX: Record<string, SfxDef> = {
   jump,
   hop,
   land,
+  "land.blue": landBlue,
+  "land.red": landRed,
+  "land.green": landGreen,
   sad,
   cheer,
   boing,

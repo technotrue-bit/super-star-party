@@ -5,6 +5,7 @@
  */
 import { match, snapshot, startMatch } from "./game";
 import { rng } from "./rng";
+import { bus } from "./events";
 import { audio } from "../audio/audioEngine";
 import { screens } from "../screens/screenManager";
 import { world } from "../main";
@@ -37,6 +38,8 @@ import { effectsPassCount, getEffectsQuality, setEffectsQuality as applyEffectsQ
 import { rapierStatus, runContactScenario as runRapierContactScenario } from "../physics/contact";
 import { setOnlineMatch, setPartyAssist } from "../net/mode";
 import { dropOut, partyView } from "../net/session";
+import { livelyDebug, livelyReact } from "../board/lively/landFx";
+import type { WebGLRenderer } from "three";
 
 export interface SSPDebug {
   state(): Record<string, unknown>;
@@ -47,7 +50,24 @@ export interface SSPDebug {
   seed(n: number): void;
   reset(): void;
   audioLevels(): { rms: number; peak: number };
-  perf(): { fps: number; ms: number };
+  /**
+   * Frame cost. `ms` is the last frame, `avgMs` the mean of the last 120.
+   * `calls`/`triangles`/`points`/`lines` are renderer.info summed over every
+   * render() in the last frame (shadow map, scene, post passes).
+   */
+  perf(): PerfSample;
+  /** Gameplay rng draws since the last reseed (isolation probe). */
+  rngDraws(): number;
+  /**
+   * Gameplay rng draw count captured synchronously at each turn:start,
+   * minigame:start, and minigame:end of the current match, so two runs can
+   * be compared draw-for-draw without frame-timing noise.
+   */
+  rngTurnLog(): RngMark[];
+  /** Lively board counters and worst-case cost. Inactive with ?lively=0. */
+  lively(): ReturnType<typeof livelyDebug>;
+  /** Fire a lively reaction on a space ("hop" or a space type). False when lively is off. */
+  livelyReact(space: number, kind: string): boolean;
   startMatch(kinds: string[], names?: string[]): void;
   /** Debug-only: jump to end-of-match (set phase='ended' for finale wiring). */
   endMatch(): void;
@@ -125,9 +145,45 @@ export interface SSPDebug {
   partyDrop(): void;
 }
 
+export interface PerfSample {
+  fps: number;
+  ms: number;
+  avgMs: number;
+  calls: number;
+  triangles: number;
+  points: number;
+  lines: number;
+}
+
+export interface RngMark {
+  event: string;
+  turn: number;
+  draws: number;
+}
+
+const rngMarks: RngMark[] = [];
+const RNG_MARKS_MAX = 2000;
+
+function markRng(event: string): void {
+  // A reseed (new match) restarts the count; drop the old match's marks.
+  const prev = rngMarks[rngMarks.length - 1];
+  if (prev && rng.draws < prev.draws) rngMarks.length = 0;
+  if (rngMarks.length >= RNG_MARKS_MAX) return;
+  rngMarks.push({ event, turn: match.turn, draws: rng.draws });
+}
+
 let autoplayOn = false;
 let fps = 0;
 let frameMs = 0;
+const FRAME_WINDOW = 120;
+const frameRing = new Float32Array(FRAME_WINDOW);
+let frameRingLen = 0;
+let frameRingAt = 0;
+let frameRingSum = 0;
+const renderTally = { calls: 0, triangles: 0, points: 0, lines: 0 };
+const lastRender = { calls: 0, triangles: 0, points: 0, lines: 0 };
+let tallyRenderer: WebGLRenderer | null = null;
+let tallyBanked = false;
 let autoplayHook: (() => void) | null = null;
 
 /** Turn loop registers its driver here (Wave 2). */
@@ -139,6 +195,48 @@ export function setAutoplayHook(fn: (() => void) | null): void {
 export function tickFrame(deltaMs: number): void {
   frameMs = deltaMs;
   fps = deltaMs > 0 ? 1000 / deltaMs : 60;
+  if (frameRingLen === FRAME_WINDOW) frameRingSum -= frameRing[frameRingAt];
+  else frameRingLen++;
+  frameRing[frameRingAt] = deltaMs;
+  frameRingSum += deltaMs;
+  frameRingAt = (frameRingAt + 1) % FRAME_WINDOW;
+}
+
+/**
+ * Sum renderer.info across every render() in a frame. Three resets info at
+ * the start of each render() (autoReset stays on), so the reset is wrapped
+ * to bank the previous render's numbers first. Rendering is unchanged.
+ */
+export function instrumentRenderer(renderer: WebGLRenderer): void {
+  tallyRenderer = renderer;
+  const info = renderer.info;
+  const reset = info.reset.bind(info);
+  info.reset = () => {
+    // tickRender() already counted the render that ended the last frame.
+    if (!tallyBanked) {
+      renderTally.calls += info.render.calls;
+      renderTally.triangles += info.render.triangles;
+      renderTally.points += info.render.points;
+      renderTally.lines += info.render.lines;
+    }
+    tallyBanked = false;
+    reset();
+  };
+}
+
+/** Called by the main loop after the frame's last render. */
+export function tickRender(): void {
+  if (!tallyRenderer) return;
+  const r = tallyRenderer.info.render;
+  lastRender.calls = renderTally.calls + (tallyBanked ? 0 : r.calls);
+  lastRender.triangles = renderTally.triangles + (tallyBanked ? 0 : r.triangles);
+  lastRender.points = renderTally.points + (tallyBanked ? 0 : r.points);
+  lastRender.lines = renderTally.lines + (tallyBanked ? 0 : r.lines);
+  renderTally.calls = 0;
+  renderTally.triangles = 0;
+  renderTally.points = 0;
+  renderTally.lines = 0;
+  tallyBanked = true;
 }
 
 /** Called by the main loop while autoplay is on. */
@@ -177,6 +275,7 @@ export function installDebugAPI(): void {
           master: audio.master.gain,
         },
         rngSeed: rng.seed,
+        rngDraws: rng.draws,
         autoplay: autoplayOn,
         items: itemDebugSnapshot(),
         minigameRules: {
@@ -217,7 +316,27 @@ export function installDebugAPI(): void {
       return audio.levels();
     },
     perf() {
-      return { fps: Math.round(fps), ms: Math.round(frameMs) };
+      return {
+        fps: Math.round(fps),
+        ms: Math.round(frameMs),
+        avgMs: frameRingLen ? +(frameRingSum / frameRingLen).toFixed(2) : 0,
+        calls: lastRender.calls,
+        triangles: lastRender.triangles,
+        points: lastRender.points,
+        lines: lastRender.lines,
+      };
+    },
+    rngDraws() {
+      return rng.draws;
+    },
+    rngTurnLog() {
+      return rngMarks.map((m) => ({ ...m }));
+    },
+    lively() {
+      return livelyDebug();
+    },
+    livelyReact(space: number, kind: string) {
+      return livelyReact(space, kind);
     },
     startMatch(kinds: string[], names?: string[]) {
       // Preserve the current seed (set via __SSP__.seed(n)) so critic
@@ -344,6 +463,11 @@ export function installDebugAPI(): void {
       dropOut();
     },
   };
+  // Read-only listeners for rngTurnLog(). They never draw or write state.
+  bus.on("match:start", () => markRng("match:start"));
+  bus.on("turn:start", () => markRng("turn:start"));
+  bus.on("minigame:start", () => markRng("minigame:start"));
+  bus.on("minigame:end", () => markRng("minigame:end"));
   (window as unknown as { __SSP__: SSPDebug }).__SSP__ = api;
   console.log("[SSP] debug API installed — window.__SSP__");
 }

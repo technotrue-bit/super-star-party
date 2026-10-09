@@ -21,13 +21,17 @@ export function mulberry32(seed: number): RNG {
 export const rng = {
   _seed: 1,
   _fn: mulberry32(1),
+  /** Draws since the last reset. Debug/probe counter only; never read by gameplay. */
+  _draws: 0,
   /** Reseed; returns the new seed. */
   reset(seed: number): number {
     this._seed = seed >>> 0 || 1;
     this._fn = mulberry32(this._seed);
+    this._draws = 0;
     return this._seed;
   },
   next(): number {
+    this._draws++;
     return this._fn();
   },
   /** Uniform int in [min, max] inclusive. */
@@ -48,6 +52,10 @@ export const rng = {
   },
   get seed(): number {
     return this._seed;
+  },
+  /** Gameplay draws since the last reset (isolation probe). */
+  get draws(): number {
+    return this._draws;
   },
 };
 

@@ -30,6 +30,16 @@ export function defaultEffectsQuality(): EffectsQuality {
   return "high";
 }
 
+/**
+ * Lively board (landing reactions + ambient scenery). On by default.
+ * `?lively=0` turns every lively addition off for this page load, which is
+ * how the isolation probe compares a plain board against a lively one.
+ */
+export function livelyEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  return new URLSearchParams(window.location.search).get("lively") !== "0";
+}
+
 export const settings = {
   // ---- engine ----
   maxDelta: 1 / 20, // clamp frame delta (s)
@@ -99,6 +109,26 @@ export const settings = {
     highlightRise: 0.5, // highlight ring max rise (world units)
     highlightPulse: 2.2, // highlight ring pulse rate (cycles/s)
     boundsPad: 0.8, // camera-fit padding beyond the space radius
+  },
+
+  // ---- lively board (cosmetic only; `?lively=0` turns it off) ----
+  lively: {
+    hopDip: 0.08, // disk dip depth when a player pushes off / lands mid-move (world units)
+    hopDipTime: 0.22, // seconds per dip
+    landSquash: 0.42, // landing squash: y scale starts at 1 - this, springs back elastically
+    landSquashTime: 0.7, // seconds for the squash to settle
+    ringTime: 0.55, // rim-colour ring expand + fade (s)
+    ringGrow: 0.85, // extra ring scale at the end of the fade
+    particles: 48, // pooled instanced particles (allocated once)
+    burst: 12, // particles per landing
+    gravity: 11, // particle gravity (world units/s^2)
+    buntingSpacing: 0.7, // pennant width along a bunting strand (world units)
+    buntingSag: 1.4, // bunting droop at mid-span (world units)
+    buntingBow: 1.0, // bunting bow away from the loop at mid-span (clears the disks, misses the tents)
+    carouselSpin: 0.55, // rad/s carousel turn
+    cloudDrift: 0.9, // world units/s cloud drift
+    birdLap: 0.16, // rad/s bird flock lap around the board
+    searchSweep: 0.45, // rad/s searchlight sweep
   },
 
   // ---- match-screen party camera ----
