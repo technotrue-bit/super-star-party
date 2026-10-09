@@ -90,6 +90,13 @@ export const settings = {
   board: {
     diskHeight: 0.12, // space disk thickness / raise above ground
     pathWidth: 1.5, // sandy path strip width
+    laneTrim: 0.12, // soft darker trim beyond the sand core
+    laneFeather: 0.22, // transparent fade from trim into the grass
+    laneY: 0.01, // lane decal height above the grass
+    laneStep: 0.1, // dense centreline sample spacing (simplified before the lane bake)
+    laneFillet: 0.9, // smooth-min radius rounding junction/shortcut roots
+    laneTexelsPerUnit: 48, // lane decal texture density (capped by laneTexMax)
+    laneTexMax: 1024, // lane decal texture longest side, px
     groundSize: 64, // grass checkerboard size (world units) — wide enough that
     // the far grass corners project OUTSIDE the frame sides from the party
     // camera, so no sky wedge leaks into the top strip
