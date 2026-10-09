@@ -17,7 +17,7 @@ const BASE = process.env.SSP_URL ?? "http://127.0.0.1:5177";
 const EXPECT_TRANSPORT = (process.env.SSP_EXPECT_TRANSPORT ?? "").trim();
 const PROD = process.env.SSP_PROD === "1";
 const VIEW = { width: 390, height: 844 };
-const SHOTS = "/opt/cursor/artifacts";
+const SHOTS = process.env.SSP_SHOTS ?? "/opt/cursor/artifacts";
 fs.mkdirSync(SHOTS, { recursive: true });
 
 const reasons = [];
@@ -226,6 +226,35 @@ const DRAG_SIM_SEC = 0.2;
  */
 const AXIS_TOLERANCE_DEG = 35;
 const MIN_AXIS_PX = 6;
+/**
+ * Coin grab's vertical drags hold longer. From rest the seat covers
+ * 0.5 * ACCEL * t^2 = 6 * t^2 units (ACCEL 12, the 5 u/s cap is not reached
+ * before 0.42s), so 0.2s is only 0.24u. Its steep portrait camera maps that to
+ * about 36px/u on screen-y for "down", which left 4.5-5.8px against the 6px floor.
+ * 0.35s is 0.74u, about 26px, four times the floor. Coin grab has no ring edge,
+ * so the longer hold cannot knock the seat out.
+ */
+const COIN_GRAB_VERTICAL_SIM_SEC = 0.35;
+
+function dragSimSec(id, drag) {
+  return id === "coin_grab" && drag.axis === "y" ? COIN_GRAB_VERTICAL_SIM_SEC : DRAG_SIM_SEC;
+}
+
+/**
+ * Wait until the local model sits back on its body.
+ * The mirror's screen point is the model, and the walk hop lifts it about 0.14u,
+ * so a sample mid-hop shifts screen-y by a few pixels.
+ */
+async function settledLocalSeat(page, id) {
+  const deadline = Date.now() + 4000;
+  let seat = await localSeat(page, id);
+  while (Date.now() < deadline) {
+    if (seat && gap(seat) <= 0.02) return seat;
+    await page.waitForTimeout(30);
+    seat = await localSeat(page, id);
+  }
+  return seat;
+}
 
 function mirrorTime(gameId) {
   const mirror = gameId === "bumper_balls" ? window.__BB__ : window.__CG__;
@@ -285,17 +314,18 @@ async function dragStick(page, id, dx, dy, simSec) {
   if (!box) throw new Error("move stick is not on screen");
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
+  // Sample the parked, settled seat before the press so no early motion is lost.
+  const before = await settledLocalSeat(page, id);
   await page.mouse.move(cx, cy);
   await page.mouse.down();
   await page.mouse.move(cx + dx, cy + dy);
-  const before = await localSeat(page, id);
   const start = await simTime(page, id);
   try {
     await waitSim(page, id, start, simSec);
   } finally {
     await releasePointer(page);
   }
-  const after = await localSeat(page, id);
+  const after = await settledLocalSeat(page, id);
   if (!before?.screen || !after?.screen) return null;
   return {
     dx: after.screen.x - before.screen.x,
@@ -409,7 +439,7 @@ async function checkArena(page, id) {
   ];
   for (const drag of drags) {
     await placeLocal(page, id, 0, 0);
-    const moved = await dragStick(page, id, drag.dx, drag.dy, DRAG_SIM_SEC);
+    const moved = await dragStick(page, id, drag.dx, drag.dy, dragSimSec(id, drag));
     assertMoved(id, drag.name, moved, drag);
     await assertAliveGap(page, id, "after " + drag.name);
   }

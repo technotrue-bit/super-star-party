@@ -50,6 +50,7 @@ import {
   setPendingMinigame,
   setPracticeBeat,
   stickGround,
+  tapClockIsSim,
   tapCooldownRatio,
   tapReady,
   tickTapCooldown,
@@ -111,9 +112,9 @@ function injectMinigameStyles(): void {
 }
 .ssp-seat--on { display: flex; flex-direction: column; align-items: center; min-width: 28px; min-height: 18px; }
 .ssp-seat__you {
-  background: currentColor;
-  color: ${palette.ink};
-  border: 3px solid ${palette.ink};
+  background: ${palette.ink};
+  color: ${palette.cream};
+  border: 3px solid var(--ssp-seat, ${palette.sun});
   border-radius: 999px;
   padding: 2px 8px;
   font-family: Fredoka, sans-serif;
@@ -630,6 +631,7 @@ function ensureMarker(self: MgScreenState): void {
   el.className = "ssp-seat ssp-seat--on";
   el.dataset.seatMarker = String(seatId);
   el.style.color = seat.color;
+  el.style.setProperty("--ssp-seat", seat.color);
   const you = document.createElement("div");
   you.className = "ssp-seat__you";
   you.textContent = "YOU";
@@ -853,7 +855,8 @@ function beginGo(self: MgScreenState): void {
 }
 
 function tickTeach(self: MgScreenState, dt: number): void {
-  tickTapCooldown(dt);
+  // In play a sim-clocked game ticks the cooldown from its fixed step.
+  if (self._phase !== "play" || !tapClockIsSim()) tickTapCooldown(dt);
   self._touch?.setCooldown(tapCooldownRatio());
   tickBursts(self, dt);
   tickMarker(self);

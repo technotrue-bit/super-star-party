@@ -196,6 +196,8 @@ export const DASH_SPEED = 8.2;
 
 let tapCd = 0;
 let tapCdMax = 0;
+/** True once a game ticks the TAP cooldown from its own fixed step. */
+let tapSimClock = false;
 
 export function armTapCooldown(seconds: number): void {
   const s = Math.max(0, seconds);
@@ -217,9 +219,24 @@ export function tickTapCooldown(dt: number): void {
   if (tapCd > 0) tapCd = Math.max(0, tapCd - dt);
 }
 
+/**
+ * A game with a sim-time TAP cooldown calls this in setup, then calls
+ * tickTapCooldown(FIXED_DT) once per fixed step. The screen then stops
+ * ticking it during play, so the ring and gate follow the same clock as
+ * the game's dash (dropped steps and a stalled sim hold the cooldown too).
+ */
+export function useSimTapClock(): void {
+  tapSimClock = true;
+}
+
+export function tapClockIsSim(): boolean {
+  return tapSimClock;
+}
+
 export function resetTapCooldown(): void {
   tapCd = 0;
   tapCdMax = 0;
+  tapSimClock = false;
 }
 
 /**

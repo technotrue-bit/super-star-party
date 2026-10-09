@@ -77,9 +77,9 @@ function injectStyles(): void {
       font-size: 16px; font-weight: 700; letter-spacing: 0.04em;
       display: flex; align-items: center; justify-content: center;
     }
-    .ssp-act__verb {
-      pointer-events: none;
-      text-shadow: 0 2px 0 ${palette.ink};
+    .ssp-act .ssp-act__label {
+      position: static; transform: none;
+      font-size: 16px; letter-spacing: 0.04em;
     }
     .ssp-act__ring {
       position: absolute; inset: -7px;
@@ -169,9 +169,6 @@ export function createTouchPad(opts: {
   act.type = "button";
   act.className = "ssp-act";
   act.setAttribute("aria-label", "Action");
-  const verb = document.createElement("span");
-  verb.className = "ssp-act__verb";
-  verb.textContent = "TAP";
   const actLabel = document.createElement("div");
   actLabel.className = "ssp-act__label";
   actLabel.textContent = "TAP";
@@ -187,7 +184,7 @@ export function createTouchPad(opts: {
   ringCircle.setAttribute("stroke-dasharray", "100");
   ringCircle.setAttribute("stroke-dashoffset", "0");
   ring.appendChild(ringCircle);
-  act.append(verb, actLabel, ring);
+  act.append(actLabel, ring);
 
   const keys = document.createElement("div");
   keys.className = "ssp-keys";
@@ -317,7 +314,6 @@ export function createTouchPad(opts: {
       verbText = next.verb;
       steerOn = next.steer;
       const word = next.verb ?? "";
-      verb.textContent = word;
       actLabel.textContent = word;
       act.setAttribute("aria-label", word || "Action");
       if (word) act.dataset.tapVerb = word;
@@ -331,16 +327,18 @@ export function createTouchPad(opts: {
       ring.style.opacity = clamped > 0.02 ? "1" : "0";
     },
     pulse(): void {
-      const target = act.style.display === "none" ? keys : act;
-      target.classList.remove("ssp-act--pulse", "ssp-keys--deny");
-      void (target as HTMLElement).offsetWidth;
-      if (target === act) act.classList.add("ssp-act--pulse");
+      // Clear both feedback classes, reflow, then add one so it restarts.
+      act.classList.remove("ssp-act--pulse", "ssp-act--deny");
+      keys.classList.remove("ssp-keys--deny");
+      void act.offsetWidth;
+      if (act.style.display !== "none") act.classList.add("ssp-act--pulse");
     },
     deny(): void {
-      const target = act.style.display === "none" ? keys : act;
-      target.classList.remove("ssp-act--deny", "ssp-keys--deny", "ssp-act--pulse");
-      void (target as HTMLElement).offsetWidth;
-      if (target === act) act.classList.add("ssp-act--deny");
+      act.classList.remove("ssp-act--pulse", "ssp-act--deny");
+      keys.classList.remove("ssp-keys--deny");
+      void act.offsetWidth;
+      void keys.offsetWidth;
+      if (act.style.display !== "none") act.classList.add("ssp-act--deny");
       else keys.classList.add("ssp-keys--deny");
     },
   };

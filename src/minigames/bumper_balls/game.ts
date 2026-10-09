@@ -21,7 +21,7 @@
  * (~18.7s), making the squeeze the story of the round.
  */
 import * as THREE from "three";
-import { contactCpuFrozen, DASH_BURST, DASH_COOLDOWN, DASH_SPEED, dashDirection, isLocalPlayer, isPracticeBeat, localPlayerIndex, stickGround, takeContactPlace, type Minigame, type MinigameContext } from "../framework";
+import { contactCpuFrozen, DASH_BURST, DASH_COOLDOWN, DASH_SPEED, dashDirection, isLocalPlayer, isPracticeBeat, localPlayerIndex, stickGround, takeContactPlace, tickTapCooldown, useSimTapClock, type Minigame, type MinigameContext } from "../framework";
 import { ui } from "../../ui/kit";
 import { characterColor } from "../../characters/roster";
 import { buildArena, ARENA_R, type ArenaHandle } from "./arena";
@@ -159,6 +159,7 @@ export const bumperBallsMinigame: Minigame = {
   tapSfx: "jump",
 
   setup(ctx: MinigameContext): void {
+    useSimTapClock();
     /* ---- camera: party top-down on the stage ---- */
     /* Round lifecycle is strictly sequential (setup -> updates -> teardown
        -> setup again), so a module-level round handle is safe and keeps
@@ -396,6 +397,7 @@ function stepFixed(state: RoundState, dt: number): void {
   /* ---- steer + integrate (id order: 0 human, 1-3 CPU) ---- */
   parkLocalSeat(state);
   state.human.dashCd = Math.max(0, state.human.dashCd - dt);
+  tickTapCooldown(dt); // the TAP gate runs on the same fixed steps as dashCd
   const analog = stickGround(ctx.camera, state.human.stickX, state.human.stickY);
   const cpuHold = contactCpuFrozen();
   for (const b of state.bodies) {

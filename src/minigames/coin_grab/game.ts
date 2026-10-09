@@ -19,7 +19,7 @@
  * limit is reached, so it always ranks itself before the safety net.
  */
 import * as THREE from "three";
-import { contactCpuFrozen, DASH_BURST, DASH_COOLDOWN, DASH_SPEED, dashDirection, isLocalPlayer, isPracticeBeat, localPlayerIndex, stickGround, takeContactPlace, type Minigame, type MinigameContext } from "../framework";
+import { contactCpuFrozen, DASH_BURST, DASH_COOLDOWN, DASH_SPEED, dashDirection, isLocalPlayer, isPracticeBeat, localPlayerIndex, stickGround, takeContactPlace, tickTapCooldown, useSimTapClock, type Minigame, type MinigameContext } from "../framework";
 import { ease } from "../../core/rng";
 import { ui } from "../../ui/kit";
 import { characterColor } from "../../characters/roster";
@@ -1154,6 +1154,7 @@ export const coinGrabMinigame: Minigame = {
   tapSfx: "hop",
 
   setup(ctx: MinigameContext): void {
+    useSimTapClock();
     const cam = ctx.camera;
     const portrait = window.innerWidth / window.innerHeight < 1;
     cam.fov = portrait ? 72 : 62;
@@ -1404,6 +1405,7 @@ function stepFixed(state: RoundState, dt: number): void {
   /* ---- steer + integrate (id order: 0 human, 1-3 CPU) ---- */
   parkLocalSeat(state);
   state.human.dashCd = Math.max(0, state.human.dashCd - dt);
+  tickTapCooldown(dt); // the TAP gate runs on the same fixed steps as dashCd
   const analog = stickGround(ctx.camera, state.human.stickX, state.human.stickY);
   const cpuHold = contactCpuFrozen();
   for (const b of state.bodies) {
