@@ -32,11 +32,13 @@ import {
   buildCarousel,
   buildSky,
   buildSearchlight,
+  buntingSlots,
   toonMat,
   type Prop,
 } from "./boardScenery";
 import { createLandFx, type LandFx, type LandReaction } from "./lively/landFx";
 import { createCrowd, type Crowd } from "./lively/crowd";
+import { createNight, type Night } from "./lively/night";
 import { attachStaticBoundsIn, releaseStaticBoundsIn } from "../render/meshBvh";
 
 export interface BoardScene {
@@ -62,6 +64,11 @@ export interface BoardScene {
    * No-op with `?lively=0`. Never touches match state.
    */
   react(i: number, kind: LandReaction): void;
+  /**
+   * Day -> dusk -> night target from the match turn (lively/timeOfDay.ts).
+   * Call every frame; the look eases toward it. No-op with `?lively=0`.
+   */
+  setTimeOfDay(turn: number, totalTurns: number): void;
   /** Advance idle animations (ferris, stars, pennants, highlights). */
   update(dt: number): void;
   /**
@@ -327,11 +334,16 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
   }
   // lamp posts near three spaced-out spots around the loop
   const lampTops = new Map<number, THREE.Vector3>();
+  const lamps: { glow: THREE.Mesh; halo: THREE.Mesh }[] = [];
   for (const i of [1, 15, 24]) {
     const sp = def.spaces[wrapIndex(i, n)];
     const [lx, lz] = outward(sp.x, sp.y, 2.1);
-    props.push(buildLampPost(kit, lx, lz));
+    const lamp = buildLampPost(kit, lx, lz);
+    props.push(lamp);
     lampTops.set(i, new THREE.Vector3(lx, 2.95, lz));
+    const glow = lamp.root.getObjectByName("lamp-glow");
+    const halo = lamp.root.getObjectByName("lamp-halo");
+    if (glow instanceof THREE.Mesh && halo instanceof THREE.Mesh) lamps.push({ glow, halo });
   }
   // balloon clusters near each tent (inset from settings so they clear the
   // loop edge and stay beside the tent on the grass)
@@ -357,6 +369,7 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
   // Added after the static-bounds pass: these all move. `?lively=0` skips it all.
   let landFx: LandFx | null = null;
   let crowd: Crowd | null = null;
+  let night: Night | null = null;
   if (livelyEnabled()) {
     const lively = new THREE.Group();
     lively.name = "lively";
@@ -407,6 +420,21 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
         spots: [gap(west, mid), gap(mid, east)],
         face: { x: cx, z: cy },
         gradientMap: kit.grad,
+      });
+    }
+    // Day -> dusk -> night: lamps, string lights, LAST 5 fireworks. Own group,
+    // so the slice 1 and 2 budgets stay their own.
+    if (world.scene) {
+      const nightRoot = new THREE.Group();
+      nightRoot.name = "lively-night";
+      group.add(nightRoot);
+      night = createNight({
+        scene: world.scene,
+        root: nightRoot,
+        lamps,
+        bulbs: buntingSlots(strands, { x: cx, z: cy }),
+        camera: () => world.camera,
+        center: { x: cx, z: cy },
       });
     }
   }
@@ -464,6 +492,10 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
       landFx?.react(i, kind);
     },
 
+    setTimeOfDay(turn: number, totalTurns: number): void {
+      night?.setTurn(turn, totalTurns);
+    },
+
     setPrizeBalloon(index: number | null): void {
       if (index === null) {
         prize.root.visible = false;
@@ -485,6 +517,7 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
       for (const p of props) p.update?.(t, dt);
       landFx?.update(dt);
       crowd?.update(dt);
+      night?.update(dt);
       if (
         prize.root.visible &&
         prizeShown !== null &&
@@ -536,6 +569,8 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
       landFx = null;
       crowd?.dispose();
       crowd = null;
+      night?.dispose();
+      night = null;
       releaseStaticBoundsIn(group);
       world.scene?.remove(group);
       const geoms = new Set<THREE.BufferGeometry>();

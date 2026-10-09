@@ -398,12 +398,14 @@ export function buildLampPost(kit: BoardTextures, x: number, z: number): Prop {
 
   const glow = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10), new THREE.MeshBasicMaterial({ color: palette.sun }));
   glow.position.set(0.62, 2.7, 0);
+  glow.name = "lamp-glow"; // lively/night.ts brightens these from dusk
   root.add(glow);
   const halo = new THREE.Mesh(
     new THREE.SphereGeometry(0.46, 12, 10),
     new THREE.MeshBasicMaterial({ color: palette.sun, transparent: true, opacity: 0.22 })
   );
   halo.position.set(0.62, 2.7, 0);
+  halo.name = "lamp-halo";
   root.add(halo);
   const cap = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.16, 8), toonMat(kit, palette.ink));
   cap.position.set(0.62, 3.0, 0);
@@ -745,28 +747,21 @@ function quiet<T extends THREE.Object3D>(obj: T, name: string): T {
   return obj;
 }
 
-/**
- * Bunting strung between lamp-post tops: one instanced pennant per slot,
- * each pennant carrying its own stretch of string, so a strand reads as a
- * continuous line. Pennants swing about the string in a travelling wave.
- */
-export function buildBunting(
-  kit: BoardTextures,
-  strands: Array<[THREE.Vector3, THREE.Vector3]>,
-  center: { x: number; z: number }
-): Prop {
-  // Unit pennant: string bar along the top edge (x -0.5..0.5), tip at y = -1.
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(
-      [-0.5, 0, 0, 0.5, 0, 0, 0, -1, 0, -0.5, 0.07, 0, 0.5, 0.07, 0, 0.5, 0, 0, -0.5, 0.07, 0, 0.5, 0, 0, -0.5, 0, 0],
-      3
-    )
-  );
-  geo.setAttribute("normal", new THREE.Float32BufferAttribute(new Array(27).fill(0).map((_, i) => (i % 3 === 2 ? 1 : 0)), 3));
+export interface BuntingSlot {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  slope: number;
+  w: number;
+}
 
-  const slots: { x: number; y: number; z: number; yaw: number; slope: number; w: number }[] = [];
+/**
+ * Pennant slots along each strand: a sagging curve bowed away from the loop.
+ * The string-light bulbs (lively/night.ts) hang on the same curve.
+ */
+export function buntingSlots(strands: Array<[THREE.Vector3, THREE.Vector3]>, center: { x: number; z: number }): BuntingSlot[] {
+  const slots: BuntingSlot[] = [];
   for (const [a, b] of strands) {
     const dx = b.x - a.x;
     const dz = b.z - a.z;
@@ -801,7 +796,31 @@ export function buildBunting(
       });
     }
   }
+  return slots;
+}
 
+/**
+ * Bunting strung between lamp-post tops: one instanced pennant per slot,
+ * each pennant carrying its own stretch of string, so a strand reads as a
+ * continuous line. Pennants swing about the string in a travelling wave.
+ */
+export function buildBunting(
+  kit: BoardTextures,
+  strands: Array<[THREE.Vector3, THREE.Vector3]>,
+  center: { x: number; z: number }
+): Prop {
+  // Unit pennant: string bar along the top edge (x -0.5..0.5), tip at y = -1.
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(
+      [-0.5, 0, 0, 0.5, 0, 0, 0, -1, 0, -0.5, 0.07, 0, 0.5, 0.07, 0, 0.5, 0, 0, -0.5, 0.07, 0, 0.5, 0, 0, -0.5, 0, 0],
+      3
+    )
+  );
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(new Array(27).fill(0).map((_, i) => (i % 3 === 2 ? 1 : 0)), 3));
+
+  const slots = buntingSlots(strands, center);
   const mesh = quiet(new THREE.InstancedMesh(geo, livelyToon(kit, { side: THREE.DoubleSide }), slots.length), "lively:bunting");
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   mesh.frustumCulled = false;
