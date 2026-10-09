@@ -430,6 +430,9 @@ async function checkArena(page, id) {
   await assertPracticeFrozen(page, id);
   await waitPhase(page, "play");
   await waitForStick(page);
+  // Dash first: the bumper ring closes on sim time, and the drags below can take
+  // 15s+ on a slow runner, long enough for the frozen CPUs to drop and end the round.
+  if (id === "bumper_balls") await assertDash(page);
   const drags = [
     { name: "up", dx: 0, dy: -52, axis: "y", sign: -1, label: "up" },
     { name: "left", dx: -52, dy: 0, axis: "x", sign: -1, label: "left" },
@@ -458,7 +461,6 @@ async function checkArena(page, id) {
     console.log("   local seat still alive");
   }
   await assertAliveGap(page, id, "after the survival drag");
-  if (id === "bumper_balls") await assertDash(page);
 }
 
 async function checkPush(page) {
