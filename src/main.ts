@@ -64,6 +64,7 @@ function boot(): void {
   let screen = params.get("screen") ?? "title";
   const audioOff = params.get("audio") === "0";
   const speed = Number(params.get("speed") ?? "1");
+  const fixedStep = params.get("fixedstep") === "1";
 
   // ?shop=1 jumps straight to the board and opens the gumball shop for
   // inspection — the shop stays open indefinitely (no auto-resolve).
@@ -135,8 +136,11 @@ function boot(): void {
   function frame(now: number): void {
     const rawDelta = (now - last) / 1000;
     last = now;
-    const dt = Math.min(rawDelta, settings.maxDelta) * speed;
-    tickFrame(rawDelta * 1000);
+    // ?fixedstep=1 is a probe-only switch (probe-lively-shots): every frame
+    // advances the same game time, so two runs of a seed hit each turn-loop
+    // beat on the same frame. Without the param the dt is unchanged.
+    const dt = (fixedStep ? 1 / 60 : Math.min(rawDelta, settings.maxDelta)) * speed;
+    tickFrame(rawDelta * 1000, dt);
     if (isAutoplay()) autoplayTick();
     screens.update(dt);
     screens.render();

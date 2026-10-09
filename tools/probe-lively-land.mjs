@@ -112,6 +112,9 @@ async function measureWidth(browser, w, h) {
   const idleOn = await sampleFrames(on.page, 30, false);
   const peak = await sampleFrames(on.page, 4, true);
   const worst = (await on.page.evaluate(() => window.__SSP__.lively())).budget;
+  // Slice 2's crowd has its own budget (probe-lively-shots); take its worst
+  // case out of the delta so this stays the slice 1 budget.
+  const crowd = (await on.page.evaluate(() => window.__SSP__.livelyCrowd?.()))?.budget ?? { drawCalls: 0, triangles: 0 };
   if (off.cam !== on.cam) fail(`${w}px: camera differs between pages (${off.cam} vs ${on.cam}); calls are not comparable`);
 
   const baseCalls = median(idleOff.map((s) => s.calls));
@@ -129,7 +132,8 @@ async function measureWidth(browser, w, h) {
       avgMs: idleOn[idleOn.length - 1].avgMs,
     },
     lively1Peak: { calls: peakCalls, triangles: peakTris, particles: Math.max(...peak.map((s) => s.particles)) },
-    extra: { calls: peakCalls - baseCalls, triangles: peakTris - baseTris },
+    extra: { calls: peakCalls - baseCalls - crowd.drawCalls, triangles: peakTris - baseTris - crowd.triangles },
+    crowd,
     worstCase: worst,
     errors: [...off.errors, ...on.errors],
   };
