@@ -3,9 +3,6 @@
  * One fixed 1/60 s step per call. Bodies are created in caller order.
  */
 import RAPIER from "@dimforge/rapier3d-compat";
-// Package exports hide the wasm file. A relative import lets Vite emit it.
-// fileURLToPath is not required here: this is an asset URL, not a Node path.
-import wasmUrl from "../../node_modules/@dimforge/rapier3d-compat/dist/rapier_wasm3d_bg.wasm?url";
 import {
   clearContactStats,
   noteBodies,
@@ -22,14 +19,12 @@ const STEP = 1 / 60;
 const WALL_SEGMENTS = 32;
 const WALL_THICK = 0.4;
 
-type InitFn = (opts?: { module_or_path?: string }) => Promise<void>;
-
 let starting: Promise<void> | null = null;
 
 export function init(): Promise<void> {
   if (!starting) {
-    const initRapier = RAPIER.init as InitFn;
-    starting = initRapier({ module_or_path: wasmUrl }).catch((err: unknown) => {
+    // init() decodes the wasm baked into the JS chunk. No separate asset.
+    starting = RAPIER.init().catch((err: unknown) => {
       starting = null;
       throw err;
     });
