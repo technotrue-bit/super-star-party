@@ -29,6 +29,8 @@ const CROWD_BUDGET = { drawCalls: 2, triangles: 6000 };
 const TRIGGERS = [
   ["star", "star:buy", { player: 0, star: 1, total: 0, bought: 1, spent: 0 }],
   ["balloon", "star:balloon_moved", { from: 0, to: 12, by: 0 }],
+  // PR F: after a purchase the pan waits for the reveal beat (star:reveal), not the move.
+  ["balloon", "star:reveal", { from: 0, to: 12 }, "balloon-reveal"],
   ["happening", "happening:event", { player: 0, eventId: "probe", label: "PROBE" }],
   ["jackpot", "stamp:jackpot", { player: 0, amount: 0 }],
   ["hug", "squeeze:hug", { space: 0, players: [0, 1], coins: 0 }],
@@ -114,7 +116,7 @@ async function triggers(browser) {
   const { context, page, errors } = await open(browser, `${IDLE_URL}&lively=1`);
   const out = { settled: await settle(page), fired: {}, burst: null, perf: null, crowd: null };
   out.perf = await page.evaluate(() => window.__SSP__.perf());
-  for (const [kind, event, payload] of TRIGGERS) {
+  for (const [kind, event, payload, label] of TRIGGERS) {
     const before = await page.evaluate(() => window.__SSP__.livelyShots());
     await page.evaluate(
       ({ event, payload }) => {
@@ -132,7 +134,7 @@ async function triggers(browser) {
       if (fired && s.active === null && s.queued === 0) break;
       await page.waitForTimeout(100);
     }
-    out.fired[kind] = fired;
+    out.fired[label ?? kind] = fired;
   }
   // Burst: four triggers in one task. Shots start on the next render frame, so
   // two queue and the two oldest drop; a frame later one is playing.
@@ -203,7 +205,7 @@ try {
   const [trig, base] = await Promise.all([triggers(browser), offBaseline(browser)]);
   for (const r of [trig, base]) if (r.errors.length) fail(`page errors ${JSON.stringify(r.errors)}`);
   if (!trig.settled) fail("trigger page never settled in the dice phase");
-  for (const [kind] of TRIGGERS) if (!trig.fired[kind]) fail(`no ${kind} shot fired`);
+  for (const [kind, , , label] of TRIGGERS) if (!trig.fired[label ?? kind]) fail(`no ${label ?? kind} shot fired`);
   if (trig.burst.queued !== 2 || trig.burst.newDrops !== 2 || !trig.burst.next.active || trig.burst.next.queued > 1) fail(`burst not bounded: ${JSON.stringify(trig.burst)}`);
   summary.triggers = trig.fired;
   summary.burst = { queued: trig.burst.queued, dropped: trig.burst.newDrops, nextActive: trig.burst.next.active, nextQueued: trig.burst.next.queued };

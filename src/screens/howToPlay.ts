@@ -227,7 +227,7 @@ const howToImpl: HowToState & Screen = {
         "⭐",
         palette.sun,
         "COINS & STARS",
-        "Everyone starts with <b>10 coins</b>. Pass or land on the <b>Grand Prize Balloon</b> and buy up to <b>5 stars</b> at <b>10 coins</b> each. If you can't pay for the whole bundle, you get what you can afford and the rest pops away. The balloon then pops and floats to a new spot. Stars decide the winner!"
+        "Everyone starts with <b>10 coins</b>. Pass or land on the <b>Grand Prize Balloon</b> and buy up to <b>5 stars</b> at <b>10 coins</b> each. If you can't pay for the whole bundle, you get what you can afford and the rest pops away. The balloon starts somewhere new every match, and after each purchase it pops and floats away to a new spot, never right next to the buyer. Stars decide the winner!"
       )
     );
 

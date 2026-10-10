@@ -229,6 +229,8 @@ export interface SSPDebug {
   giveStars(playerId: number, count: number): number;
   /** Put a player on a space. Position stays `p.space`. */
   placePlayer(playerId: number, space: number): number;
+  /** Dev/CI only: set match.starBalloonPos for screenshot sweeps. Null in prod. */
+  placeBalloon(space: number): number | null;
   /** Award an item with no coin cost. */
   grantItem(playerId: number, key: string): boolean;
   /** Buy an item through the shop path. */
@@ -676,6 +678,11 @@ export function installDebugAPI(): void {
     },
     placePlayer(playerId: number, space: number) {
       return debugPlace(playerId, space);
+    },
+    placeBalloon(space: number) {
+      if (!seatTagsLive()) return null;
+      match.starBalloonPos = space;
+      return space;
     },
     grantItem(playerId: number, key: string) {
       return grantItem(playerId, key);
