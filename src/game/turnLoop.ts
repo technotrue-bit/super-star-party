@@ -800,12 +800,14 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         offerJunction(pid, total, after);
         return;
       }
+      // Queue the whole roll on stay edges. A fork passed mid-roll is resolved on
+      // arrival by resumeMove (lane choice, then the rest of the pips); the fork
+      // only counts as the landing when the last pip ends on it.
       let cur = player.space;
       for (let i = 0; i < total; i++) {
         const nxt = stepOn(cur);
         S.moveQueue.push(nxt);
         cur = nxt;
-        if (forkAt(nxt) !== undefined && i < total - 1) break;
       }
     }
     if (S.moveQueue.length === 0) {
@@ -2204,10 +2206,12 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
           } else {
             // Pass fires stamps, minigame balloons, the Grand Prize Balloon, and shops.
             // Red, blue, green, and grumpus stay land-only.
+            // A fork with pips left asks for the lane after those pass effects;
+            // pick() rebuilds the rest of the queue from the chosen lane.
             const resumeMove = (): void => {
               const branch = forkAt(S.hopTo);
               const hopsLeft = S.moveQueue.length - S.moveIdx;
-              if (branch !== undefined && hopsLeft > 0) offerJunction(pid, hopsLeft);
+              if (branch !== undefined && hopsLeft > 0) offerJunction(pid, hopsLeft, S.afterMove);
               else startHop(pid);
             };
             arriveCarnival(pid, S.hopTo, false);

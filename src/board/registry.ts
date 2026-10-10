@@ -19,7 +19,7 @@ export interface BoardEntry {
   name: string;
   /** Picker one-liner. */
   blurb: string;
-  /** Bumped whenever def changes in a way peers must agree on (net checks). */
+  /** Bumped whenever def or movement rules change in a way peers must agree on (net checks). */
   rev: number;
   /** Lazy scenery chunk. Absent: boardScene builds the theme in the main bundle. */
   loadScene?: () => Promise<unknown>;
@@ -30,13 +30,13 @@ export const BOARDS: Record<BoardId, BoardEntry> = {
     def: fizzyFairground,
     name: "Fizzy Fairground",
     blurb: "A carnival midway with an inner lane and the Funhouse Cut.",
-    rev: 1,
+    rev: 2,
   },
   downtown: {
     def: downtown,
     name: "Downtown",
     blurb: "A city Ring Road with Market Street and the Riverside Walk.",
-    rev: 1,
+    rev: 2,
   },
 };
 
