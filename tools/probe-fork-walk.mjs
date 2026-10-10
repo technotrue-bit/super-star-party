@@ -2,10 +2,12 @@
  * probe-fork-walk.mjs — rolled walks that reach a fork before their last pip (fix/fork-walk-item-flow).
  *
  *   FORK section (this file, P3a): H-STAY, H-BRANCH, CPU, EXACT, MULTI (full mode, carnival only).
- *   ITEM section (P3b): not implemented yet, see the placeholder below.
+ *   ITEM section (P3b): I-H-WARP, I-H-DOUBLE, I-H-ZIP, I-CPU-WARP, I-CPU-DOUBLE (grants via the sampler's
+ *   __GRANTQ hook at turn:start, so items arrive during the announce beat).
  *
- * One chromium browser, two pages in parallel (carnival fork 6, downtown fork 5). Each page starts
- * ["local","cpu","local","cpu"] on seed 2; the probe uses forced dice, so it never needs a golden.
+ * One chromium browser, six small (480x360) pages per board in parallel (carnival fork 6, downtown fork 5),
+ * one scenario group each. Each page starts ["local","cpu","local","cpu"] on seed 2; the probe uses forced
+ * dice, so it never needs a golden. Grand Prize / shop popups are answered so no scenario blocks the next.
  * Expected paths come from __SSP__.board().next and the LIVE starBalloonPos (never hard-coded).
  * The planner skips starts whose path crosses the star, a shop, a minigame balloon, a grumpus or the
  * start space, and may place the mover 1 instead of 2 pips before the fork (or leave 1 pip after it)
@@ -58,6 +60,9 @@ function installSampler() {
   let f = 0;
   let apState = null;
   let ln = 0;
+  let tsN = 0;
+  window.__GRANTQ = []; // { tag, kind: "human"|"cpu", items: [...] } applied at the next matching turn:start
+  window.__GRANTED = {};
   const tick = () => {
     f++;
     try {
@@ -67,6 +72,21 @@ function installSampler() {
       const cur = m.currentPlayer;
       const pl = m.players?.[cur];
       if (scr === "board") ln = window.__SSP__.phaseLog().filter((x) => x.event === "player:land").length;
+      if (scr === "board") {
+        const tsC = window.__SSP__.phaseLog().filter((x) => x.event === "turn:start").length;
+        if (tsC !== tsN) {
+          tsN = tsC;
+          const kind = pl?.controller === "cpu" ? "cpu" : "human";
+          const gi = window.__GRANTQ.findIndex((g) => g.kind === kind);
+          if (gi >= 0) {
+            const g = window.__GRANTQ.splice(gi, 1)[0];
+            const before = [...(pl.items ?? [])];
+            const oks = (g.items ?? []).map((k) => window.__SSP__.grantItem(cur, k));
+            if (g.place !== undefined) window.__SSP__.placePlayer(cur, g.place);
+            window.__GRANTED[g.tag] = { cur, f, before, oks };
+          }
+        }
+      }
       const hv = scr === "board" ? window.__SSP__.hudView() : null;
       const job = window.__CPUJOB;
       if (job && !job.f0 && scr === "board" && m.phase === "dice" && m.players[cur]?.controller === "cpu") {
@@ -76,9 +96,19 @@ function installSampler() {
         job.cur = cur;
         job.star = m.starBalloonPos;
       }
-      const e = { f, scr, ph: m.phase, cur, sp: pl?.space ?? -1, coins: pl?.coins ?? 0, star: m.starBalloonPos, cd: hv?.countdown?.value ?? null, pop: !!document.querySelector(".ssp-popup"), ln };
+      const e = { f, scr, ph: m.phase, cur, sp: pl?.space ?? -1, coins: pl?.coins ?? 0, star: m.starBalloonPos, cd: hv?.countdown?.value ?? null, iu: !!m.itemUsedThisTurn, ld: [...(m.lastDice ?? [])], pop: !!document.querySelector(".ssp-popup"), ln };
       L.push(e);
       window.__LAST = e;
+      if (f % 10 === 0 && scr === "board") {
+        // Grand Prize / shop popups are not what this probe tests: PASS / leave so they cannot block the next scenario.
+        const pp = document.querySelector(".ssp-popup");
+        const bs = pp ? Array.from(pp.querySelectorAll("button")) : [];
+        const txt = bs.map((b) => (b.textContent || "").trim());
+        if (!(txt.includes("STAY") && txt.includes("BRANCH"))) {
+          if (txt.includes("PASS")) bs[txt.indexOf("PASS")].click();
+          else if (pp?.querySelector(".ssp-shop") && bs.length) bs[bs.length - 1].click();
+        }
+      }
       const off = ["board", "title", "select", "boot", "loading"].includes(scr) && m.phase !== "minigame";
       if (m.phase === "minigame" && f % 15 === 0) {
         Array.from(document.querySelectorAll("button")).find((b) => b.offsetParent && /start mini ?game/i.test(b.textContent || ""))?.click();
@@ -123,6 +153,75 @@ async function forceRoll(page, seat, space, face) {
     if (await page.evaluate(() => window.__forcedDice === undefined)) return true;
   }
   return false;
+}
+/** Two dice, forced one at a time: rollDice(a), ROLL, wait for ROLL to come back, rollDice(b), ROLL. */
+async function forceRoll2(page, seat, space, a, b) {
+  const press = async () => {
+    for (let i = 0; i < 40; i++) {
+      await page.evaluate(() => document.querySelector(".ssp-roll-wrap button")?.click());
+      await sleep(150);
+      if (await page.evaluate(() => window.__forcedDice === undefined)) return true;
+    }
+    return false;
+  };
+  await page.evaluate(([p, s, fc]) => { window.__SSP__.placePlayer(p, s); window.__SSP__.rollDice(fc); }, [seat, space, a]);
+  if (!(await press())) return false;
+  // Autoplay (on for every seat) presses ROLL the moment the between-rolls pause ends, so the second face must
+  // be armed now, before the first die lands, not after waiting for ROLL to come back.
+  await page.evaluate((fc) => window.__SSP__.rollDice(fc), b);
+  return press();
+}
+/** Queue a grant for the next human turn:start, wait for the item button, return the seat (or -1). */
+async function grantWait(page, tg, items, key, ms = 40000) {
+  // A human turn that already began has missed its announce beat: spend it on a 1-pip roll so the
+  // grant lands on the next human turn instead of waiting behind an idle seat.
+  const e0 = await last(page);
+  const preQueued = await page.evaluate((t) => window.__GRANTQ.some((g) => g.tag === t) || !!window.__GRANTED[t], tg);
+  if (!preQueued && e0 && e0.scr === "board" && (e0.cur === 0 || e0.cur === 2) && e0.ph === "dice") {
+    const seat = await waitHumanDice(page, 15000).catch(() => -1);
+    if (seat >= 0) {
+      const sp = await page.evaluate(() => window.__SSP__.board().next.findIndex((n, i) => n.length === 1 && window.__SSP__.board().next[n[0]]?.length === 1 && i !== window.__SSP__.board().startIndex));
+      await forceRoll(page, seat, sp, 1);
+      await driveWalk(page, seat, ["STAY"], null, 15000);
+    }
+  }
+  if (!preQueued) await page.evaluate(([t, it]) => window.__GRANTQ.push({ tag: t, kind: "human", items: it }), [tg, items]);
+  let ok = false;
+  let until = Date.now() + ms;
+  while (!ok && Date.now() < until) {
+    // Minigames / results between turns do not count against the budget.
+    const ee = await last(page);
+    if (ee && (ee.scr !== "board" || ee.ph === "minigame")) until = Math.max(until, Date.now() + 15000);
+    ok = await page.waitForFunction(
+      ([t, k]) => !!window.__GRANTED[t] && !!document.querySelector(`.ssp-item-bar [data-item-use="${k}"]`) && !document.querySelector(".ssp-popup"),
+      [tg, key], { timeout: 5000, polling: 60 },
+    ).then(() => true, () => false);
+    if (!ok && !(await page.evaluate((t) => !!window.__GRANTED[t], tg)) && (await last(page))?.scr === "board") {
+      // Still queued: a human turn must have started before the push. Spend it, the grant lands on the next one.
+      const seat = await waitHumanDice(page, 1500).catch(() => -1);
+      if (seat >= 0) {
+        const sp = await page.evaluate(() => { const b = window.__SSP__.board(); return b.next.findIndex((n, i) => n.length === 1 && b.next[n[0]].length === 1 && i !== b.startIndex); });
+        await forceRoll(page, seat, sp, 1);
+        await driveWalk(page, seat, ["STAY"], null, 15000);
+      }
+    }
+  }
+  await sleep(100);
+  if (!ok) {
+    const dbg = await page.evaluate((t) => ({ g: window.__GRANTED[t], q: window.__GRANTQ.length, last: window.__LAST, btns: Array.from(document.querySelectorAll(".ssp-item-bar button")).map((b) => b.getAttribute("data-item-use")), pop: document.querySelector(".ssp-popup")?.textContent?.slice(0, 60) }), tg);
+    note(`grantWait ${tg} failed ${JSON.stringify(dbg)}`);
+  }
+  return ok ? await page.evaluate((t) => window.__GRANTED[t].cur, tg) : -1;
+}
+const clickItem = (page, key) => page.evaluate((k) => document.querySelector(`.ssp-item-bar [data-item-use="${k}"]`)?.click(), key);
+const itemBtn = (page, key) => page.evaluate((k) => {
+  const b = document.querySelector(`.ssp-item-bar [data-item-use="${k}"]`);
+  return b ? { disabled: !!b.disabled || b.getAttribute("aria-disabled") === "true", used: b.getAttribute("data-item-used") === "1" } : null;
+}, key);
+async function grantAndClick(page, tg, items, key) {
+  const seat = await grantWait(page, tg, items, key);
+  if (seat >= 0) await clickItem(page, key);
+  return seat;
 }
 /** Drive the human walk: click `pick` (STAY/BRANCH) at each lane popup; returns the popup count seen. */
 async function driveWalk(page, seat, picks, shotName, ms = 30000) {
@@ -243,7 +342,30 @@ function makeGraph(B) {
     }
     return null;
   };
-  return { succ, type, dist, simFrom, cpuPick, planFork, planExact };
+  const isFork = (s) => succ(s).length > 1;
+  /** Walk of `len` pips from s that never meets a fork (start included), a bad space, the star or the start space. */
+  const cleanPath = (s, len, star) => {
+    if (isFork(s)) return null;
+    const path = simFrom(s, len, (a) => a);
+    return okPath(path, star) && !path.slice(0, -1).some(isFork) ? path : null;
+  };
+  const cleanStart = (len, star) => {
+    for (let s = 0; s < B.spaces.length; s++) if (s !== star && s !== B.startIndex && cleanPath(s, len, star)) return s;
+    return -1;
+  };
+  /** Like cleanPath but a fork may be crossed (the probe then clicks STAY = first successor). */
+  const walkPath = (s, len, star) => {
+    const path = simFrom(s, len, (a) => a);
+    return okPath(path, star) ? path : null;
+  };
+  /** Like walkPath but a shop may be passed (the sampler leaves it); only the landing space must be plain. */
+  const looseWalk = (s, len, star) => {
+    const path = simFrom(s, len, (a) => a);
+    const okMid = path.slice(0, -1).every((x) => (!BAD.has(type(x)) || type(x) === "shop") && x !== star && x !== B.startIndex);
+    const end = path.at(-1);
+    return okMid && !BAD.has(type(end)) && end !== star && end !== B.startIndex ? path : null;
+  };
+  return { looseWalk, succ, type, dist, simFrom, cpuPick, planFork, planExact, cleanPath, cleanStart, walkPath };
 }
 
 /** Countdown invariants over the frames of one walk (frames already filtered to the mover). */
@@ -345,18 +467,13 @@ function forkScenarios(board, G, B) {
     check(tag("EXACT"), n === 0 && lands.at(-1) === f && popups === 0 && cdIssues.length === 0,
       `start ${plan.start} roll ${plan.total} lands [${lands}] popupFrames ${popups} ${cdIssues.join("; ")}`);
     if (!CI) {
-      // Next turn of this seat: standing on the fork, the lane popup comes after the roll.
-      // The other human may be up first: park them on a plain space and let them roll through.
-      let seat2 = -1;
-      for (let i = 0; i < 4 && seat2 !== seat; i++) {
-        await page.waitForFunction((s) => { const e = window.__LAST; return e.scr === "board" && e.cur !== s; }, seat, { timeout: 30000, polling: 100 }).catch(() => {});
-        seat2 = await waitHumanDice(page, 60000).catch(() => -1);
-        if (seat2 !== seat && seat2 >= 0) {
-          await page.evaluate(() => document.querySelector(".ssp-roll-wrap button")?.click());
-          await driveWalk(page, seat2, ["STAY", "STAY"], null, 20000);
-        }
-      }
-      if (seat2 !== seat) return note(`${tag("EXACT next turn")} never got seat ${seat} back (got ${seat2}); skipped`);
+      // A turn starting ON the fork shows the lane popup after the roll. Whichever human is up next is
+      // placed on the fork during its announce beat, so no seat rotation is waited for.
+      const tg = `${board}-exact-fork`;
+      await page.evaluate(([t, p]) => window.__GRANTQ.push({ tag: t, kind: "human", place: p }), [tg, f]);
+      const placed = await page.waitForFunction((t) => !!window.__GRANTED[t], tg, { timeout: 40000, polling: 60 }).then(() => true, () => false);
+      const seat2 = placed ? await waitHumanDice(page, 20000).catch(() => -1) : -1;
+      if (seat2 < 0) return check(tag("EXACT next turn lane popup"), false, `placed ${placed}, no human dice phase within 20 s`);
       const here = (await last(page)).sp;
       await page.evaluate(() => { window.__SSP__.rollDice(3); });
       let popup = false;
@@ -372,26 +489,22 @@ function forkScenarios(board, G, B) {
 
   const multi = async (page) => {
     if (board !== "carnival" || CI) return;
-    const seat = await waitHumanDice(page);
-    const ok = await page.evaluate((s) => window.__SSP__.grantItem(s, "double_dice"), seat);
-    if (!ok) return note(`${tag("MULTI")} grantItem(double_dice) refused; skipped`);
-    await sleep(300);
-    const clicked = await page.evaluate(() => {
-      const b = Array.from(document.querySelectorAll(".ssp-item-bar button, button")).find((x) => /double/i.test(x.textContent || "") && !x.disabled);
-      b?.click();
-      return !!b;
-    });
-    if (!clicked) return note(`${tag("MULTI")} no double-dice button found; skipped`);
-    await sleep(400);
-    await page.evaluate(([s]) => { window.__SSP__.placePlayer(s, 3); window.__SSP__.rollDice(6); }, [seat]);
-    for (let i = 0; i < 30; i++) {
-      await page.evaluate(() => document.querySelector(".ssp-roll-wrap button")?.click());
-      await sleep(150);
-      if (await page.evaluate(() => window.__forcedDice === undefined)) break;
-    }
+    // Two dice are forced one at a time: rollDice(a), ROLL, wait for the button, rollDice(b), ROLL.
+    const path = G.simFrom(3, 12, (a, b) => b); // BRANCH at every fork
+    const k = path.indexOf(38);
+    if (k < 0 || k + 2 > 12) return note(`${tag("MULTI")} 38 not reachable from 3 with pips left (index ${k}); skipped`);
+    const total = k + 2; // k+1 pips reach 38, one is left
+    const [a, b] = total > 6 ? [6, total - 6] : [total - 1, 1];
+    const seat = await grantAndClick(page, `${board}-multi`, ["double_dice"], "double_dice");
+    if (seat < 0) return check(tag("MULTI"), false, "double_dice could not be granted or clicked");
+    await waitHumanDice(page, 20000);
+    const f0 = await lastFrameF(page);
+    await forceRoll2(page, seat, 3, a, b);
     const n = await driveWalk(page, seat, ["BRANCH", "STAY"]);
-    if (n < 2) return note(`${tag("MULTI")} saw ${n} lane popups (item/dice could not reach 38); not a failure`);
-    check(tag("MULTI"), n === 2, `${n} lane popups`);
+    const frames = await walkFrames(page, f0, seat);
+    const ld = (await last(page)).ld;
+    const ph = frames.map((x) => `${x.cur}:${x.ph}@${x.sp}${x.pop ? "!" : ""}`).filter((x, i, arr) => i === 0 || x !== arr[i - 1]).join(" ");
+    check(tag("MULTI"), n === 2 && ld.length === 2 && ld[0] + ld[1] === total, `${n} lane popups, dice ${a}+${b}=${total}, lastDice [${ld}], lands [${landsOf(frames)}] frames: ${ph}`.slice(0, 290));
   };
 
   const cpu = async (page) => {
@@ -418,39 +531,179 @@ function forkScenarios(board, G, B) {
   };
 }
 
-// ITEM SECTION (P3b)
-// function itemScenarios(board, G, B) { return { human: [/* I-H-WARP, I-H-DOUBLE, I-H-ZIP */], cpu: [/* I-CPU-WARP, I-CPU-DOUBLE */] }; }
+/* ITEM SECTION (P3b) */
+function itemScenarios(board, G, B) {
+  const tag = (n) => `${board}:${n}`;
+  const sum = (a) => a.reduce((s, x) => s + x, 0);
+  /** Frames of `seat`'s turn since f0, split into runs of consecutive moving frames (+2 frames of tail). */
+  const segments = async (page, f0, seat) => {
+    const all = (await page.evaluate((a) => window.__LOG.filter((x) => x.f >= a), f0)).filter((x) => x.cur === seat);
+    const segs = [];
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].ph !== "moving") continue;
+      let j = i;
+      while (j + 1 < all.length && all[j + 1].ph === "moving") j++;
+      segs.push(all.slice(i, j + 3));
+      i = j;
+    }
+    return { all, segs };
+  };
+
+  const warp = async (page) => {
+    const tg = `${board}-i-warp`;
+    const seat = await grantWait(page, tg, ["warp_whistle", "zappy"], "warp_whistle");
+    if (seat < 0) {
+      const dbg = await page.evaluate((t) => ({ g: window.__GRANTED[t], last: window.__LAST, btns: Array.from(document.querySelectorAll(".ssp-item-bar button")).map((b) => b.getAttribute("data-item-use")), pop: document.querySelector(".ssp-popup")?.textContent?.slice(0, 60) }), tg);
+      return check(tag("I-H-WARP"), false, `items not granted / whistle button never appeared ${JSON.stringify(dbg)}`);
+    }
+    const star = (await last(page)).star;
+    const before = await itemBtn(page, "zappy");
+    const coins0 = (await last(page)).coins;
+    const f0 = await lastFrameF(page);
+    await clickItem(page, "warp_whistle");
+    await page.waitForFunction(([a, s]) => window.__LOG.some((x) => x.f >= a && x.cur === s && x.ph === "moving"), [f0, seat], { timeout: 15000, polling: 40 }).catch(() => {});
+    await waitHumanDice(page, 20000).catch(() => {});
+    const { all, segs } = await segments(page, f0, seat);
+    const tele = segs[0] ?? [];
+    const e1 = await last(page);
+    const dest = e1.sp;
+    const zap = await itemBtn(page, "zappy");
+    await page.evaluate(() => document.querySelector('.ssp-item-bar [data-item-use="zappy"]')?.click());
+    await sleep(300);
+    const e2 = await last(page);
+    const teleOk = tele.filter((x) => x.ph === "moving").every((x) => x.cd === null) && tele.length > 0;
+    check(tag("I-H-WARP teleport then roll available"), teleOk && e1.ph === "dice" && e1.cur === seat && e1.iu,
+      `moving frames ${tele.length}, cd null ${teleOk}, ph ${e1.ph} cur ${e1.cur} (seat ${seat}) itemUsed ${e1.iu} dest ${dest}`);
+    check(tag("I-H-WARP zappy greyed"), !!before && !before.disabled && !!zap && zap.disabled && zap.used && e2.coins === e1.coins && e2.ph === "dice",
+      `before ${JSON.stringify(before)} after ${JSON.stringify(zap)} coins ${e1.coins}->${e2.coins} ph ${e2.ph}`);
+    if (e1.coins !== coins0) {
+      const shared = await page.evaluate(([d, c]) => window.__SSP__.state().match.players.some((p, i) => i !== c && p.space === d), [dest, seat]);
+      note(`${tag("I-H-WARP")} coins changed across the teleport itself: ${coins0} -> ${e1.coins} (dest ${dest}, type ${B.spaces[dest]?.type}${shared ? "; squeeze:hug, landed on an occupied space (settings.squeezeCoins)" : ""})`);
+    }
+    let face = 0;
+    for (const k of [3, 4, 2, 5, 1, 6]) if (G.walkPath(dest, k, star) || G.looseWalk(dest, k, star)) { face = k; break; }
+    if (!face) return note(`${tag("I-H-WARP")} no clean walk from whistle destination ${dest}; roll part skipped`);
+    const expected = (G.walkPath(dest, face, star) ?? G.looseWalk(dest, face, star)).at(-1);
+    const f1 = await lastFrameF(page);
+    const ok = await forceRoll(page, seat, dest, face);
+    await driveWalk(page, seat, ["STAY"]);
+    await sleep(300);
+    const frames = await walkFrames(page, f1, seat);
+    const lands = landsOf(frames);
+    const cd = countdownIssues(frames, face);
+    check(tag("I-H-WARP roll walk from destination"), ok && lands.length === 1 && lands[0] === expected && cd.length === 0,
+      `from ${dest} roll ${face} lands [${lands}] expected ${expected} ${cd.join("; ")}`);
+  };
+
+  /** Shared body of the two human roll-modifier scenarios. */
+  const modifier = (name, key, dice, expectedTotal) => async (page) => {
+    const seat = await grantAndClick(page, `${board}-${name}`, [key], key);
+    if (seat < 0) return check(tag(name), false, `${key} could not be granted or clicked`);
+    await sleep(120);
+    const barLeft = await page.evaluate(() => document.querySelectorAll(".ssp-item-bar [data-item-use]").length);
+    await waitHumanDice(page, 20000);
+    const star = (await last(page)).star;
+    const start = G.cleanStart(expectedTotal, star);
+    if (start < 0) return note(`${tag(name)} no clean ${expectedTotal}-pip walk; skipped`);
+    const expected = G.cleanPath(start, expectedTotal, star).at(-1);
+    const f0 = await lastFrameF(page);
+    const ok = dice.length === 2 ? await forceRoll2(page, seat, start, dice[0], dice[1]) : await forceRoll(page, seat, start, dice[0]);
+    await driveWalk(page, seat, ["STAY"]);
+    await sleep(300);
+    const frames = await walkFrames(page, f0, seat);
+    const lands = landsOf(frames);
+    const ld = (await last(page)).ld;
+    const cd = countdownIssues(frames, expectedTotal);
+    check(tag(name), ok && barLeft === 0 && lands.length === 1 && lands[0] === expected && cd.length === 0 && (dice.length !== 2 || (ld.length === 2 && sum(ld) === expectedTotal)),
+      `bar buttons after click ${barLeft}, start ${start} dice [${dice}] lastDice [${ld}] lands [${lands}] expected ${expected} ${cd.join("; ")}`);
+  };
+
+  /** CPU seat with only `key` in its bag: observe the whole turn. */
+  const cpuItem = (name, key, verify) => async (page) => {
+    const tg = `${board}-${name}`;
+    await page.evaluate(([t, k]) => window.__GRANTQ.push({ tag: t, kind: "cpu", items: [k] }), [tg, key]);
+    const g = await page.waitForFunction((t) => window.__GRANTED[t] ?? null, tg, { timeout: 60000, polling: 60 }).then((h) => h.jsonValue(), () => null);
+    if (!g) return check(tag(name), false, `cpu grant never applied ${JSON.stringify(await page.evaluate(() => ({ q: window.__GRANTQ, g: window.__GRANTED, last: window.__LAST, ts: window.__SSP__.phaseLog().filter((x) => x.event === "turn:start").length })))}`);
+    if (g.before.length) return note(`${tag(name)} cpu bag was not empty (${g.before}); item pick is random, skipped`);
+    const done = await page.waitForFunction(([s, a]) => window.__LAST.f > a + 5 && window.__LAST.cur !== s, [g.cur, g.f], { timeout: 45000, polling: 60 }).then(() => true, () => false);
+    await sleep(150);
+    const { all, segs } = await segments(page, g.f, g.cur);
+    const next = await last(page);
+    await verify(g.cur, all, segs, done, next);
+  };
+  const phases = (all) => all.map((x) => x.ph).filter((p, i, a) => i === 0 || p !== a[i - 1]);
+  const hasSeq = (arr, seq) => { let i = 0; for (const x of arr) if (x === seq[i]) i++; return i === seq.length; };
+
+  const cpuWarp = cpuItem("I-CPU-WARP", "warp_whistle", async (seat, all, segs, done, next) => {
+    const ph = phases(all);
+    const [tele, walk] = [segs[0] ?? [], segs[1] ?? []];
+    const ld = all.at(-1)?.ld ?? [];
+    const cd = walk.length ? countdownIssues(walk, sum(ld)) : ["no counted walk"];
+    const iuOk = all.filter((x) => x.ph === "moving" || x.ph === "space-effect").every((x) => x.iu);
+    check(tag("I-CPU-WARP"), done && hasSeq(ph, ["dice", "moving", "dice", "moving"]) && tele.filter((x) => x.ph === "moving").every((x) => x.cd === null) &&
+      ld.length === 1 && cd.length === 0 && iuOk && next.iu === false,
+      `phases ${ph} tele frames ${tele.length} lastDice [${ld}] itemUsed-in-turn ${iuOk} next-turn itemUsed ${next.iu} ${cd.join("; ")}`);
+  });
+  const cpuDouble = cpuItem("I-CPU-DOUBLE", "double_dice", async (seat, all, segs, done, next) => {
+    const ld = all.at(-1)?.ld ?? [];
+    const walk = segs[0] ?? [];
+    const cd = walk.length ? countdownIssues(walk, sum(ld)) : ["no walk"];
+    check(tag("I-CPU-DOUBLE"), done && ld.length === 2 && cd.length === 0 && next.iu === false,
+      `lastDice [${ld}] sum ${sum(ld)} walk frames ${walk.length} next-turn itemUsed ${next.iu} ${cd.join("; ")}`);
+  });
+
+  return {
+    warp, cpuWarp, cpuDouble,
+    dbl: modifier("I-H-DOUBLE", "double_dice", [3, 2], 5),
+    zip: modifier("I-H-ZIP", "golden_dash", [2], 7),
+  };
+}
 
 /* ------------------------------------------------------------------ per-board runner */
-async function runBoard(browser, board) {
-  const ctx = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+async function runBoard(browser, board, group) {
+  const ctx = await browser.newContext({ viewport: { width: 480, height: 360 } });
   const page = await ctx.newPage();
   page.on("console", (m) => { if (m.type() === "error" && !/interactive-widget/.test(m.text())) errors.push(`${board}: ${m.text().slice(0, 160)}`); });
   page.on("pageerror", (e) => errors.push(`${board} PAGE: ${String(e).slice(0, 160)}`));
   await page.goto(`${BASE}/?seed=2&screen=board&audio=0&speed=4&board=${board}`, { waitUntil: "domcontentloaded", timeout: LOAD });
   await page.waitForFunction(() => window.__SSP__?.state?.().screen !== undefined && !!window.__SSP__?.board, null, { timeout: LOAD });
+  // Sampler first, so a grant queued for the group's first human scenario lands on seat 0's opening turn:start.
+  await page.evaluate(installSampler);
+  const pre = { itemA: { tag: `${board}-i-warp`, items: ["warp_whistle", "zappy"] }, itemB: { tag: `${board}-I-H-ZIP`, items: ["golden_dash"] }, itemC: { tag: `${board}-I-H-DOUBLE`, items: ["double_dice"] } }[group];
+  if (pre) await page.evaluate((g) => window.__GRANTQ.push({ kind: "human", ...g }), pre);
   await page.evaluate(([k, n, c]) => {
     window.__SSP__.seed(2);
     window.__SSP__.startMatch(k, n, c);
   }, [KINDS, NAMES, CTRL]);
   await page.waitForFunction(() => window.__SSP__.state().screen === "board" && window.__SSP__.state().match.players.length === 4, null, { timeout: LOAD });
-  await page.evaluate(installSampler);
   const B = await page.evaluate(() => window.__SSP__.board());
   if (B.id.startsWith("fizzy") !== (board === "carnival")) note(`${board}: board id ${B.id}`);
   const G = makeGraph(B);
   console.log(`== ${board} ready [t+${secs()}s] fork ${FORKS[board]} -> ${JSON.stringify(B.next[FORKS[board]])}`);
-  const sc = forkScenarios(board, G, B);
+  const fk = forkScenarios(board, G, B);
+  const it = itemScenarios(board, G, B);
   // CPU job is armed first; the sampler applies it on the first CPU dice phase while humans run in turn.
-  const cpuP = (async () => { for (const s of sc.cpu) await s(page); })();
-  for (const s of sc.human) await s(page);
+  const plan = {
+    forkA: { human: fk.human.slice(0, 1), cpu: fk.cpu },
+    forkC: { human: fk.human.slice(1, 2), cpu: [] },
+    forkB: { human: fk.human.slice(2), cpu: [it.cpuWarp] },
+    itemA: { human: [it.warp], cpu: [] },
+    itemB: { human: [it.zip], cpu: [it.cpuDouble] },
+    itemC: { human: [it.dbl], cpu: [] },
+  }[group];
+  const cpuP = (async () => { for (const s of plan.cpu) await s(page); })();
+  for (const s of plan.human) await s(page);
+  // Human scenarios are done: let autoplay take the human seats so an idle seat cannot stall the CPU job.
+  await page.evaluate(() => { window.__AP = "on"; });
   await cpuP;
-  console.log(`== ${board} FORK done [t+${secs()}s]`);
+  console.log(`== ${board}/${group} done [t+${secs()}s]`);
   await ctx.close();
 }
 
 const browser = await chromium.launch();
 try {
-  await Promise.all(Object.keys(FORKS).map((b) => runBoard(browser, b).catch((e) => check(`${b}:run`, false, String(e).slice(0, 250)))));
+  const jobs = Object.keys(FORKS).flatMap((b) => ["forkA", "forkB", "forkC", "itemA", "itemB", "itemC"].map((g) => [b, g]));
+  await Promise.all(jobs.map(([b, g]) => runBoard(browser, b, g).catch((e) => check(`${b}/${g}:run`, false, String(e).slice(0, 250)))));
 } finally {
   await browser.close();
 }
