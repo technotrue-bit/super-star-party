@@ -108,7 +108,7 @@ function injectFeedbackStyles(): void {
       user-select: none; -webkit-user-select: none;
     }
     .ssp-fb-banner {
-      position: absolute; left: 50%; top: 70px;
+      position: absolute; left: 50%; top: var(--ssp-fb-banner-top, 70px);
       transform: translateX(-50%) scale(.6); opacity: 0;
       font-size: clamp(24px, 5.5vw, 40px); font-weight: 700; color: ${palette.white};
       text-align: center; width: max-content; max-width: 92vw; box-sizing: border-box;

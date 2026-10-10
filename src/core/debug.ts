@@ -69,6 +69,43 @@ let selectBoundsReader: (() => SelectBounds | null) | null = null;
 export function setSelectBoundsReader(fn: (() => SelectBounds | null) | null): void {
   selectBoundsReader = fn;
 }
+export interface HudRect { x: number; y: number; w: number; h: number }
+/** Board HUD layout as last drawn (CSS px), for layout probes. */
+export interface HudView {
+  viewport: { w: number; h: number };
+  cards: Array<{
+    id: number;
+    corner: "tl" | "tr" | "bl" | "br";
+    rank: number;
+    rankText: string;
+    label: string;
+    stars: number;
+    coins: number;
+    you: boolean;
+    active: boolean;
+    rect: HudRect;
+    pillRect: HudRect | null;
+  }>;
+  banners: HudRect[];
+  hint: { text: string; distance: number | null; rect: HudRect } | null;
+  /** value is the turn loop's hops left; rect is the on-screen number, null while it is hidden (e.g. mover off-screen). */
+  countdown: { pid: number; value: number; rect: HudRect | null } | null;
+  chrome: {
+    roll: HudRect | null;
+    itemBar: HudRect | null;
+    pause: HudRect | null;
+    mapFab: HudRect | null;
+    toast: HudRect | null;
+    pads: HudRect[];
+  };
+  centre: HudRect;
+}
+let hudViewReader: (() => HudView | null) | null = null;
+/** The board screen registers its reader on enter and clears it on exit. */
+export function setHudViewReader(fn: (() => HudView | null) | null): void {
+  hudViewReader = fn;
+}
+import { competitionRanks } from "../ui/hud";
 import { rapierStatus, runContactScenario as runRapierContactScenario } from "../physics/contact";
 import { setOnlineMatch, setPartyAssist } from "../net/mode";
 import { dropOut, partyView } from "../net/session";
@@ -230,6 +267,12 @@ export interface SSPDebug {
     next: number[][];
     spaces: Array<{ index: number; type: string; name: string }>;
   };
+  /** Dev/CI only: board HUD cards, banners, hint, countdown and chrome rects; null off the board. */
+  hudView(): HudView | null;
+  /** Dev/CI only: pure competition ranks (stars desc, then coins desc; ties share). */
+  hudRanks(rows: { stars: number; coins: number }[]): number[] | null;
+  /** Dev/CI only: the active board's edges plus the prize balloon space (copies). */
+  boardLinks(): { id: string; size: number; next: number[][]; star: number } | null;
   /** Playtest: local humans publish the CPU choice over the relay. */
   partyAssist(on: boolean): void;
   /** Leave the room. A guest's seat becomes a CPU. The host ends the room. */
@@ -681,6 +724,17 @@ export function installDebugAPI(): void {
         next: def.next.map((row) => [...row]),
         spaces: def.spaces.map((sp) => ({ index: sp.index, type: sp.type, name: sp.name })),
       };
+    },
+    hudView() {
+      return seatTagsLive() && hudViewReader ? hudViewReader() : null;
+    },
+    hudRanks(rows: { stars: number; coins: number }[]) {
+      return seatTagsLive() ? competitionRanks(rows) : null;
+    },
+    boardLinks() {
+      if (!seatTagsLive()) return null;
+      const def = activeBoard();
+      return { id: activeBoardId(), size: def.spaces.length, next: def.next.map((row) => [...row]), star: match.starBalloonPos };
     },
     partyAssist(on: boolean) {
       setPartyAssist(on);

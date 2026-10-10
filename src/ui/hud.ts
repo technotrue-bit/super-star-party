@@ -1,7 +1,7 @@
 /**
  * SUPER STAR PARTY — party HUD.
- * Top row of player chips (avatar dot, name, coins, stars, minigame wins),
- * active player glows gold + bounces, plus a center-top banner slot for
+ * Corner cards by seat (avatar, name, rank badge, stars, coins, minigame wins),
+ * active player glows gold, plus a center-top banner slot for
  * announcements. Defensive update(): missing fields degrade gracefully.
  * Container is pointer-events none; chips are interactive.
  */
@@ -50,6 +50,7 @@ export interface HudHandle {
 interface ChipRec {
   chip: HTMLElement;
   youPill: HTMLElement;
+  rankEl: HTMLElement;
   avatar: HTMLElement;
   avKey: string;
   nameEl: HTMLElement;
@@ -58,6 +59,28 @@ interface ChipRec {
   winsEl: HTMLElement;
   stampPips: HTMLElement[];
   lastCoins: number;
+  lastStars: number;
+}
+
+const CORNERS = ["tl", "tr", "bl", "br"] as const;
+const ORDINAL = ["", "1st", "2nd", "3rd", "4th"];
+
+/** Standard competition ranking: stars desc, then coins desc; ties share a rank (1,1,3,4). */
+export function competitionRanks(rows: { stars: number; coins: number }[]): number[] {
+  return rows.map(
+    (a) => 1 + rows.filter((b) => b.stars > a.stars || (b.stars === a.stars && b.coins > a.coins)).length
+  );
+}
+
+function pop(el: HTMLElement): void {
+  try {
+    el.animate(
+      [{ transform: "scale(1)" }, { transform: "scale(1.4)", offset: 0.4 }, { transform: "scale(1)" }],
+      { duration: 240, easing: "cubic-bezier(.34,1.56,.64,1)" }
+    );
+  } catch {
+    /* noop */
+  }
 }
 
 function cap(s: string): string {
@@ -72,14 +95,16 @@ function makeChip(p: HudPlayerState, idx: number): ChipRec {
 
   const avatar = playerAvatar(kind || `player ${idx + 1}`, p.color);
   avatar.classList.add("ssp-hud-chip__avatar");
+  chip.dataset.corner = CORNERS[idx % 4];
+  const rankEl = document.createElement("span");
+  rankEl.className = "ssp-hud-chip__rank";
+  rankEl.setAttribute("aria-hidden", "true");
+  chip.appendChild(rankEl);
   const youPill = document.createElement("span");
   youPill.className = "ssp-hud-chip__you";
   youPill.textContent = "YOU";
   youPill.hidden = true;
   chip.appendChild(youPill);
-
-  const info = document.createElement("div");
-  info.className = "ssp-hud-chip__info";
 
   const nameEl = document.createElement("div");
   nameEl.className = "ssp-hud-chip__name";
@@ -121,13 +146,16 @@ function makeChip(p: HudPlayerState, idx: number): ChipRec {
     return pip;
   });
 
-  stats.append(coinIcon, coinsEl, starIcon, starsEl, miniIcon, winsEl, stamps);
-  info.append(nameEl, stats);
-  chip.append(avatar, info);
+  const extra = document.createElement("div");
+  extra.className = "ssp-hud-chip__extra";
+  stats.append(starIcon, starsEl, coinIcon, coinsEl);
+  extra.append(miniIcon, winsEl, stamps);
+  chip.append(avatar, nameEl, stats, extra);
 
   return {
     chip,
     youPill,
+    rankEl,
     avatar,
     avKey: `${kind}|${p.color ?? ""}`,
     nameEl,
@@ -136,6 +164,7 @@ function makeChip(p: HudPlayerState, idx: number): ChipRec {
     winsEl,
     stampPips,
     lastCoins: -1,
+    lastStars: -1,
   };
 }
 
@@ -150,6 +179,12 @@ export function hud(): HudHandle {
 
   function update(players: HudPlayerState[]): void {
     const seen = new Set<string>();
+    const ranks = competitionRanks(
+      players.map((p) => ({
+        stars: Math.max(0, Math.round(p.stars ?? 0)),
+        coins: Math.max(0, Math.round(p.coins ?? 0)),
+      }))
+    );
     players.forEach((p, idx) => {
       const id = String(p.id ?? `p${idx}`);
       seen.add(id);
@@ -192,22 +227,16 @@ export function hud(): HudHandle {
 
       rec.chip.classList.toggle("ssp-hud-chip--active", p.active === true);
 
+      const rank = Math.min(4, ranks[idx]);
+      rec.rankEl.dataset.rank = String(rank);
+      rec.rankEl.textContent = ORDINAL[rank];
+
       const cv = Math.max(0, Math.round(p.coins ?? 0));
-      if (rec.lastCoins >= 0 && cv !== rec.lastCoins) {
-        try {
-          rec.coinsEl.animate(
-            [
-              { transform: "scale(1)" },
-              { transform: "scale(1.4)", offset: 0.4 },
-              { transform: "scale(1)" },
-            ],
-            { duration: 240, easing: "cubic-bezier(.34,1.56,.64,1)" }
-          );
-        } catch {
-          /* noop */
-        }
-      }
+      if (rec.lastCoins >= 0 && cv !== rec.lastCoins) pop(rec.coinsEl);
       rec.lastCoins = cv;
+      const sv = Math.max(0, Math.round(p.stars ?? 0));
+      if (rec.lastStars >= 0 && sv !== rec.lastStars) pop(rec.starsEl);
+      rec.lastStars = sv;
     });
 
     for (const [id, rec] of Array.from(chips)) {

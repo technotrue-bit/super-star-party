@@ -174,6 +174,8 @@ export interface TurnLoop {
   /** True when the human is expected to press ROLL right now. */
   isWaitingForRoll(): boolean;
   readonly phase: LoopPhase;
+  /** Display only: hops still to walk in the current rolled walk, or null (teleports, landed, ceremonies). */
+  readonly moveCountdown: { pid: number; left: number } | null;
   dispose(): void;
 }
 
@@ -372,6 +374,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   };
 
   let stingerTO: number | null = null;
+  /** Display only (not in S/MatchState): true while a rolled walk is in progress. */
+  let countedWalk = false;
 
   /* ---------------- helpers ---------------- */
 
@@ -780,6 +784,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     const pid = match.currentPlayer;
     const player = match.players[pid];
     if (!player) return;
+    countedWalk = queued.length === 0;
     S.phase = "moving";
     match.phase = "moving";
     audio.music.intensity(0.65);
@@ -846,6 +851,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     const stay = stepOn(here);
     const pick = (to: number): void => {
       startMoving([to], after, 0);
+      countedWalk = true;
       if (hopsLeft > 1) {
         const rest: number[] = [];
         let cur = to;
@@ -2293,6 +2299,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       !S.poisonPopup,
     get phase(): LoopPhase {
       return S.phase;
+    },
+    get moveCountdown() {
+      if (S.phase !== "moving" || !countedWalk || S.shopOpen || S.starCeremony || S.starPopup) return null;
+      const left = S.moveQueue.length - S.moveIdx + (S.hopActive ? 1 : 0);
+      return left > 0 ? { pid: match.currentPlayer, left } : null;
     },
     dispose,
   };
