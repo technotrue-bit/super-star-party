@@ -301,6 +301,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     starCeremonyStepped6: boolean;
     starCeremonyCount: number;
     starCeremonyThen: (() => void) | null;
+    /** "THE STAR MOVED!" beat after a purchase ceremony (presentation only). */
+    starMoved: { t: number; from: number; to: number; then: () => void } | null;
     /** If autoplay flips on while the human bundle popup is up, buy this. */
     starAutoCommit: (() => void) | null;
     /** If autoplay flips on while the human shop is open, close it and decide. */
@@ -364,6 +366,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     starCeremonyStepped6: false,
     starCeremonyCount: 1,
     starCeremonyThen: null,
+    starMoved: null,
     starAutoCommit: null,
     shopAutoCommit: null,
     shopDecideOnClose: false,
@@ -1705,6 +1708,37 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     }
   };
 
+  /** Board seconds the balloon reveal holds after the ceremony. Fixed on every peer. */
+  const STAR_MOVED_DUR = 1.6;
+
+  /**
+   * "THE STAR MOVED!" beat: the board balloon is held at `from` through the
+   * ceremony, then revealed at `to`. A fixed board-time hold with no rng, so
+   * every peer runs the same flow. Skipped when the balloon stayed put.
+   */
+  const starMovedBeat = (from: number, to: number, then: () => void): void => {
+    if (to === from) {
+      then();
+      return;
+    }
+    S.starMoved = { t: 0, from, to, then };
+    ui.queue.banner("THE STAR MOVED!", { durationMs: 1400, style: "gold", priority: "critical" });
+    bus.emit("star:reveal", { from, to });
+    (globalThis as any).__SSP_STAR_MOVED = { active: true, t: 0, from, to };
+  };
+
+  const updateStarMoved = (dt: number): void => {
+    const sm = S.starMoved;
+    if (!sm) return;
+    sm.t += dt;
+    (globalThis as any).__SSP_STAR_MOVED = { active: true, t: Math.round(sm.t * 100) / 100, from: sm.from, to: sm.to };
+    if (sm.t >= STAR_MOVED_DUR) {
+      S.starMoved = null;
+      (globalThis as any).__SSP_STAR_MOVED = { active: false, t: 0, from: sm.from, to: sm.to };
+      sm.then();
+    }
+  };
+
   /**
    * The player just reached the Grand Prize Balloon (pass or land).
    * A free-star magnet takes one star and moves the balloon. Otherwise the
@@ -1728,8 +1762,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         spent: 0,
       });
       audio.sfx.play("star.get");
-      movePrizeBalloon(pid);
-      celebrateStar(pid, 1, then);
+      const from = match.starBalloonPos;
+      const to = movePrizeBalloon(pid);
+      celebrateStar(pid, 1, () => starMovedBeat(from, to, then));
       return;
     }
     const affordable = sensibleStarCount(pid);
@@ -1741,19 +1776,21 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       return;
     }
     const commit = (requested: number): void => {
+      const from = match.starBalloonPos;
       const res = tryBuyStars(pid, requested);
+      const to = match.starBalloonPos;
       if (res.bought <= 0) {
         ui.toast("Not enough coins!", { durationMs: 1400 });
         then();
         return;
       }
-      celebrateStar(pid, res.bought, () => {
+      celebrateStar(pid, res.bought, () => starMovedBeat(from, to, () => {
         if (res.discarded > 0) {
           const word = res.discarded === 1 ? "star" : "stars";
           ui.toast(`${res.discarded} unpaid ${word} popped away!`, { durationMs: 1600 });
         }
         then();
-      });
+      }));
     };
     const gate = netGate(pid);
     if (gate === "assist") {
@@ -2218,6 +2255,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       updateStarCeremony(dt);
       return;
     }
+    // Same pattern for the post-ceremony "star moved" reveal hold.
+    if (S.starMoved) {
+      updateStarMoved(dt);
+      return;
+    }
 
     if (S.pauseT > 0) {
       S.pauseT -= dt;
@@ -2380,6 +2422,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       !S.shopOpen &&
       !S.starPopup &&
       !S.starCeremony &&
+      !S.starMoved &&
       !S.itemResolving &&
       !S.itemPopup &&
       !S.poisonPopup,
@@ -2387,7 +2430,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       return S.phase;
     },
     get moveCountdown() {
-      if (S.phase !== "moving" || !countedWalk || S.shopOpen || S.starCeremony || S.starPopup) return null;
+      if (S.phase !== "moving" || !countedWalk || S.shopOpen || S.starCeremony || S.starMoved || S.starPopup) return null;
       const left = S.moveQueue.length - S.moveIdx + (S.hopActive ? 1 : 0);
       return left > 0 ? { pid: match.currentPlayer, left } : null;
     },

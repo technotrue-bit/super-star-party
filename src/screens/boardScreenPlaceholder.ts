@@ -284,6 +284,8 @@ interface BoardScreenState {
   _unfreezeAutoplay?: boolean;
   _finaleShown?: boolean;
   _unsubs: Array<() => void>;
+  /** Where the 3D balloon is drawn while a bought balloon waits for star:reveal. */
+  _prizeHold?: number | null;
   _updateHudExtras: () => void;
   _readHudView: () => HudView;
   _openPause: () => void;
@@ -703,14 +705,29 @@ const boardScreenImpl: BoardScreenState & Screen = {
         if (sc) ui.showFloatingNumber(sc.x, sc.y - 30, -spent);
       })
     );
+    const balloonBurst = (from: number, to: number): void => {
+      const burst = (index: number, count: number): void => {
+        const sc = projectToScreen(board.spaceWorldPos(index));
+        if (sc) ui.confettiBurst(sc.x, sc.y, { count, sound: null });
+      };
+      burst(from, 46);
+      burst(to, 32);
+    };
+    this._prizeHold = null;
     this._unsubs.push(
-      bus.on("star:balloon_moved", ({ from, to }) => {
-        const burst = (index: number, count: number): void => {
-          const sc = projectToScreen(board.spaceWorldPos(index));
-          if (sc) ui.confettiBurst(sc.x, sc.y, { count, sound: null });
-        };
-        burst(from, 46);
-        burst(to, 32);
+      bus.on("star:balloon_moved", ({ from, to, cause }) => {
+        // A bought balloon stays put through the ceremony; star:reveal moves it.
+        if (cause === "buy") {
+          this._prizeHold = from;
+          return;
+        }
+        balloonBurst(from, to);
+      })
+    );
+    this._unsubs.push(
+      bus.on("star:reveal", ({ from, to }) => {
+        this._prizeHold = null;
+        balloonBurst(from, to);
       })
     );
 
@@ -910,6 +927,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     document.body.classList.remove("ssp-board-on");
     for (const off of this._unsubs ?? []) off();
     this._unsubs = [];
+    this._prizeHold = null;
     ui.clearFeedback();
     this._loop?.dispose();
     this._loop = undefined;
@@ -996,7 +1014,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     if (this._mapLook?.isOpen()) {
       this._countdown?.update(null);
       this._hint?.update(null);
-      this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
+      this._board?.setPrizeBalloon(match.players.length > 0 ? this._prizeHold ?? match.starBalloonPos : null);
       this._board?.update(dt);
       return;
     }
@@ -1004,7 +1022,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._t = (this._t ?? 0) + dt;
     const t = this._t;
 
-    this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
+    this._board?.setPrizeBalloon(match.players.length > 0 ? this._prizeHold ?? match.starBalloonPos : null);
     this._board?.update(dt);
     for (const ch of this._chars ?? []) ch.update(dt);
 
