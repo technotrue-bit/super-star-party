@@ -12,6 +12,13 @@ import { chromium } from "@playwright/test";
 
 const BASE = process.env.SSP_URL ?? "http://localhost:5177";
 const URL = `${BASE}/?audio=0&speed=8&partyAssist=1&turns=2&seed=7`;
+// SSP_BOARD=downtown|carnival goes on the HOST's URL only: the host picks the
+// board and the guest must follow it through MatchSetup.board.
+const BOARD_ARG = (process.env.SSP_BOARD ?? "").trim();
+const HOST_URL = BOARD_ARG ? `${URL}&board=${BOARD_ARG}` : URL;
+const EXPECT_BOARD = BOARD_ARG === "downtown" ? "downtown" : BOARD_ARG === "carnival" ? "fizzy-fairground" : BOARD_ARG ? null : "fizzy-fairground";
+// SSP_OLD_CLIENT=0 skips the old-client refusal check (on by default).
+const OLD_CLIENT = process.env.SSP_OLD_CLIENT !== "0";
 
 async function waitForServer(url, ms = 60000) {
   const until = Date.now() + ms;
@@ -64,6 +71,7 @@ async function board(page) {
       stars: players.map((p) => p.stars),
       spaces: players.map((p) => p.space),
       controllers: players.map((p) => p.controller),
+      board: match.boardId ?? null,
     };
   });
 }
@@ -79,7 +87,7 @@ watch(guest, errors, "guest");
 
 console.log("1. boot both tabs");
 await Promise.all([
-  host.goto(URL, { waitUntil: "domcontentloaded" }),
+  host.goto(HOST_URL, { waitUntil: "domcontentloaded" }),
   guest.goto(URL, { waitUntil: "domcontentloaded" }),
 ]);
 await host.waitForSelector("[data-party='menu']", { timeout: 30000 });
@@ -104,6 +112,30 @@ await host.waitForFunction(() => {
   return n === "2";
 }, null, { timeout: 15000 });
 console.log("   humans", await host.locator("[data-party-humans]").innerText());
+
+let oldClientOk = true;
+if (OLD_CLIENT) {
+  console.log("3b. an old client (no join.boards) is refused");
+  const old = await context.newPage();
+  watch(old, [], "old");
+  await old.goto(`${URL}&legacyJoin=1`, { waitUntil: "domcontentloaded" });
+  await old.waitForSelector("[data-party='menu']", { timeout: 30000 });
+  await clickParty(old, "menu", "WITH FRIENDS");
+  await old.waitForSelector("[data-party='code']", { timeout: 15000 });
+  await old.fill("[data-party='code']", code.trim());
+  await clickParty(old, "join", "JOIN");
+  let refused = null;
+  try {
+    await old.waitForFunction(() => !!window.__SSP__?.party?.()?.refused, null, { timeout: 15000 });
+    refused = await old.evaluate(() => window.__SSP__.party().refused);
+  } catch {}
+  const shown = await old.evaluate(() => document.body.innerText.includes("Update the game"));
+  await host.waitForTimeout(800);
+  const humans = await host.locator("[data-party-humans]").getAttribute("data-party-humans");
+  console.log(`   old client refused=${JSON.stringify(refused)} shown=${shown} host humans=${humans}`);
+  oldClientOk = /update the game/i.test(refused ?? "") && shown && humans === "2";
+  await old.close();
+}
 
 console.log("4. host starts");
 await clickParty(host, "start", "START");
@@ -161,7 +193,11 @@ let passed =
   hostBoard?.total === guestBoard?.total &&
   hostBoard?.total === 2 &&
   choices > 0 &&
-  sameEconomy;
+  sameEconomy &&
+  oldClientOk &&
+  hostBoard?.board === guestBoard?.board &&
+  (EXPECT_BOARD === null || hostBoard?.board === EXPECT_BOARD);
+console.log(`board host=${hostBoard?.board} guest=${guestBoard?.board} expected=${EXPECT_BOARD ?? "any"} oldClientOk=${oldClientOk}`);
 
 if (passed) {
   await guest.evaluate(() => window.__SSP__?.partyDrop?.());

@@ -1,3 +1,4 @@
+import type { BoardId, BoardRule } from "../board/registry";
 import type { CoinMultiplier, MinigamePackId } from "../minigames/packRules";
 
 export interface SeatSlot {
@@ -17,6 +18,8 @@ export interface MatchSetup {
   /** Pack id per seat, already dealt by the host. */
   packs: string[];
   seats: SeatSlot[];
+  /** Board the host resolved ("random" already picked). Absent (old host) = the carnival. */
+  board?: BoardId;
 }
 
 export interface OfficialMinigame {
@@ -41,8 +44,22 @@ export type BoardChoice =
   | { kind: "path"; playerId: number; auto?: boolean; to?: number };
 
 export type PartyMessage =
-  | { type: "join"; code: string; peerId: string; name: string }
-  | { type: "lobby"; code: string; hostId: string; seats: SeatSlot[] }
+  | {
+      type: "join";
+      code: string;
+      peerId: string;
+      name: string;
+      /** Boards this client can play, as `id@rev`. Absent = an old client; the host refuses it. */
+      boards?: string[];
+    }
+  | {
+      type: "lobby";
+      code: string;
+      hostId: string;
+      seats: SeatSlot[];
+      /** Host's board rule for this room, so guests can show it. */
+      board?: BoardRule;
+    }
   | { type: "seat"; code: string; peerId: string; kind: string }
   | { type: "start"; code: string; setup: MatchSetup }
   | { type: "choice"; code: string; choice: BoardChoice }
@@ -57,4 +74,14 @@ export type PartyMessage =
     }
   | { type: "minigame"; code: string; result: OfficialMinigame }
   | { type: "leave"; code: string; peerId: string }
-  | { type: "error"; code: string; peerId: string; message: string };
+  | {
+      type: "error";
+      code: string;
+      peerId: string;
+      message: string;
+      /** Why the host turned this peer away. Absent on older hosts. */
+      reason?: JoinRefusal;
+    };
+
+/** `full`: no open seat. `update`: the guest's build lacks the host's board. */
+export type JoinRefusal = "full" | "update";

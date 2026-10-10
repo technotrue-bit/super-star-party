@@ -17,6 +17,7 @@ import { settings } from "../config/settings";
 import { mulberry32 } from "../core/rng";
 import { defaultSeatController, type SeatController } from "../core/seat";
 import { liveRules, type LiveMatchRules } from "./liveRules";
+import { DEFAULT_BOARD, clearUrlBoardRule, parseBoardRule, urlBoardRule, type BoardRule } from "../board/registry";
 
 export const PACK_IDS = ["midway", "sideshow", "bigtop"] as const;
 export type MinigamePackId = (typeof PACK_IDS)[number];
@@ -71,6 +72,7 @@ export const PACK_OF_MINIGAME: Record<string, MinigamePackId> = {
 export const LS_MINIGAME_PACKS = "ssp.minigamePacks";
 export const LS_MINIGAME_COIN_MULT = "ssp.minigameCoinMultiplier";
 export const LS_HUMAN_PACK = "ssp.humanPack";
+export const LS_BOARD = "ssp.board";
 
 function storage(): Storage | null {
   try {
@@ -155,13 +157,34 @@ export function blankPlayedByPack(): Record<string, string[]> {
  * Persisted host rules. Copied onto the match at boot and at match start
  * so snapshot() sees the rotation the roulette will actually use.
  */
-export function readPersistedRules(): Pick<LiveMatchRules, "enabledPacks" | "coinMultiplier" | "humanPack"> {
+export function readPersistedRules(): PersistedRules {
   const enabledPacks = readEnabledFromStorage();
   return {
     enabledPacks,
     coinMultiplier: readCoinMultiplierFromStorage(),
     humanPack: readHumanPackFromStorage(enabledPacks),
+    board: readBoardRule(),
   };
+}
+
+export type PersistedRules = Pick<LiveMatchRules, "enabledPacks" | "coinMultiplier" | "humanPack"> & {
+  /** Board for the next match. "random" is resolved once, at match start. */
+  board: BoardRule;
+};
+
+/** `?board=` wins for this page load (never saved), then storage, then the carnival. */
+function readBoardRule(): BoardRule {
+  return urlBoardRule() ?? parseBoardRule(readKey(LS_BOARD), LS_BOARD) ?? DEFAULT_BOARD;
+}
+
+/**
+ * Save the board rule for future matches (the picker calls this). A tap also
+ * drops the `?board=` override, so the choice takes effect for this page load.
+ */
+export function setBoardRule(rule: BoardRule): BoardRule {
+  writeKey(LS_BOARD, rule);
+  clearUrlBoardRule();
+  return readBoardRule();
 }
 
 /** Copy storage into the live match rules. Played-minigame lists are left alone. */

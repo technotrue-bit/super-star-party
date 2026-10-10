@@ -494,6 +494,20 @@ function bakeLanes(def: BoardDef): LaneBake {
     open.push({ line, roots: [a, b] });
   }
 
+  // Fork branches ("graph" boards): open centripetal CR through fork, branch
+  // tiles and rejoin, with phantom end points continuing each end's own hop
+  // so the lane leaves the fork and meets the rejoin along its first/last hop.
+  for (const br of def.branches ?? []) {
+    const pts = [br.from, ...br.path, br.to].map(space);
+    const first = pts[0].clone().sub(pts[1].clone().sub(pts[0]));
+    const last = pts[pts.length - 1].clone().add(pts[pts.length - 1].clone().sub(pts[pts.length - 2]));
+    const all = [first, ...pts, last];
+    const curve = new THREE.CatmullRomCurve3(all, false, "centripetal");
+    const span = all.length - 1;
+    const line = sample((t) => curve.getPoint(t), 1 / span, (span - 1) / span, segs(lenOf(pts, false)));
+    open.push({ line, roots: [pts[0], pts[pts.length - 1]] });
+  }
+
   // ---- texel grid ----------------------------------------------------------------
   const h = B.pathWidth / 2;
   const edge = h + B.laneTrim + B.laneFeather; // alpha reaches 0 here

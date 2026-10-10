@@ -1,0 +1,477 @@
+{
+ "finale": true,
+ "url": "http://127.0.0.1:5198/?seed=2&screen=board&autoplay=1&audio=0&speed=4",
+ "turns": [
+  {
+   "turn": 1,
+   "hash": "f85b935f",
+   "coins": [],
+   "spaces": [],
+   "balloon": 0,
+   "boardId": null
+  },
+  {
+   "turn": 2,
+   "hash": "e07fc08b",
+   "coins": [
+    0,
+    10,
+    5,
+    13
+   ],
+   "spaces": [
+    6,
+    8,
+    5,
+    4
+   ],
+   "balloon": 30,
+   "boardId": null
+  },
+  {
+   "turn": 3,
+   "hash": "2bfb2a90",
+   "coins": [
+    3,
+    37,
+    4,
+    7
+   ],
+   "spaces": [
+    37,
+    9,
+    6,
+    6
+   ],
+   "balloon": 30,
+   "boardId": null
+  },
+  {
+   "turn": 4,
+   "hash": "69d13ae2",
+   "coins": [
+    23,
+    29,
+    1,
+    10
+   ],
+   "spaces": [
+    0,
+    10,
+    36,
+    34
+   ],
+   "balloon": 30,
+   "boardId": null
+  },
+  {
+   "turn": 5,
+   "hash": "2fa5b68d",
+   "coins": [
+    15,
+    29,
+    1,
+    13
+   ],
+   "spaces": [
+    6,
+    31,
+    36,
+    37
+   ],
+   "balloon": 30,
+   "boardId": null
+  },
+  {
+   "turn": 6,
+   "hash": "880f0f10",
+   "coins": [
+    18,
+    44,
+    4,
+    15
+   ],
+   "spaces": [
+    38,
+    37,
+    30,
+    34
+   ],
+   "balloon": 30,
+   "boardId": null
+  },
+  {
+   "turn": 7,
+   "hash": "7d9074ea",
+   "coins": [
+    21,
+    43,
+    1,
+    17
+   ],
+   "spaces": [
+    41,
+    38,
+    33,
+    38
+   ],
+   "balloon": 17,
+   "boardId": null
+  },
+  {
+   "turn": 8,
+   "hash": "1b43888e",
+   "coins": [
+    24,
+    46,
+    1,
+    20
+   ],
+   "spaces": [
+    30,
+    18,
+    2,
+    0
+   ],
+   "balloon": 17,
+   "boardId": null
+  },
+  {
+   "turn": 9,
+   "hash": "5e997b96",
+   "coins": [
+    27,
+    43,
+    0,
+    20
+   ],
+   "spaces": [
+    34,
+    2,
+    6,
+    3
+   ],
+   "balloon": 17,
+   "boardId": null
+  },
+  {
+   "turn": 10,
+   "hash": "8b3548af",
+   "coins": [
+    27,
+    75,
+    0,
+    14
+   ],
+   "spaces": [
+    38,
+    3,
+    13,
+    6
+   ],
+   "balloon": 17,
+   "boardId": null
+  },
+  {
+   "turn": 11,
+   "hash": "e7ab45ea",
+   "coins": [
+    24,
+    99,
+    0,
+    16
+   ],
+   "spaces": [
+    26,
+    6,
+    16,
+    6
+   ],
+   "balloon": 17,
+   "boardId": null
+  }
+ ],
+ "marks": [
+  {
+   "event": "match:start",
+   "turn": 1,
+   "draws": 0
+  },
+  {
+   "event": "turn:start",
+   "turn": 1,
+   "draws": 4
+  },
+  {
+   "event": "turn:start",
+   "turn": 1,
+   "draws": 6
+  },
+  {
+   "event": "turn:start",
+   "turn": 1,
+   "draws": 9
+  },
+  {
+   "event": "turn:start",
+   "turn": 1,
+   "draws": 11
+  },
+  {
+   "event": "minigame:start",
+   "turn": 2,
+   "draws": 20
+  },
+  {
+   "event": "minigame:end",
+   "turn": 2,
+   "draws": 20
+  },
+  {
+   "event": "match:start",
+   "turn": 2,
+   "draws": 20
+  },
+  {
+   "event": "turn:start",
+   "turn": 2,
+   "draws": 20
+  },
+  {
+   "event": "turn:start",
+   "turn": 2,
+   "draws": 21
+  },
+  {
+   "event": "turn:start",
+   "turn": 2,
+   "draws": 23
+  },
+  {
+   "event": "turn:start",
+   "turn": 2,
+   "draws": 25
+  },
+  {
+   "event": "minigame:start",
+   "turn": 3,
+   "draws": 34
+  },
+  {
+   "event": "minigame:end",
+   "turn": 3,
+   "draws": 34
+  },
+  {
+   "event": "match:start",
+   "turn": 3,
+   "draws": 34
+  },
+  {
+   "event": "turn:start",
+   "turn": 3,
+   "draws": 34
+  },
+  {
+   "event": "turn:start",
+   "turn": 3,
+   "draws": 37
+  },
+  {
+   "event": "turn:start",
+   "turn": 3,
+   "draws": 40
+  },
+  {
+   "event": "turn:start",
+   "turn": 3,
+   "draws": 42
+  },
+  {
+   "event": "turn:start",
+   "turn": 4,
+   "draws": 50
+  },
+  {
+   "event": "turn:start",
+   "turn": 4,
+   "draws": 51
+  },
+  {
+   "event": "turn:start",
+   "turn": 4,
+   "draws": 53
+  },
+  {
+   "event": "turn:start",
+   "turn": 4,
+   "draws": 56
+  },
+  {
+   "event": "minigame:start",
+   "turn": 5,
+   "draws": 65
+  },
+  {
+   "event": "minigame:end",
+   "turn": 5,
+   "draws": 65
+  },
+  {
+   "event": "match:start",
+   "turn": 5,
+   "draws": 65
+  },
+  {
+   "event": "turn:start",
+   "turn": 5,
+   "draws": 65
+  },
+  {
+   "event": "turn:start",
+   "turn": 5,
+   "draws": 66
+  },
+  {
+   "event": "turn:start",
+   "turn": 5,
+   "draws": 68
+  },
+  {
+   "event": "turn:start",
+   "turn": 5,
+   "draws": 71
+  },
+  {
+   "event": "turn:start",
+   "turn": 6,
+   "draws": 81
+  },
+  {
+   "event": "turn:start",
+   "turn": 6,
+   "draws": 82
+  },
+  {
+   "event": "turn:start",
+   "turn": 6,
+   "draws": 85
+  },
+  {
+   "event": "turn:start",
+   "turn": 6,
+   "draws": 89
+  },
+  {
+   "event": "turn:start",
+   "turn": 7,
+   "draws": 99
+  },
+  {
+   "event": "turn:start",
+   "turn": 7,
+   "draws": 100
+  },
+  {
+   "event": "turn:start",
+   "turn": 7,
+   "draws": 102
+  },
+  {
+   "event": "turn:start",
+   "turn": 7,
+   "draws": 105
+  },
+  {
+   "event": "turn:start",
+   "turn": 8,
+   "draws": 113
+  },
+  {
+   "event": "turn:start",
+   "turn": 8,
+   "draws": 114
+  },
+  {
+   "event": "turn:start",
+   "turn": 8,
+   "draws": 117
+  },
+  {
+   "event": "turn:start",
+   "turn": 8,
+   "draws": 121
+  },
+  {
+   "event": "minigame:start",
+   "turn": 9,
+   "draws": 130
+  },
+  {
+   "event": "minigame:end",
+   "turn": 9,
+   "draws": 130
+  },
+  {
+   "event": "match:start",
+   "turn": 9,
+   "draws": 130
+  },
+  {
+   "event": "turn:start",
+   "turn": 9,
+   "draws": 130
+  },
+  {
+   "event": "turn:start",
+   "turn": 9,
+   "draws": 132
+  },
+  {
+   "event": "turn:start",
+   "turn": 9,
+   "draws": 134
+  },
+  {
+   "event": "turn:start",
+   "turn": 9,
+   "draws": 139
+  },
+  {
+   "event": "minigame:start",
+   "turn": 10,
+   "draws": 148
+  },
+  {
+   "event": "minigame:end",
+   "turn": 10,
+   "draws": 148
+  },
+  {
+   "event": "match:start",
+   "turn": 10,
+   "draws": 148
+  },
+  {
+   "event": "turn:start",
+   "turn": 10,
+   "draws": 148
+  },
+  {
+   "event": "turn:start",
+   "turn": 10,
+   "draws": 149
+  },
+  {
+   "event": "turn:start",
+   "turn": 10,
+   "draws": 151
+  },
+  {
+   "event": "turn:start",
+   "turn": 10,
+   "draws": 156
+  }
+ ],
+ "ms": 294218
+}

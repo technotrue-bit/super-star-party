@@ -9,11 +9,26 @@
  *
  * The relay is BroadcastChannel unless VITE_PARTY_URL is set, in which
  * case it is the PartyServer WebSocket. The message shapes do not change.
+ *
+ * Boards: the host picks (the saved rule, ?board= wins) and resolves
+ * "random" in buildSetup. A join lists the guest's boards as `id@rev`;
+ * the host refuses a join without that list (an old client) or without
+ * the host's board, so a version mismatch reads as "update the game"
+ * instead of BOARD OUT OF SYNC.
  */
 import { roster } from "../characters/roster";
 import { match, snapshot, startMatch } from "../core/game";
 import { ui } from "../ui/kit";
 import { assignPlayerPacks, blankPlayedByPack, readPersistedRules } from "../minigames/packRules";
+import {
+  boardIds,
+  boardTag,
+  boardTags,
+  DEFAULT_BOARD,
+  isBoardId,
+  resolveBoardRule,
+  type BoardRule,
+} from "../board/registry";
 import { briefState, hashSnapshot } from "./hash";
 import type { BoardChoice, MatchSetup, OfficialMinigame, PartyMessage, SeatSlot } from "./messages";
 import { onlineMatch, setOnlineMatch } from "./mode";
@@ -27,6 +42,9 @@ import {
 } from "./relay";
 
 const LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+
+/** Shown on a guest the host turned away for a missing or older board. */
+export const UPDATE_REFUSAL = "Update the game to join this room";
 
 export interface PartyView {
   code: string | null;
@@ -44,6 +62,12 @@ export interface PartyView {
   recv: number;
   /** `tabs` is BroadcastChannel. `server` is the configured PartyServer URL. */
   transport: PartyTransport;
+  /** Host's board rule for this room (the lobby carries it to guests). */
+  board: BoardRule | null;
+  /** Guest: the host's refusal text (e.g. UPDATE_REFUSAL). Null when seated or not refused. */
+  refused: string | null;
+  /** Host: peers turned away for a missing or older board. */
+  refusedPeers: string[];
 }
 
 interface RoomState {
@@ -52,6 +76,7 @@ interface RoomState {
   seats: SeatSlot[];
   started: boolean;
   turns: number;
+  board: BoardRule | null;
 }
 
 type Hooks = {
@@ -78,6 +103,10 @@ let minigameHandler: ((result: OfficialMinigame) => void) | null = null;
 let pendingMinigame: OfficialMinigame | null = null;
 let hooks: Hooks = {};
 let leaveButton: HTMLButtonElement | null = null;
+let refused: string | null = null;
+const refusedPeers: string[] = [];
+/** Host: each seated guest's `boards` list from its join. */
+const guestBoards = new Map<string, string[]>();
 const listeners = new Set<() => void>();
 
 function peerId(): string {
@@ -144,9 +173,47 @@ function ensureRelay(code: string, role: PartyRole): void {
   unlisten = relay.listen(onMessage);
 }
 
+/**
+ * Probe-only: `?legacyJoin=1` makes this tab join like a client from before
+ * boards (no `boards` field). Dev and CI builds only (VITE_SSP_TEST, the
+ * same gate as __SSP_CONTACT__); a production build ignores it.
+ */
+function legacyJoin(): boolean {
+  const live = import.meta.env.DEV || import.meta.env.VITE_SSP_TEST === "1" || import.meta.env.VITE_SSP_TEST === "true";
+  if (!live) return false;
+  try {
+    return new URLSearchParams(location.search).get("legacyJoin") === "1";
+  } catch {
+    return false;
+  }
+}
+
 function postJoin(): void {
   if (!relay || !room) return;
-  relay.post({ type: "join", code: room.code, peerId: peerId(), name: "Friend" });
+  if (legacyJoin()) {
+    relay.post({ type: "join", code: room.code, peerId: peerId(), name: "Friend" });
+    return;
+  }
+  relay.post({ type: "join", code: room.code, peerId: peerId(), name: "Friend", boards: boardTags() });
+}
+
+/** The host's board rule right now (saved rule, ?board= wins). */
+function hostBoardRule(): BoardRule {
+  return readPersistedRules().board;
+}
+
+/**
+ * Board tags a guest needs for `rule`: the one board at the host's rev,
+ * or every registered board when the host plays "random".
+ */
+function boardTagsFor(rule: BoardRule): string[] {
+  if (rule === "random") return boardIds().map((id) => boardTag(id));
+  return [boardTag(isBoardId(rule) ? rule : DEFAULT_BOARD)];
+}
+
+function canPlay(boards: string[] | undefined, need: string[]): boolean {
+  if (!Array.isArray(boards)) return false;
+  return need.every((tag) => boards.includes(tag));
 }
 
 /** The host socket can still be opening. Resend join until the lobby arrives. */
@@ -194,6 +261,9 @@ export function partyView(): PartyView {
     sent,
     recv,
     transport: partyTransport(),
+    board: room?.board ?? null,
+    refused,
+    refusedPeers: [...refusedPeers],
   };
 }
 
@@ -204,6 +274,9 @@ export function isHost(): boolean {
 export function createRoom(): string {
   clearJoinTimer();
   lobbyError = null;
+  refused = null;
+  refusedPeers.length = 0;
+  guestBoards.clear();
   matchOpen = false;
   const id = peerId();
   const code = randomToken(4);
@@ -213,6 +286,7 @@ export function createRoom(): string {
     hostId: id,
     started: false,
     turns: urlTurns() ?? 10,
+    board: hostBoardRule(),
     seats: [0, 1, 2, 3].map((index) => ({
       index,
       peerId: index === 0 ? id : null,
@@ -229,9 +303,10 @@ export function joinRoom(code: string): string | null {
   if (clean.length !== 4) return "Enter the 4-letter code.";
   clearJoinTimer();
   lobbyError = null;
+  refused = null;
   matchOpen = false;
   ensureRelay(clean, "guest");
-  room = { code: clean, hostId: "", started: false, turns: 10, seats: [] };
+  room = { code: clean, hostId: "", started: false, turns: 10, seats: [], board: null };
   postJoin();
   armJoinRetry();
   notify();
@@ -269,6 +344,11 @@ export function startFromLobby(): string | null {
   if (humans < 2) return "Need at least two humans.";
   if (humans > 4) return "Four humans is the cap.";
   const setup = buildSetup();
+  // Joins were checked against the room's rule; recheck the resolved board
+  // in case the rule changed after a guest sat down.
+  const need = [boardTag(setup.board ?? DEFAULT_BOARD)];
+  const stale = room.seats.find((s) => s.peerId && s.peerId !== room?.hostId && !canPlay(guestBoards.get(s.peerId), need));
+  if (stale) return `${stale.name} needs to update the game to play this board.`;
   room.started = true;
   relay?.post({ type: "start", code: room.code, setup });
   applySetup(setup);
@@ -363,6 +443,9 @@ function buildSetup(): MatchSetup {
   const seed = fromUrl === undefined ? randomSeed() : Math.floor(fromUrl) || 1;
   assignPlayerPacks(seed, ghosts);
   const turns = urlTurns() ?? room?.turns ?? 10;
+  // The host resolves "random" once, here: from ?seed= when given, else
+  // Math.random. Never the match rng. Guests just copy setup.board.
+  const board = resolveBoardRule(rules.board, fromUrl === undefined ? undefined : seed);
   return {
     seed,
     turns,
@@ -371,6 +454,7 @@ function buildSetup(): MatchSetup {
     humanPack: rules.humanPack,
     packs: ghosts.map((g) => g.pack ?? rules.humanPack),
     seats: seats.map((seat) => ({ ...seat })),
+    board,
   };
 }
 
@@ -392,7 +476,9 @@ function applySetup(setup: MatchSetup): void {
     const found = roster.find((c) => c.key === seat.kind);
     return found?.name ?? `P${index + 1}`;
   });
-  startMatch(kinds, names, setup.turns, setup.seed, controllers);
+  // A setup without a board (an older host) is the carnival.
+  const board = isBoardId(setup.board) ? setup.board : DEFAULT_BOARD;
+  startMatch(kinds, names, setup.turns, setup.seed, controllers, { board });
   match.enabledPacks = [...setup.enabledPacks];
   match.coinMultiplier = setup.coinMultiplier;
   match.humanPack = setup.humanPack;
@@ -413,18 +499,29 @@ function applySetup(setup: MatchSetup): void {
   hooks.onStart?.();
 }
 
+/** Host: the lobby's board choice changed (already saved). Tell the guests. */
+export function announceLobbyBoard(): void {
+  if (!room || room.started || !isHost()) return;
+  broadcastLobby();
+  notify();
+}
+
 function broadcastLobby(): void {
   if (!relay || !room) return;
+  if (isHost()) room.board = hostBoardRule();
   relay.post({
     type: "lobby",
     code: room.code,
     hostId: room.hostId,
     seats: room.seats.map((seat) => ({ ...seat })),
+    board: room.board ?? DEFAULT_BOARD,
   });
 }
 
 function onMessage(msg: PartyMessage): void {
   if (!room || msg.code !== room.code) return;
+  // Turned away for an old build: stay out of this room's lobby and match.
+  if (refused) return;
   if (msg.type === "join") onJoin(msg);
   else if (msg.type === "lobby") onLobby(msg);
   else if (msg.type === "seat") onSeat(msg);
@@ -443,6 +540,11 @@ function onMessage(msg: PartyMessage): void {
   } else if (msg.type === "leave") applyLeave(msg.peerId);
   else if (msg.type === "error" && msg.peerId === peerId()) {
     lobbyError = msg.message;
+    if (msg.reason === "update") {
+      refused = msg.message;
+      room.seats = [];
+      room.hostId = "";
+    }
     clearJoinTimer();
     notify();
   }
@@ -450,7 +552,23 @@ function onMessage(msg: PartyMessage): void {
 
 function onJoin(msg: Extract<PartyMessage, { type: "join" }>): void {
   if (!isHost() || !room || room.started) return;
+  // An old client (no `boards`) or one without the host's board at the
+  // same rev would desync. Turn it away before it can take a seat.
+  room.board = hostBoardRule();
+  if (!canPlay(msg.boards, boardTagsFor(room.board))) {
+    if (!refusedPeers.includes(msg.peerId)) refusedPeers.push(msg.peerId);
+    relay?.post({
+      type: "error",
+      code: room.code,
+      peerId: msg.peerId,
+      message: UPDATE_REFUSAL,
+      reason: "update",
+    });
+    notify();
+    return;
+  }
   if (room.seats.some((seat) => seat.peerId === msg.peerId)) {
+    guestBoards.set(msg.peerId, [...(msg.boards ?? [])]);
     broadcastLobby();
     return;
   }
@@ -461,11 +579,13 @@ function onJoin(msg: Extract<PartyMessage, { type: "join" }>): void {
       code: room.code,
       peerId: msg.peerId,
       message: "That room is full.",
+      reason: "full",
     });
     return;
   }
   open.peerId = msg.peerId;
   open.name = msg.name || "Friend";
+  guestBoards.set(msg.peerId, [...(msg.boards ?? [])]);
   broadcastLobby();
   notify();
 }
@@ -475,6 +595,7 @@ function onLobby(msg: Extract<PartyMessage, { type: "lobby" }>): void {
   clearJoinTimer();
   room.hostId = msg.hostId;
   room.seats = msg.seats.map((seat) => ({ ...seat }));
+  room.board = msg.board ?? DEFAULT_BOARD;
   lobbyError = null;
   notify();
 }
