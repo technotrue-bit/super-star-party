@@ -6,7 +6,7 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,6 +28,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: No core rng in cosmetic board code
+        run: node tools/check-lively-imports.mjs
+
       - name: Start the game
         run: |
           RUNNER_TRACKING_ID="" nohup npm run dev -- --host 127.0.0.1 > "$RUNNER_TEMP/vite.log" 2>&1 < /dev/null &
@@ -44,6 +47,12 @@ jobs:
 
       - name: Twin match
         run: node tools/twin-seed.mjs
+
+      - name: Twin match on Downtown
+        run: SSP_BOARD=downtown node tools/twin-seed.mjs
+
+      - name: Board registry (carnival seed-7 parity + Downtown graph)
+        run: node tools/probe-board-downtown.mjs
 
       - name: Playtest
         run: node tools/smoke-play.mjs
