@@ -23,6 +23,8 @@ import {
   setMinigameCoinMultiplier,
 } from "../minigames/packRules";
 
+import { mountBoardPicker } from "./boardPicker";
+
 let stylesInjected = false;
 
 function injectPackStyles(): void {
@@ -103,7 +105,7 @@ function injectPackStyles(): void {
       pointer-events: auto;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 4px;
       width: 100%;
       box-sizing: border-box;
       font-family: 'Fredoka', 'Comic Sans MS', sans-serif;
@@ -112,7 +114,7 @@ function injectPackStyles(): void {
       border: 4px solid ${palette.ink};
       border-radius: 18px;
       box-shadow: 4px 4px 0 ${palette.ink};
-      padding: 8px 10px 10px;
+      padding: 5px 10px 7px;
     }
     .ssp-ms__title {
       font-size: 13px;
@@ -138,7 +140,7 @@ function injectPackStyles(): void {
       flex-direction: column;
       align-items: center;
       gap: 2px;
-      padding: 6px 4px 7px;
+      padding: 4px 4px 5px;
       border-radius: 14px;
       border: 3px solid ${palette.ink};
       background: ${palette.white};
@@ -419,7 +421,8 @@ export function mountMatchSettings(): PackPickerHandle {
     note.className = "ssp-ms__note";
     note.textContent = `Winners earn ${settings.minigameWinCoins} coins × bonus`;
 
-    root.append(title, mixLabel, tiles, rot, coins, note);
+    const boards = mountBoardPicker({ compact: true });
+    root.append(title, boards.el, mixLabel, tiles, rot, coins, note);
   };
 
   paint();

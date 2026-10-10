@@ -26,7 +26,8 @@ import { ITEM_DEFS, buyItem, starCannonAvailable } from "../game/items";
 import { shopSpaceFor, shopStockAt } from "../game/shopStock";
 import { addCoins } from "../game/economy";
 import { canPlaceTrap, placeTrap } from "../game/traps";
-import { fizzyFairground } from "../board/boardData";
+import { activeBoard } from "../board/registry";
+import { shopTitle } from "../board/boardText";
 import type { TrapKind } from "../core/game";
 
 let stylesInjected = false;
@@ -129,12 +130,19 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
     awningText.style.flex = "1";
     const awningTitle = document.createElement("div");
     awningTitle.className = "ssp-shop__stall-title";
-    awningTitle.textContent = "GRUMPUS'S GUMBOOTH";
+    awningTitle.textContent = shopTitle();
     const awningSub = document.createElement("div");
     awningSub.className = "ssp-shop__stall-sub";
     // Each shop space stocks its own 3, so name the stall the player is at.
-    const stallName = fizzyFairground.spaces.find((s) => s.index === shopSpace)?.name ?? "Gumball Emporium";
-    awningSub.textContent = `${stallName} · Fizzy Fairgrounds`;
+    // Fallback: the board's first shop (carnival: Gumball Emporium).
+    const boardSpaces = activeBoard().spaces;
+    const stallName =
+      boardSpaces.find((s) => s.index === shopSpace)?.name ??
+      boardSpaces.find((s) => s.type === "shop")?.name ??
+      "Gumball Emporium";
+    // The carnival keeps its historical "Fizzy Fairgrounds" spelling.
+    const boardName = activeBoard().theme === "carnival" ? "Fizzy Fairgrounds" : activeBoard().name;
+    awningSub.textContent = `${stallName} · ${boardName}`;
     awningText.append(awningTitle, awningSub);
     awning.append(shopkeeper, awningText);
     content.appendChild(awning);
@@ -317,8 +325,9 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
     refreshAffordability();
 
     const showThrowPicker = (key: string, kind: TrapKind, orbName: string, price: number): void => {
-      const shopSpaces = fizzyFairground.spaces.filter((s) => s.type === "shop").map((s) => s.index);
-      const legal = fizzyFairground.spaces.filter((s) =>
+      const spaces = activeBoard().spaces;
+      const shopSpaces = spaces.filter((s) => s.type === "shop").map((s) => s.index);
+      const legal = spaces.filter((s) =>
         canPlaceTrap(playerId, s.index, match.starBalloonPos, shopSpaces),
       );
       grid.replaceChildren();

@@ -1,7 +1,9 @@
 import { chromium } from "@playwright/test";
 
 const BASE = (process.env.SSP_URL ?? "http://127.0.0.1:5177").replace(/\/$/, "");
-const URL = `${BASE}/?seed=7&screen=board&autoplay=1&audio=0&speed=4`;
+// SSP_BOARD=downtown|carnival|random plays that board (default: none = saved rule / carnival).
+const boardQuery = process.env.SSP_BOARD ? `&board=${process.env.SSP_BOARD}` : "";
+const URL = `${BASE}/?seed=7&screen=board&autoplay=1&audio=0&speed=4${boardQuery}`;
 const TURNS = 9;
 // A GitHub runner matched turns 1–8, then both pages hit a 300s cap during
 // turn 9. Nine minutes lets that turn finish. Speed stays 4: past five
@@ -26,6 +28,7 @@ async function play(page, label) {
         stars: ps.map((p) => p.stars),
         spaces: ps.map((p) => p.space),
         balloon: m.starBalloonPos ?? null,
+        board: m.boardId ?? null,
         screen: st.screen ?? null,
       };
       if (row.turn != null && row.turn !== prev) {
@@ -87,6 +90,10 @@ try {
     console.log("page errors", JSON.stringify([...a.errors, ...b.errors]));
     failed = true;
   }
+  const boards = [...new Set([...a.ends, ...b.ends].filter((r) => r.coins.length > 0).map((r) => r.board).filter(Boolean))];
+  const want = process.env.SSP_BOARD === "downtown" ? "downtown" : process.env.SSP_BOARD === "carnival" ? "fizzy-fairground" : null;
+  console.log(`board ${JSON.stringify(boards)}${want ? ` expected ${want}` : ""}`);
+  if (boards.length !== 1 || (want && boards[0] !== want)) failed = true;
   for (let turn = 1; turn <= TURNS; turn++) {
     const left = endOfTurn(a.ends, turn);
     const right = endOfTurn(b.ends, turn);

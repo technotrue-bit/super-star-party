@@ -24,7 +24,7 @@ import { ui, queue } from "../ui/kit";
 import { setAutoplay } from "../core/debug";
 import { isAutoplay } from "../core/debug";
 import { buildBoardScene, boardBounds, type BoardScene } from "../board/boardScene";
-import { fizzyFairground } from "../board/boardData";
+import { activeBoard } from "../board/registry";
 import { createCharacter, type Character } from "../characters/characterFactory";
 import { createTurnLoop, PLAYER_OFFSETS, type DiceView, type TurnLoop } from "../game/turnLoop";
 import { createDie3d, type Die3DHandle } from "../ui/die3d";
@@ -120,6 +120,7 @@ function computeCameraFit(): CamFit {
   const aspect = w / h;
   const portrait = aspect < 1;
   const cam = settings.matchCamera;
+  if (activeBoard().theme !== "carnival") return computeWholeBoardFit(b, w, h, portrait);
 
   const fitX = b.maxX - b.minX + cam.sceneryPad * 2;
   const fitZ = b.maxY - b.minY + cam.sceneryPad * 2;
@@ -143,6 +144,67 @@ function computeCameraFit(): CamFit {
     cz + (portrait ? cam.lookZPortrait : cam.lookZLandscape)
   );
   return { base, look };
+}
+
+/** HUD bands (px) the whole-board fit keeps the board clear of. */
+const FIT_PAD_TOP = 120;
+const FIT_PAD_BOTTOM = 96;
+const FIT_PAD_SIDE = 8;
+
+/**
+ * Boards without the carnival's landmark framing (Downtown): the classic
+ * south camera in both aspects, pulled back until every space (boardBounds)
+ * projects inside the frame minus the HUD bands, then times def.cam.fit.
+ */
+function computeWholeBoardFit(
+  b: ReturnType<typeof boardBounds>,
+  w: number,
+  h: number,
+  portrait: boolean
+): CamFit {
+  const def = activeBoard();
+  const cam = settings.matchCamera;
+  const elev = portrait ? cam.elevPortrait : cam.elevLandscape;
+  const cx = (b.minX + b.maxX) / 2 + def.cam.center[0];
+  const cz = (b.minY + b.maxY) / 2 + def.cam.center[1];
+  const look = new THREE.Vector3(cx, 0, cz);
+  const probe = new THREE.PerspectiveCamera(world.camera?.fov ?? 45, w / Math.max(1, h), 0.1, 1000);
+  const corners = [
+    new THREE.Vector3(b.minX, 0, b.minY),
+    new THREE.Vector3(b.maxX, 0, b.minY),
+    new THREE.Vector3(b.maxX, 0, b.maxY),
+    new THREE.Vector3(b.minX, 0, b.maxY),
+  ];
+  const xLim = 1 - (2 * FIT_PAD_SIDE) / Math.max(1, w);
+  const yTop = 1 - (2 * FIT_PAD_TOP) / Math.max(1, h);
+  const yBot = -1 + (2 * FIT_PAD_BOTTOM) / Math.max(1, h);
+  // Centre the board's projected band between the HUD bands.
+  const yMid = (yTop + yBot) / 2;
+  const place = (m: number): void => {
+    probe.position.set(cx, m * Math.sin(elev), cz + m * Math.cos(elev));
+    probe.lookAt(look);
+    probe.updateMatrixWorld(true);
+  };
+  const fits = (m: number): boolean => {
+    place(m);
+    for (const c of corners) {
+      const p = c.clone().project(probe);
+      if (Math.abs(p.x) > xLim || p.y - yMid > yTop - yMid || p.y < yBot) return false;
+    }
+    return true;
+  };
+  let lo = 5;
+  let hi = 600;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (fits(mid)) hi = mid;
+    else lo = mid;
+  }
+  const m = hi * def.cam.fit;
+  // Shift the look so the board's band sits between the HUD bands, not at NDC 0.
+  const shift = (yMid * m * Math.tan(((probe.fov / 2) * Math.PI) / 180)) / Math.max(0.2, Math.sin(elev));
+  const base = new THREE.Vector3(cx, m * Math.sin(elev), cz + m * Math.cos(elev) + shift);
+  return { base, look: new THREE.Vector3(cx, 0, cz + shift) };
 }
 
 interface Punch {
@@ -315,7 +377,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
     }
 
     // ---- board ----
-    const board = buildBoardScene(fizzyFairground);
+    const boardDef = activeBoard();
+    const board = buildBoardScene(boardDef);
     this._board = board;
     // Lively time of day snaps to this turn's look before the first frame.
     board.setTimeOfDay(match.turn, match.totalTurns);
@@ -332,7 +395,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     // North-side party camera in landscape: the disk icons (designed to read
     // upright from the south) get a 180deg in-plane flip so they stay upright.
     if (viewportSize().w / viewportSize().h >= 1) {
-      for (let i = 0; i < fizzyFairground.spaces.length; i++) {
+      for (let i = 0; i < boardDef.spaces.length; i++) {
         for (const c of board.spaceMesh(i).children) {
           if (c instanceof THREE.Mesh && Math.abs(c.rotation.y - Math.PI / 2) < 1e-4) {
             c.rotation.y = -Math.PI / 2;
@@ -341,8 +404,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
       }
     }
 
-    // ---- characters at space 0 (2x2 stand-off grid) ----
-    const start = board.spaceWorldPos(0);
+    // ---- characters at the board's start space (2x2 stand-off grid) ----
+    const start = board.spaceWorldPos(boardDef.startIndex);
     this._chars = match.players.map((p, i) => {
       const off = PLAYER_OFFSETS[i] ?? [0, 0];
       const ch = createCharacter(p.kind);

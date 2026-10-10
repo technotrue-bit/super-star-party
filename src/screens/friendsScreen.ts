@@ -8,7 +8,10 @@ import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
 import { screens } from "./screenManager";
 import type { Screen } from "./screenManager";
+import { DEFAULT_BOARD } from "../board/registry";
+import { boardRuleLabel, mountBoardPicker } from "../ui/boardPicker";
 import {
+  announceLobbyBoard,
   createRoom,
   cycleSeatKind,
   joinRoom,
@@ -215,6 +218,7 @@ const friendsImpl = {
           turns.appendChild(btn.el);
         }
         card.appendChild(turns);
+        card.appendChild(mountBoardPicker({ compact: true, onChange: () => announceLobbyBoard() }).el);
         const start = ui.button({
           label: "START MATCH",
           kind: "gold",
@@ -230,8 +234,12 @@ const friendsImpl = {
       } else {
         const wait = document.createElement("p");
         wait.className = "ssp-friends__blurb";
+        const board = document.createElement("p");
+        board.className = "ssp-friends__blurb";
+        board.dataset.partyBoard = view.board ?? "";
+        board.textContent = `Board: ${boardRuleLabel(view.board ?? DEFAULT_BOARD)}`;
         wait.textContent = "Waiting for the host to start.";
-        card.appendChild(wait);
+        card.append(board, wait);
       }
     }
 

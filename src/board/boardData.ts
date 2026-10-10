@@ -22,6 +22,45 @@ export interface BoardDef {
   startIndex: number;
   /** Camera framing hint: center on the board, fit = distance multiplier. */
   cam: { center: [number, number]; fit: number };
+  /**
+   * Normalized move graph: next[i] is [stay] or [stay, branch]. Derived from
+   * loops/shortcut/junctions on the carnival (see deriveNext).
+   */
+  next: number[][];
+  /**
+   * How ahead()/hopsBetween() count spaces. "index" is the carnival's
+   * wrap(space + k) arithmetic (kept for hash parity: it walks from the inner
+   * loop into the outer one); "graph" walks the stay edges of `next`.
+   */
+  walk: "index" | "graph";
+  /** Grand Prize Balloon spots in rng.pick order. The order is gameplay data. */
+  prizeSpots: number[];
+  /** Space the Grand Prize Balloon starts on. */
+  prizeStart: number;
+  /** Scenery theme key; boardScene builds the carnival look for "carnival". */
+  theme: "carnival" | "downtown";
+  /**
+   * Open fork lanes on "graph" boards: `from` forks into `path`, whose last
+   * tile steps onto `to`. Read by the fork popup label and the lane decal
+   * (the carnival uses junctions/shortcut instead).
+   */
+  branches?: Array<{ from: number; path: number[]; to: number; label: string }>;
+  /** Display names for the shared mechanics. Absent: the carnival's names. */
+  skin?: BoardSkin;
+}
+
+/** Board-flavoured display text. Text only: types, ids and rules never change. */
+export interface BoardSkin {
+  /** The Grumpus NPC: full name and the short form used in banners. */
+  npc: { name: string; short: string };
+  /** Shop awning title (carnival: "GRUMPUS'S GUMBOOTH"). */
+  shopTitle: string;
+  /** Stamp display names by kind (carnival: Fizz / Crumb / Taffy). */
+  stamps: Record<StampKind, string>;
+  /** Full-set banner word (carnival: "CARNIVAL"). */
+  jackpot: string;
+  /** Lower-case place word in happening text (carnival: "carnival"). */
+  place: string;
 }
 
 // ---- Fizzy Fairground layout -------------------------------------------------
@@ -204,8 +243,46 @@ function buildSpaces(): SpaceDef[] {
   return [...outerSpaces, ...innerSpaces];
 }
 
-/** Fizzy Fairground — the carnival midway. Start = space 0 (Fizzy Fountain). */
-export const fizzyFairground: BoardDef = {
+/** BoardDef before the derived graph fields are filled in. */
+type BoardBase = Omit<BoardDef, "next" | "prizeSpots">;
+
+/**
+ * Carnival move graph, matching the turn loop's old stepOn + junctions:
+ * stay = next space on the first loop holding i (loops[0] when none), with the
+ * shortcut applied; branch = the first junction leaving i.
+ */
+function deriveNext(def: BoardBase): number[][] {
+  const sc = def.shortcut;
+  const next: number[][] = [];
+  for (let i = 0; i < def.spaces.length; i++) {
+    const loop = def.loops.find((l) => l.includes(i)) ?? def.loops[0];
+    const at = loop.indexOf(i);
+    let stay = loop[(at + 1) % loop.length];
+    if (sc && stay === sc.from) stay = sc.to;
+    const j = (def.junctions ?? []).find((jj) => jj.from === i);
+    next.push(j ? [stay, j.to] : [stay]);
+  }
+  return next;
+}
+
+/**
+ * Carnival prize spots: every loop space in loop order, minus the tiles the
+ * shortcut skips on the main loop ([shortcut.from, shortcut.to)).
+ */
+function derivePrizeSpots(def: BoardBase): number[] {
+  const sc = def.shortcut;
+  const main = def.loops[0];
+  const spots: number[] = [];
+  for (const loop of def.loops) {
+    for (const index of loop) {
+      if (loop === main && sc && index >= sc.from && index < sc.to) continue;
+      spots.push(index);
+    }
+  }
+  return spots;
+}
+
+const fizzyBase: BoardBase = {
   id: "fizzy-fairground",
   name: "Fizzy Fairground",
   spaces: buildSpaces(),
@@ -220,4 +297,89 @@ export const fizzyFairground: BoardDef = {
   ],
   startIndex: 0,
   cam: { center: [0, 0], fit: 1.35 },
+  walk: "index",
+  // Grand Prize Balloon starts one hop after the Fizz Stamp Stand, so a
+  // jackpot collected on the way in can fund a purchase the same move.
+  prizeStart: 4,
+  theme: "carnival",
 };
+
+/** Fizzy Fairground — the carnival midway. Start = space 0 (Fizzy Fountain). */
+export const fizzyFairground: BoardDef = {
+  ...fizzyBase,
+  next: deriveNext(fizzyBase),
+  prizeSpots: derivePrizeSpots(fizzyBase),
+};
+
+// ---- Graph helpers ------------------------------------------------------------
+
+function wrapIndex(def: BoardDef, i: number): number {
+  const n = def.spaces.length;
+  return ((i % n) + n) % n;
+}
+
+/** The stay edge out of `space` (off-board indices go to the start, as before). */
+export function stayOf(def: BoardDef, space: number): number {
+  return def.next[space]?.[0] ?? def.startIndex;
+}
+
+/** The branch edge out of `space`, or undefined when it is not a fork. */
+export function branchOf(def: BoardDef, space: number): number | undefined {
+  return def.next[space]?.[1];
+}
+
+/** Label for the lane-choice popup at the fork on `space`. */
+export function forkLabel(def: BoardDef, space: number): string {
+  return (
+    def.junctions?.find((j) => j.from === space)?.label ??
+    def.branches?.find((b) => b.from === space)?.label ??
+    ""
+  );
+}
+
+/**
+ * The space `k` steps ahead of `from` (k < 0 steps back). On "index" boards
+ * this is wrap(from + k), exactly the carnival's old arithmetic. On "graph"
+ * boards it follows stay edges (a back step takes the first stay predecessor,
+ * or the fork itself from a branch's first tile).
+ */
+export function ahead(def: BoardDef, from: number, k: number): number {
+  if (def.walk === "index") return wrapIndex(def, from + k);
+  let cur = wrapIndex(def, from);
+  for (let i = 0; i < k; i++) cur = stayOf(def, cur);
+  for (let i = 0; i > k; i--) {
+    let prev = def.next.findIndex((e) => e[0] === cur);
+    if (prev < 0) prev = def.next.findIndex((e) => e.includes(cur));
+    if (prev >= 0) cur = prev;
+  }
+  return cur;
+}
+
+/**
+ * Forward distance from `from` to `to`. On "index" boards this is
+ * (to - from + n) % n, the carnival's old forwardDist. On "graph" boards it is
+ * the fewest hops over every edge (Infinity when unreachable).
+ */
+export function hopsBetween(def: BoardDef, from: number, to: number): number {
+  if (def.walk === "index") {
+    const n = def.spaces.length;
+    return (to - from + n) % n;
+  }
+  if (from === to) return 0;
+  const seen = new Set<number>([from]);
+  let frontier = [from];
+  for (let d = 1; frontier.length > 0; d++) {
+    const nextFrontier: number[] = [];
+    for (const s of frontier) {
+      for (const c of def.next[s] ?? []) {
+        if (c === to) return d;
+        if (!seen.has(c)) {
+          seen.add(c);
+          nextFrontier.push(c);
+        }
+      }
+    }
+    frontier = nextFrontier;
+  }
+  return Infinity;
+}

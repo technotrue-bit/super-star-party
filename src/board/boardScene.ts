@@ -13,9 +13,11 @@ import { settings, livelyEnabled } from "../config/settings";
 import { palette } from "../config/palette";
 import { ease } from "../core/rng";
 import type { SpaceType } from "../core/game";
-import { fizzyFairground, type BoardDef } from "./boardData";
+import type { BoardDef } from "./boardData";
+import { activeBoard } from "./registry";
 import { buildKit, type BoardTextures } from "./boardTextures";
 import { buildBoardLanes } from "./boardLanes";
+import { DOWNTOWN_WATER, downtownWorld } from "./boards/downtownData";
 import {
   buildTent,
   buildFerrisWheel,
@@ -81,7 +83,9 @@ export interface BoardScene {
   dispose(): void;
 }
 
-let currentDef: BoardDef = fizzyFairground;
+// The def the last buildBoardScene used; before any build, the active board.
+let builtDef: BoardDef | null = null;
+const currentDefOf = (): BoardDef => builtDef ?? activeBoard();
 
 /**
  * Ground-plane bounds of the current board (spaces + margin), for the
@@ -93,7 +97,7 @@ export function boardBounds(): { minX: number; maxX: number; minY: number; maxY:
   let maxX = -Infinity;
   let minY = Infinity;
   let maxY = -Infinity;
-  for (const s of currentDef.spaces) {
+  for (const s of currentDefOf().spaces) {
     minX = Math.min(minX, s.x);
     maxX = Math.max(maxX, s.x);
     minY = Math.min(minY, s.y);
@@ -130,8 +134,58 @@ function wrapIndex(i: number, n: number): number {
   return ((i % n) + n) % n;
 }
 
-export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
-  currentDef = def;
+// ---- Downtown placeholder (slice 1): asphalt, canal, basin, bridge ----------------
+const DOWNTOWN_ASPHALT = "#8A8E99";
+const DOWNTOWN_WATER_COLOR = "#3F8FD8";
+const DOWNTOWN_STONE = "#D9D2C3";
+
+/**
+ * Canal strip from the Harbor Basin north past Canal Row, the basin disc, and
+ * two stone parapets marking the Grand Bridge (spaces 18-19). The water sits
+ * just above the asphalt and under the lane decal, so the road crosses it.
+ */
+function buildDowntownWater(kit: BoardTextures): THREE.Mesh[] {
+  const W = DOWNTOWN_WATER;
+  const s = settings.tileSpacing;
+  const water = toonMat(kit, DOWNTOWN_WATER_COLOR);
+  water.polygonOffset = true;
+  water.polygonOffsetFactor = -1;
+  water.polygonOffsetUnits = -1;
+  const out: THREE.Mesh[] = [];
+
+  const canalLen = (W.canal.y1 - W.canal.y0) * s;
+  const canalGeo = new THREE.PlaneGeometry(W.canal.width * s, canalLen);
+  canalGeo.rotateX(-Math.PI / 2);
+  const canal = new THREE.Mesh(canalGeo, water);
+  const c0 = downtownWorld(W.canal.x, (W.canal.y0 + W.canal.y1) / 2);
+  canal.position.set(c0.x, 0.004, c0.y);
+  canal.name = "downtown:canal";
+  out.push(canal);
+
+  const basinGeo = new THREE.CircleGeometry(W.basin.r * s, 32);
+  basinGeo.rotateX(-Math.PI / 2);
+  const basin = new THREE.Mesh(basinGeo, water);
+  const b0 = downtownWorld(W.basin.x, W.basin.y);
+  basin.position.set(b0.x, 0.004, b0.y);
+  basin.name = "downtown:basin";
+  out.push(basin);
+
+  const stone = toonMat(kit, DOWNTOWN_STONE);
+  const parapetGeo = new THREE.BoxGeometry(W.bridge.len * s, 0.32, 0.2);
+  for (const side of [-1, 1]) {
+    const p = downtownWorld(W.bridge.x, W.bridge.y + (side * W.bridge.width) / 2);
+    const parapet = new THREE.Mesh(parapetGeo, stone);
+    parapet.position.set(p.x, 0.16, p.y);
+    parapet.castShadow = true;
+    parapet.receiveShadow = true;
+    parapet.name = "downtown:bridge";
+    out.push(parapet);
+  }
+  return out;
+}
+
+export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
+  builtDef = def;
   const n = def.spaces.length;
   const B = settings.board;
   const group = new THREE.Group();
@@ -143,15 +197,23 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
   let t = 0;
   let disposed = false;
 
-  // ---- ground: big checkerboard grass -------------------------------------------
-  const grassTex = kit.grass;
-  grassTex.repeat.set(
-    settings.board.groundSize / (settings.board.groundTile * 2),
-    settings.board.groundSize / (settings.board.groundTile * 2)
-  );
+  const carnival = def.theme === "carnival";
+
+  // ---- ground: big checkerboard grass (Downtown placeholder: plain asphalt) ------
+  let groundMat: THREE.Material;
+  if (carnival) {
+    const grassTex = kit.grass;
+    grassTex.repeat.set(
+      settings.board.groundSize / (settings.board.groundTile * 2),
+      settings.board.groundSize / (settings.board.groundTile * 2)
+    );
+    groundMat = toonMat(kit, palette.white, { map: grassTex });
+  } else {
+    groundMat = toonMat(kit, DOWNTOWN_ASPHALT);
+  }
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(settings.board.groundSize, settings.board.groundSize),
-    toonMat(kit, palette.white, { map: grassTex })
+    groundMat
   );
   ground.geometry.rotateX(-Math.PI / 2);
   ground.receiveShadow = true;
@@ -261,29 +323,38 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
   // spots were off-screen in portrait) and the HUD chip row covers the top
   // of the frame, so all three tents sit on the south grass in a shallow
   // A-row. Positions are tuning data in settings.board.tentSpots.
-  const tentSpots: [number, number, string, string, number][] = [
-    [settings.board.tentSpots[0].x, settings.board.tentSpots[0].z, palette.tentRed, palette.tentCream, 0],
-    [settings.board.tentSpots[1].x, settings.board.tentSpots[1].z, palette.sun, palette.tentCream, 2.1],
-    [settings.board.tentSpots[2].x, settings.board.tentSpots[2].z, palette.mint, palette.tentCream, 4.2],
-  ];
+  // Downtown (slice 1 placeholder): no carnival scenery at all, just the
+  // canal, the Harbor Basin and a slab marking the Grand Bridge.
+  const tentSpots: [number, number, string, string, number][] = carnival
+    ? [
+        [settings.board.tentSpots[0].x, settings.board.tentSpots[0].z, palette.tentRed, palette.tentCream, 0],
+        [settings.board.tentSpots[1].x, settings.board.tentSpots[1].z, palette.sun, palette.tentCream, 2.1],
+        [settings.board.tentSpots[2].x, settings.board.tentSpots[2].z, palette.mint, palette.tentCream, 4.2],
+      ]
+    : [];
+  if (!carnival) {
+    for (const m of buildDowntownWater(kit)) group.add(m);
+  }
   for (const [tx, tz, ca, cb, ph] of tentSpots) {
     props.push(buildTent(kit, tx, tz, ca, cb, ph));
   }
-  // ferris wheel at the bottom-right corner
-  props.push(buildFerrisWheel(kit, cx + halfW + 3.6, cy - halfH - 4.2));
-  // star fountain plaza in the middle
-  props.push(buildFountain(kit, 1.3));
-  // gumball machine beside each shop space
-  for (const sp of def.spaces) {
-    if (sp.type === "shop") {
-      const [gx, gz] = outward(sp.x, sp.y, 1.9);
-      props.push(buildGumballMachine(kit, gx, gz));
+  if (carnival) {
+    // ferris wheel at the bottom-right corner
+    props.push(buildFerrisWheel(kit, cx + halfW + 3.6, cy - halfH - 4.2));
+    // star fountain plaza in the middle
+    props.push(buildFountain(kit, 1.3));
+    // gumball machine beside each shop space
+    for (const sp of def.spaces) {
+      if (sp.type === "shop") {
+        const [gx, gz] = outward(sp.x, sp.y, 1.9);
+        props.push(buildGumballMachine(kit, gx, gz));
+      }
     }
   }
   // lamp posts near three spaced-out spots around the loop
   const lampTops = new Map<number, THREE.Vector3>();
   const lamps: { glow: THREE.Mesh; halo: THREE.Mesh }[] = [];
-  for (const i of [1, 15, 24]) {
+  for (const i of carnival ? [1, 15, 24] : []) {
     const sp = def.spaces[wrapIndex(i, n)];
     const [lx, lz] = outward(sp.x, sp.y, 2.1);
     const lamp = buildLampPost(kit, lx, lz);
@@ -333,12 +404,16 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
     // faint wedge of light back and forth across the loop.
     const sx = bounds.maxX - 4.8;
     const sz = bounds.maxY + 4.2;
-    const ambient: Prop[] = [
-      buildBunting(kit, strands, { x: cx, z: cy }),
-      buildCarousel(kit, bounds.minX - 2.4, bounds.maxY + 1.2),
-      buildSky(kit, bounds),
-      buildSearchlight(sx, sz, Math.atan2(-(cy - sz), cx - sx)),
-    ];
+    // Downtown: none of the carnival ambient props (landFx and the generic
+    // day/night stay; it has no lamps or bunting bulbs yet).
+    const ambient: Prop[] = carnival
+      ? [
+          buildBunting(kit, strands, { x: cx, z: cy }),
+          buildCarousel(kit, bounds.minX - 2.4, bounds.maxY + 1.2),
+          buildSky(kit, bounds),
+          buildSearchlight(sx, sz, Math.atan2(-(cy - sz), cx - sx)),
+        ]
+      : [];
     for (const p of ambient) {
       lively.add(p.root);
       props.push(p);
@@ -357,7 +432,7 @@ export function buildBoardScene(def: BoardDef = fizzyFairground): BoardScene {
     // Crowd bleachers in the two gaps of the south tent row, pulled toward
     // the loop so the tent canopies don't cover them, facing the board.
     // Own group, so slice 1's lively budget stays its own.
-    if (settings.lively.crowd) {
+    if (settings.lively.crowd && carnival) {
       const crowdRoot = new THREE.Group();
       crowdRoot.name = "lively-crowd";
       group.add(crowdRoot);

@@ -8,7 +8,8 @@
 import { injectStyles } from "./styles";
 import { root } from "./root";
 import { playerAvatar } from "./avatar";
-import { STAMP_KINDS, STAMP_LABEL, type StampKind } from "../core/game";
+import { STAMP_KINDS, type StampKind } from "../core/game";
+import { stampLabel } from "../board/boardText";
 
 /**
  * Single-banner-channel hook. When kit.ts wires this, every HUD banner is routed
@@ -115,7 +116,7 @@ function makeChip(p: HudPlayerState, idx: number): ChipRec {
   const stampPips = STAMP_KINDS.map((kind) => {
     const pip = document.createElement("span");
     pip.className = `ssp-hud-stamp ssp-hud-stamp--${kind}`;
-    pip.title = `${STAMP_LABEL[kind]} stamp`;
+    pip.title = `${stampLabel(kind)} stamp`;
     stamps.appendChild(pip);
     return pip;
   });

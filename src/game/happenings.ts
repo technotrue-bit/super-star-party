@@ -17,7 +17,9 @@ import { rng } from "../core/rng";
 import { bus } from "../core/events";
 import { match, type PlayerState } from "../core/game";
 import { audio } from "../audio/audioEngine";
-import { fizzyFairground } from "../board/boardData";
+import { ahead } from "../board/boardData";
+import { activeBoard } from "../board/registry";
+import { npcName, placeWord } from "../board/boardText";
 import { addCoins, movePrizeBalloon } from "./economy";
 
 /** What the turn loop needs to apply after a happening resolves. */
@@ -35,11 +37,10 @@ export interface HappeningOutcome {
 /*  Board helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-const BOARD_SIZE = fizzyFairground.spaces.length; // 28-space Fizzy Fairground
-
-/** Wrap a space index into [0, BOARD_SIZE). */
+/** Wrap a space index into [0, board size) for the active board. */
 function wrap(n: number): number {
-  return ((n % BOARD_SIZE) + BOARD_SIZE) % BOARD_SIZE;
+  const size = activeBoard().spaces.length;
+  return ((n % size) + size) % size;
 }
 
 function emitHappening(playerId: number, eventId: string, label: string): void {
@@ -133,9 +134,11 @@ function pickGreenEvent(): string {
  */
 export function resolveGreen(playerId: number, spaceIndex: number): HappeningOutcome {
   const player = match.players[playerId];
+  // The board's place word (display only; "carnival" on the carnival).
+  const place = placeWord();
   if (!player) {
     // Never happens (currentPlayer always exists); safe no-op fallback.
-    return { label: "?", message: "The carnival takes a breath.", coinsDelta: 0, banner: "..." };
+    return { label: "?", message: `The ${place} takes a breath.`, coinsDelta: 0, banner: "..." };
   }
   const eventId = pickGreenEvent();
   const s = wrap(spaceIndex);
@@ -148,9 +151,9 @@ export function resolveGreen(playerId: number, spaceIndex: number): HappeningOut
       emitHappening(playerId, eventId, "Gusty Gale!");
       return {
         label: "Gusty Gale!",
-        message: `A carnival gale sweeps you ${dist} spaces forward!`,
+        message: `A ${place} gale sweeps you ${dist} spaces forward!`,
         coinsDelta: 0,
-        moveTo: wrap(s + dist),
+        moveTo: ahead(activeBoard(), s, dist),
         banner: "GUSTY GALE!",
       };
     }
@@ -248,14 +251,14 @@ export function resolveGreen(playerId: number, spaceIndex: number): HappeningOut
         label: "Express Pass!",
         message: "An express ticket zips you 6 spaces ahead!",
         coinsDelta: 0,
-        moveTo: wrap(s + 6),
+        moveTo: ahead(activeBoard(), s, 6),
         banner: "EXPRESS PASS!",
       };
     }
     case "star_dance": {
       const target = match.starBalloonPos;
       addCoins(playerId, 3);
-      const spot = fizzyFairground.spaces[wrap(target)];
+      const spot = activeBoard().spaces[wrap(target)];
       if (target !== s && spot) {
         audio.sfx.play("happening.magic");
         audio.sfx.play("crowd.aah");
@@ -281,8 +284,8 @@ export function resolveGreen(playerId: number, spaceIndex: number): HappeningOut
     case "balloon_breeze": {
       const from = match.starBalloonPos;
       const to = movePrizeBalloon(playerId);
-      const fromName = fizzyFairground.spaces[wrap(from)]?.name ?? "the midway";
-      const toName = fizzyFairground.spaces[wrap(to)]?.name ?? "a new spot";
+      const fromName = activeBoard().spaces[wrap(from)]?.name ?? (place === "carnival" ? "the midway" : `the ${place}`);
+      const toName = activeBoard().spaces[wrap(to)]?.name ?? "a new spot";
       audio.sfx.play("happening.magic");
       audio.sfx.play("whoosh");
       emitHappening(playerId, eventId, "Balloon Breeze!");
@@ -298,7 +301,7 @@ export function resolveGreen(playerId: number, spaceIndex: number): HappeningOut
       emitHappening(playerId, eventId, "Whimsy!");
       return {
         label: "Whimsy!",
-        message: "Something strange happens. The carnival giggles.",
+        message: `Something strange happens. The ${place} giggles.`,
         coinsDelta: 0,
         banner: "WHIMSY!",
       };
@@ -335,8 +338,11 @@ function pickGrumpusEvent(): string {
  */
 export function resolveGrumpus(playerId: number, spaceIndex: number): HappeningOutcome {
   const player = match.players[playerId];
+  // The board's NPC name (display only; "Grumpus" on the carnival).
+  const G = npcName();
+  const GU = G.toUpperCase();
   if (!player) {
-    return { label: "?", message: "Grumpus squints at the empty space.", coinsDelta: 0, banner: "..." };
+    return { label: "?", message: `${G} squints at the empty space.`, coinsDelta: 0, banner: "..." };
   }
   const eventId = pickGrumpusEvent();
   const s = wrap(spaceIndex);
@@ -348,27 +354,27 @@ export function resolveGrumpus(playerId: number, spaceIndex: number): HappeningO
       let message: string;
       if (roll < 0.5) {
         delta = -10;
-        message = "The wheel lands on... 10 COINS GONE! Grumpus cackles.";
+        message = `The wheel lands on... 10 COINS GONE! ${G} cackles.`;
       } else if (roll < 0.75) {
         delta = -5;
         message = "The wheel lands on... 5 coins vanish into the fur.";
       } else if (roll < 0.9) {
         delta = 0;
-        message = "The wheel lands on... nothing? Grumpus shrugs. Lucky you.";
+        message = `The wheel lands on... nothing? ${G} shrugs. Lucky you.`;
       } else {
         delta = player.coins;
         message =
           delta > 0
             ? `DOUBLE! The wheel flips and your ${delta} coins DOUBLE!`
-            : "DOUBLE... of zero is zero. Grumpus is unimpressed.";
+            : `DOUBLE... of zero is zero. ${G} is unimpressed.`;
       }
       addCoins(playerId, delta);
       audio.sfx.play("grumpus.laugh");
       if (delta > 0) audio.sfx.play("crowd.aah");
       else if (delta < 0) audio.sfx.play("sad");
-      emitHappening(playerId, eventId, "Grumpus Wheel of Woe!");
+      emitHappening(playerId, eventId, `${G} Wheel of Woe!`);
       return {
-        label: "Grumpus Wheel of Woe!",
+        label: `${G} Wheel of Woe!`,
         message,
         coinsDelta: delta,
         banner: "WHEEL OF WOE!",
@@ -377,24 +383,24 @@ export function resolveGrumpus(playerId: number, spaceIndex: number): HappeningO
     case "grumpus_shove": {
       audio.sfx.play("grumpus.laugh");
       audio.sfx.play("sad");
-      emitHappening(playerId, eventId, "Grumpus Shove!");
+      emitHappening(playerId, eventId, `${G} Shove!`);
       return {
-        label: "Grumpus Shove!",
-        message: "Grumpus shoves you back 3 spaces. Rude!",
+        label: `${G} Shove!`,
+        message: `${G} shoves you back 3 spaces. Rude!`,
         coinsDelta: 0,
         moveBy: -3,
-        banner: "GRUMPUS SHOVE!",
+        banner: `${GU} SHOVE!`,
       };
     }
     case "grumpus_steal": {
       const target = richestOtherId(playerId);
       if (target === -1) {
-        emitHappening(playerId, eventId, "Grumpus Tax!");
+        emitHappening(playerId, eventId, `${G} Tax!`);
         return {
-          label: "Grumpus Tax!",
-          message: "Grumpus finds no pockets to pick. Suspicious.",
+          label: `${G} Tax!`,
+          message: `${G} finds no pockets to pick. Suspicious.`,
           coinsDelta: 0,
-          banner: "GRUMPUS TAX!",
+          banner: `${GU} TAX!`,
         };
       }
       const leader = match.players[target];
@@ -402,37 +408,37 @@ export function resolveGrumpus(playerId: number, spaceIndex: number): HappeningO
       addCoins(playerId, 5);
       audio.sfx.play("grumpus.laugh");
       audio.sfx.play("crowd.aah");
-      emitHappening(playerId, eventId, "Grumpus Tax!");
+      emitHappening(playerId, eventId, `${G} Tax!`);
       return {
-        label: "Grumpus Tax!",
-        message: `Grumpus takes 5 coins from ${leader.name} and drops them in your lap!`,
+        label: `${G} Tax!`,
+        message: `${G} takes 5 coins from ${leader.name} and drops them in your lap!`,
         coinsDelta: 5,
-        banner: "GRUMPUS TAX!",
+        banner: `${GU} TAX!`,
       };
     }
     case "grumpus_swap": {
       const target = richestOtherId(playerId);
       if (target === -1) {
-        emitHappening(playerId, eventId, "Grumpus Swap!");
+        emitHappening(playerId, eventId, `${G} Swap!`);
         return {
-          label: "Grumpus Swap!",
-          message: "Grumpus looks for someone to swap with. No one. He huffs.",
+          label: `${G} Swap!`,
+          message: `${G} looks for someone to swap with. No one. ${G === "Grumpus" ? "He huffs." : "Huff!"}`,
           coinsDelta: 0,
-          banner: "GRUMPUS SWAP!",
+          banner: `${GU} SWAP!`,
         };
       }
       const leader = match.players[target];
       const [myNew, otherNew] = swapSpaces(player, leader);
       audio.sfx.play("grumpus.laugh");
       audio.sfx.play("whoosh");
-      emitHappening(playerId, eventId, "Grumpus Swap!");
+      emitHappening(playerId, eventId, `${G} Swap!`);
       return {
-        label: "Grumpus Swap!",
-        message: `Grumpus hauls you onto ${leader.name}'s spot — and vice versa!`,
+        label: `${G} Swap!`,
+        message: `${G} hauls you onto ${leader.name}'s spot — and vice versa!`,
         coinsDelta: 0,
         moveTo: myNew,
         moveOtherTo: otherNew,
-        banner: "GRUMPUS SWAP!",
+        banner: `${GU} SWAP!`,
       };
     }
     case "grumpus_gift": {
@@ -444,18 +450,18 @@ export function resolveGrumpus(playerId: number, spaceIndex: number): HappeningO
       emitHappening(playerId, eventId, "...why?");
       return {
         label: "...why?",
-        message: "Grumpus... gives everyone else 5 coins? Why? WHY?",
+        message: `${G}... gives everyone else 5 coins? Why? WHY?`,
         coinsDelta: 0,
         banner: "...WHY?",
       };
     }
     default: {
-      emitHappening(playerId, eventId, "Grumpus Grumbles!");
+      emitHappening(playerId, eventId, `${G} Grumbles!`);
       return {
-        label: "Grumpus Grumbles!",
-        message: "Grumpus grumbles and rolls over. Nothing happens.",
+        label: `${G} Grumbles!`,
+        message: `${G} grumbles and rolls over. Nothing happens.`,
         coinsDelta: 0,
-        banner: "GRUMPUS GRUMBLES!",
+        banner: `${GU} GRUMBLES!`,
       };
     }
   }

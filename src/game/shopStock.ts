@@ -12,7 +12,7 @@
  */
 import { match, type MatchState } from "../core/game";
 import { rng } from "../core/rng";
-import { fizzyFairground } from "../board/boardData";
+import { activeBoard } from "../board/registry";
 import { ITEM_ORDER } from "./items";
 
 /** Items shown per shop. */
@@ -69,17 +69,22 @@ export interface ShopVisitLogEntry {
 export const restockLog: RestockLogEntry[] = [];
 export const shopVisitLog: ShopVisitLogEntry[] = [];
 
-let shopSpaces: number[] | null = null;
+/** Cached per board def id, so a match on another board rebuilds it. */
+let shopSpaces: { id: string; list: number[] } | null = null;
 
-/** Shop space indices, ascending. */
+/** Shop space indices of the active board, ascending. */
 export function shopSpaceList(): number[] {
-  if (!shopSpaces) {
-    shopSpaces = fizzyFairground.spaces
-      .filter((s) => s.type === "shop")
-      .map((s) => s.index)
-      .sort((a, b) => a - b);
+  const def = activeBoard();
+  if (!shopSpaces || shopSpaces.id !== def.id) {
+    shopSpaces = {
+      id: def.id,
+      list: def.spaces
+        .filter((s) => s.type === "shop")
+        .map((s) => s.index)
+        .sort((a, b) => a - b),
+    };
   }
-  return shopSpaces;
+  return shopSpaces.list;
 }
 
 /** 0 early, 1 mid, 2 late, from the round being stocked. */

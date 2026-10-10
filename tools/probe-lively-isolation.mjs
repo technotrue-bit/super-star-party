@@ -12,7 +12,9 @@ import { chromium } from "@playwright/test";
 
 const BASE = (process.env.SSP_URL ?? "http://127.0.0.1:5177").replace(/\/$/, "");
 const TURNS = Math.max(1, Number(process.env.SSP_TURNS ?? 3));
-const URL = `${BASE}/?seed=7&screen=board&autoplay=1&audio=0&speed=4`;
+// SSP_BOARD=downtown|carnival|random plays that board.
+const boardQuery = process.env.SSP_BOARD ? `&board=${process.env.SSP_BOARD}` : "";
+const URL = `${BASE}/?seed=7&screen=board&autoplay=1&audio=0&speed=4${boardQuery}`;
 // About a minute a turn on a GitHub runner at speed 4 (twin-seed: ~9 min for 9).
 const CAP_MS = Number(process.env.SSP_CAP_MS ?? TURNS * 110000 + 60000);
 

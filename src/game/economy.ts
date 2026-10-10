@@ -15,7 +15,7 @@ import { rng } from "../core/rng";
 import { bus } from "../core/events";
 import { audio } from "../audio/audioEngine";
 import { settings } from "../config/settings";
-import { fizzyFairground } from "../board/boardData";
+import { activeBoard } from "../board/registry";
 import { getMinigameCoinMultiplier } from "../minigames/packRules";
 
 export type BonusStarKind = "mini" | "coin" | "stamp";
@@ -120,22 +120,12 @@ export function tryBuyStars(playerId: number, requested: number): StarPurchase {
 }
 
 /**
- * Spaces the Grand Prize Balloon may float to. The Funhouse Cut skips
- * indices [shortcut.from, shortcut.to), so those tiles are never a spot —
- * a balloon there could not be reached.
+ * Spaces the Grand Prize Balloon may float to: the board's ordered
+ * prizeSpots minus where it is now. Order matters, rng.pick reads it.
+ * (On the carnival the Funhouse Cut tiles are never a spot.)
  */
 function prizeBalloonSpots(except: number): number[] {
-  const sc = fizzyFairground.shortcut;
-  const main = fizzyFairground.loops[0];
-  const spots: number[] = [];
-  for (const loop of fizzyFairground.loops) {
-    for (const index of loop) {
-      if (index === except) continue;
-      if (loop === main && sc && index >= sc.from && index < sc.to) continue;
-      spots.push(index);
-    }
-  }
-  return spots;
+  return activeBoard().prizeSpots.filter((index) => index !== except);
 }
 
 /**

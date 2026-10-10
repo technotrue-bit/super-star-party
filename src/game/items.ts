@@ -17,7 +17,8 @@ import { match, type PlayerState } from "../core/game";
 import { rng } from "../core/rng";
 import { audio } from "../audio/audioEngine";
 import { bus } from "../core/events";
-import { fizzyFairground } from "../board/boardData";
+import { hopsBetween } from "../board/boardData";
+import { activeBoard } from "../board/registry";
 import { addCoins } from "./economy";
 import { canPlaceTrap, placeTrap } from "./traps";
 import { shopStockAt, shopVisitLog } from "./shopStock";
@@ -324,25 +325,26 @@ export function itemNeedsTarget(key: string): boolean {
 /*  Board helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-const boardSize = (): number => fizzyFairground.spaces.length;
+const boardSize = (): number => activeBoard().spaces.length;
 
-/** Forward wrap distance from `from` to `to`. */
+/** Forward distance from `from` to `to` (wrap distance on the carnival). */
 function forwardDist(from: number, to: number): number {
-  return (to - from + boardSize()) % boardSize();
+  return hopsBetween(activeBoard(), from, to);
 }
 
 /** Indices of green happening spaces strictly ahead of `from` (wrap). */
 function greenSpacesAhead(from: number): number[] {
-  return fizzyFairground.spaces
+  return activeBoard().spaces
     .filter((s) => s.type === "green" && forwardDist(from, s.index) > 0)
     .map((s) => s.index);
 }
 
 /** Nearest green space by forward distance (fallback when none ahead). */
 function nearestGreen(from: number): number {
-  let best = fizzyFairground.spaces[0]?.index ?? 0;
+  const spaces = activeBoard().spaces;
+  let best = spaces[0]?.index ?? 0;
   let bestD = Infinity;
-  for (const s of fizzyFairground.spaces) {
+  for (const s of spaces) {
     if (s.type !== "green") continue;
     const d = forwardDist(from, s.index);
     if (d < bestD) {
@@ -493,8 +495,9 @@ export function decideShopPurchase(playerId: number, shopSpace?: number): ShopDe
 }
 
 function pickShopPurchase(playerId: number, player: PlayerState, stock: readonly string[]): ShopDecision | null {
-  const shopSpaces = fizzyFairground.spaces.filter((s) => s.type === "shop").map((s) => s.index);
-  const legal = fizzyFairground.spaces
+  const spaces = activeBoard().spaces;
+  const shopSpaces = spaces.filter((s) => s.type === "shop").map((s) => s.index);
+  const legal = spaces
     .filter((s) => canPlaceTrap(playerId, s.index, match.starBalloonPos, shopSpaces))
     .map((s) => s.index);
   const candidates: string[] = [];

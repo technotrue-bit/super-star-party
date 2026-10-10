@@ -9,6 +9,7 @@ import { resetMinigameTracking } from "../minigames/registry";
 import { assignPlayerPacks, blankPlayedByPack, readPersistedRules, syncPersistedRules } from "../minigames/packRules";
 import { bindLiveRules } from "../minigames/liveRules";
 import { restockShops } from "../game/shopStock";
+import { activeBoard, bindActiveBoard, DEFAULT_BOARD, isBoardId, resolveBoardRule, type BoardId } from "../board/registry";
 import type { CoinMultiplier, MinigamePackId } from "../minigames/packRules";
 
 export type SpaceType =
@@ -186,16 +187,22 @@ export interface MatchState {
   shopStock: Record<string, string[]>;
   /** match.turn the current stock was drawn for. */
   shopStockRound: number;
+  /**
+   * Board this match plays, resolved at match start ("random" never reaches
+   * here). activeBoard() reads it. Last key so the JSON order of every other
+   * field stays as it was before boards existed.
+   */
+  boardId: BoardId;
 }
 
-function makePlayer(id: number, kind: string, name: string, controller: SeatController): PlayerState {
+function makePlayer(id: number, kind: string, name: string, controller: SeatController, startSpace: number): PlayerState {
   return {
     id,
     kind,
     name,
     coins: 10, // everyone starts with 10 coins, MP-style
     stars: 0,
-    space: 0,
+    space: startSpace,
     minigameWins: 0,
     items: [],
     itemFx: blankItemFx(),
@@ -240,9 +247,11 @@ export const match: MatchState = {
   playedByPack: blankPlayedByPack(),
   shopStock: {},
   shopStockRound: 0,
+  boardId: DEFAULT_BOARD,
 };
 
 bindLiveRules(match);
+bindActiveBoard(() => match.boardId);
 
 /**
  * Start a fresh match. Kinds = character keys, e.g. ["pip","bounce",...].
@@ -255,23 +264,30 @@ export function startMatch(
   totalTurns = 10,
   seed?: number,
   controllers?: SeatController[],
+  opts: { board?: BoardId } = {},
 ): void {
   // A provided seed is preserved (critic replays, debug API); otherwise a
   // fresh random seed starts a new match.
   const used = seed === undefined ? rng.reset(Math.floor(Math.random() * 2 ** 31)) : rng.reset(seed);
   match.seed = used;
+  // Board first: everything below reads activeBoard(), which is match.boardId.
+  // A friends room passes the host's board; solo reads the saved rule
+  // (?board= wins). "random" resolves here, from the seed when one was
+  // given, never from the match rng.
+  match.boardId = isBoardId(opts.board) ? opts.board : resolveBoardRule(readPersistedRules().board, seed);
   match.turn = 1;
   match.totalTurns = totalTurns;
   match.phase = "idle";
   match.currentPlayer = 0;
   match.lastDice = [];
   match.events = [];
+  const def = activeBoard();
   match.players = kinds.map((k, i) =>
-    makePlayer(i, k, names[i] ?? `P${i + 1}`, controllers?.[i] ?? defaultSeatController(i)),
+    makePlayer(i, k, names[i] ?? `P${i + 1}`, controllers?.[i] ?? defaultSeatController(i), def.startIndex),
   );
-  // Grand Prize Balloon starts one hop after the Fizz Stamp Stand, so a
-  // jackpot collected on the way in can fund a purchase the same move.
-  match.starBalloonPos = 4;
+  // The board picks the balloon's start (carnival: 4, one hop after the
+  // Fizz Stamp Stand, so a jackpot on the way in can fund a purchase).
+  match.starBalloonPos = def.prizeStart;
   match.minigameTriggeredThisRound = false;
   match.turnOrder = [0, 1, 2, 3];
   match.orderRolls = [];

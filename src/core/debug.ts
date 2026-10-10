@@ -72,6 +72,7 @@ export function setSelectBoundsReader(fn: (() => SelectBounds | null) | null): v
 import { rapierStatus, runContactScenario as runRapierContactScenario } from "../physics/contact";
 import { setOnlineMatch, setPartyAssist } from "../net/mode";
 import { dropOut, partyView } from "../net/session";
+import { activeBoard, activeBoardEntry, activeBoardId } from "../board/registry";
 import { livelyDebug, livelyReact } from "../board/lively/landFx";
 import { livelyShotsDebug } from "../board/lively/shots";
 import { crowdDebug } from "../board/lively/crowd";
@@ -219,6 +220,16 @@ export interface SSPDebug {
   openMinigame(id: string): void;
   /** Friends-room status. Offline until a room starts. */
   party(): ReturnType<typeof partyView>;
+  /** The board the current match plays (match.boardId), for graph probes. */
+  board(): {
+    id: string;
+    rev: number;
+    size: number;
+    startIndex: number;
+    prizeSpots: number[];
+    next: number[][];
+    spaces: Array<{ index: number; type: string; name: string }>;
+  };
   /** Playtest: local humans publish the CPU choice over the relay. */
   partyAssist(on: boolean): void;
   /** Leave the room. A guest's seat becomes a CPU. The host ends the room. */
@@ -658,6 +669,18 @@ export function installDebugAPI(): void {
     },
     party() {
       return partyView();
+    },
+    board() {
+      const def = activeBoard();
+      return {
+        id: activeBoardId(),
+        rev: activeBoardEntry().rev,
+        size: def.spaces.length,
+        startIndex: def.startIndex,
+        prizeSpots: [...def.prizeSpots],
+        next: def.next.map((row) => [...row]),
+        spaces: def.spaces.map((sp) => ({ index: sp.index, type: sp.type, name: sp.name })),
+      };
     },
     partyAssist(on: boolean) {
       setPartyAssist(on);

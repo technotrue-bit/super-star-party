@@ -18,7 +18,7 @@
  * human's roll via the autoplay hook.
  */
 import * as THREE from "three";
-import { match, playerController, ranking, STAMP_LABEL, type TrapKind } from "../core/game";
+import { match, playerController, ranking, type TrapKind } from "../core/game";
 import { decisions, isPending } from "./decisions";
 import { rng, ease } from "../core/rng";
 import { settings } from "../config/settings";
@@ -29,7 +29,9 @@ import { ui } from "../ui/kit";
 import { setAutoplayHook, isAutoplay } from "../core/debug";
 import { characterDice, characterColor } from "../characters/roster";
 import type { BoardScene } from "../board/boardScene";
-import { fizzyFairground } from "../board/boardData";
+import { stayOf, branchOf, forkLabel, ahead } from "../board/boardData";
+import { activeBoard } from "../board/registry";
+import { stampLabel, jackpotWord } from "../board/boardText";
 import type { Character } from "../characters/characterFactory";
 import type { HudHandle } from "../ui/hud";
 import type { ButtonHandle } from "../ui/button";
@@ -77,22 +79,14 @@ import {
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-/** Board constants (Fizzy Fairground). */
-const N = fizzyFairground.spaces.length;
-const SC = fizzyFairground.shortcut;
-const JUNCTIONS = fizzyFairground.junctions ?? [];
-
-function loopOf(space: number): number[] {
-  return fizzyFairground.loops.find((loop) => loop.includes(space)) ?? fizzyFairground.loops[0];
+/** Next space on the same lane (the stay edge, Funhouse Cut applied). */
+function stepOn(space: number): number {
+  return stayOf(activeBoard(), space);
 }
 
-/** Next space on the same lane, with the Funhouse Cut still applied. */
-function stepOn(space: number): number {
-  const loop = loopOf(space);
-  const i = loop.indexOf(space);
-  const next = loop[(i + 1) % loop.length];
-  if (SC && next === SC.from) return SC.to;
-  return next;
+/** The branch edge when `space` is a fork, else undefined. */
+function forkAt(space: number): number | undefined {
+  return branchOf(activeBoard(), space);
 }
 
 /** Per-player stand offsets on a shared space (MP7-style 2x2 grid). */
@@ -103,7 +97,10 @@ export const PLAYER_OFFSETS: ReadonlyArray<[number, number]> = [
   [0.6, 0.6],
 ];
 
-const wrap = (i: number): number => ((i % N) + N) % N;
+const wrap = (i: number): number => {
+  const n = activeBoard().spaces.length;
+  return ((i % n) + n) % n;
+};
 
 function bonusStarLabel(star: BonusStarKind): string {
   if (star === "mini") return "MINI STAR";
@@ -129,8 +126,8 @@ function hopsToStar(from: number): number {
     const next: number[] = [];
     for (const s of frontier) {
       const cands = [stepOn(s)];
-      const j = JUNCTIONS.find((jj) => jj.from === s);
-      if (j) cands.push(j.to);
+      const j = forkAt(s);
+      if (j !== undefined) cands.push(j);
       for (const c of cands) {
         if (c === star) return d;
         if (!seen.has(c)) {
@@ -793,8 +790,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       for (const t of queued) S.moveQueue.push(wrap(t));
     } else {
       // Standing ON a junction: the first hop is a lane choice, not automatic.
-      const standing = JUNCTIONS.find((j) => j.from === player.space);
-      if (standing && total > 0) {
+      const standing = forkAt(player.space);
+      if (standing !== undefined && total > 0) {
         offerJunction(pid, total, after);
         return;
       }
@@ -803,7 +800,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         const nxt = stepOn(cur);
         S.moveQueue.push(nxt);
         cur = nxt;
-        if (JUNCTIONS.some((j) => j.from === nxt) && i < total - 1) break;
+        if (forkAt(nxt) !== undefined && i < total - 1) break;
       }
     }
     if (S.moveQueue.length === 0) {
@@ -832,7 +829,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     ch.setFacing(Math.atan2(b.x - a.x, b.z - a.z));
     audio.sfx.play("hop", { volume: 0.7 });
     bus.emit("player:move", { player: pid, from: S.hopFrom, to: S.hopTo });
-    if (SC && S.hopTo === SC.to && wrap(S.hopFrom + 1) === SC.from) {
+    const sc = activeBoard().shortcut;
+    if (sc && S.hopTo === sc.to && wrap(S.hopFrom + 1) === sc.from) {
       audio.sfx.play("whoosh");
       ui.toast("Funhouse Cut!", { durationMs: 1500 });
     }
@@ -840,8 +838,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   const offerJunction = (pid: number, hopsLeft = 0, after: "effect" | "done" = "effect"): void => {
     const here = match.players[pid]?.space ?? 0;
-    const branch = JUNCTIONS.find((j) => j.from === here);
-    if (!branch || hopsLeft <= 0) {
+    const branchTo = forkAt(here);
+    if (branchTo === undefined || hopsLeft <= 0) {
       finishTurn();
       return;
     }
@@ -861,15 +859,15 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     const gate = netGate(pid);
     if (gate === "assist") {
       publishChoice({ kind: "path", playerId: pid, auto: true });
-      pick(hopsToStar(branch.to) < hopsToStar(stay) ? branch.to : stay);
+      pick(hopsToStar(branchTo) < hopsToStar(stay) ? branchTo : stay);
       return;
     }
     if (gate === "remote") {
-      S.netPath = { pid, stay, branch: branch.to, pick, hops: hopsToStar };
+      S.netPath = { pid, stay, branch: branchTo, pick, hops: hopsToStar };
       pumpNet();
       return;
     }
-    const lane = decisions.path(pid, stay, branch.to, hopsToStar);
+    const lane = decisions.path(pid, stay, branchTo, hopsToStar);
     if (!isPending(lane)) {
       pick(lane.to);
       return;
@@ -878,7 +876,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     content.style.cssText = "display:flex;flex-direction:column;gap:10px;";
     const pop = ui.popup({
       title: "WHICH LANE?",
-      body: branch.label,
+      body: forkLabel(activeBoard(), here),
       content,
       closeOnEsc: false,
       sound: null,
@@ -897,8 +895,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
           kind: "gold",
           onClick: () => {
             pop.destroy();
-            publishLocal(pid, { kind: "path", playerId: pid, to: branch.to });
-            pick(branch.to);
+            publishLocal(pid, { kind: "path", playerId: pid, to: branchTo });
+            pick(branchTo);
           },
         },
       ],
@@ -913,13 +911,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
    * Returns true when this space was a stamp or a minigame balloon.
    */
   const arriveCarnival = (pid: number, space: number, landed: boolean): boolean => {
-    const sp = fizzyFairground.spaces[wrap(space)];
+    const sp = activeBoard().spaces[wrap(space)];
     if (!sp) return false;
     if (sp.type === "stamp" && sp.stamp) {
-      const label = STAMP_LABEL[sp.stamp];
+      const label = stampLabel(sp.stamp);
       const res = grantStamp(pid, sp.stamp);
       if (res.jackpot) {
-        hud.showBanner(`CARNIVAL JACKPOT! +${settings.stampJackpot}`, { durationMs: 1600 });
+        hud.showBanner(`${jackpotWord()} JACKPOT! +${settings.stampJackpot}`, { durationMs: 1600 });
         if (landed) chars[pid]?.anim.cheer();
       } else if (res.added) {
         hud.showBanner(`${label.toUpperCase()} STAMP!`, { durationMs: 1200 });
@@ -1870,7 +1868,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         const dest = outcome.moveTo !== undefined
           ? outcome.moveTo
           : outcome.moveBy !== undefined
-            ? wrap(player.space + outcome.moveBy)
+            ? ahead(activeBoard(), player.space, outcome.moveBy)
             : myOld;
         const destPos = board.spaceWorldPos(dest);
         const sc = ceremony.projectToScreen(destPos);
@@ -1919,7 +1917,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     if (outcome.moveTo !== undefined) {
       startMoving([outcome.moveTo], "done");
     } else if (outcome.moveBy !== undefined) {
-      startMoving([wrap(player.space + outcome.moveBy)], "done");
+      startMoving([ahead(activeBoard(), player.space, outcome.moveBy)], "done");
     } else if (kind === "green") {
       // Green happening with no movement: brief reaction beat, then resolve.
       pause(0.45, () => {
@@ -2201,9 +2199,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
             // Pass fires stamps, minigame balloons, the Grand Prize Balloon, and shops.
             // Red, blue, green, and grumpus stay land-only.
             const resumeMove = (): void => {
-              const branch = JUNCTIONS.find((j) => j.from === S.hopTo);
+              const branch = forkAt(S.hopTo);
               const hopsLeft = S.moveQueue.length - S.moveIdx;
-              if (branch && hopsLeft > 0) offerJunction(pid, hopsLeft);
+              if (branch !== undefined && hopsLeft > 0) offerJunction(pid, hopsLeft);
               else startHop(pid);
             };
             arriveCarnival(pid, S.hopTo, false);
