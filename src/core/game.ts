@@ -188,6 +188,11 @@ export interface MatchState {
   /** match.turn the current stock was drawn for. */
   shopStockRound: number;
   /**
+   * The current player already used their one pre-roll item this turn.
+   * Reset in the turn loop's nextTurn, so it is false at every checkpoint.
+   */
+  itemUsedThisTurn: boolean;
+  /**
    * Board this match plays, resolved at match start ("random" never reaches
    * here). activeBoard() reads it. Last key so the JSON order of every other
    * field stays as it was before boards existed.
@@ -247,6 +252,7 @@ export const match: MatchState = {
   playedByPack: blankPlayedByPack(),
   shopStock: {},
   shopStockRound: 0,
+  itemUsedThisTurn: false,
   boardId: DEFAULT_BOARD,
 };
 
@@ -298,6 +304,7 @@ export function startMatch(
   match.minigameDice = null;
   match.shopStock = {};
   match.shopStockRound = 0;
+  match.itemUsedThisTurn = false;
 
   // Pull the host's saved rotation onto this match, then deal packs.
   // Local seats keep the human pack; CPU and remote seats draw.

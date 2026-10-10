@@ -578,7 +578,7 @@ export interface UseItemResult {
   extraDice?: boolean;
   /** warp whistle / genie / star cannon: board space index to teleport to. */
   moveTo?: number;
-  /** Resolve the destination space (buy a star) instead of ending the turn. */
+  /** Teleport onto the Grand Prize: offer it on arrival, then the player still rolls. */
   landEffect?: boolean;
   /** Grand Prize Balloon was dragged onto the user. Offer a purchase, then roll. */
   chomp?: boolean;
