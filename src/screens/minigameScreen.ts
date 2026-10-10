@@ -34,6 +34,8 @@ import { world } from "../main";
 import { palette, hex } from "../config/palette";
 import { settings } from "../config/settings";
 import { match, startMatch } from "../core/game";
+import { playerLabel, seatLabels, youGrammar } from "../ui/labels";
+import { mountSeatTags, type SeatTagSeat, type SeatTags } from "../minigames/seatTags";
 import { mulberry32, rng } from "../core/rng";
 import { bus } from "../core/events";
 import { audio } from "../audio/audioEngine";
@@ -108,12 +110,19 @@ function injectMinigameStyles(): void {
   display: none;
 }
 .ssp-mg-goal--on { display: block; }
+.ssp-seat-tags { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 74; pointer-events: none; }
 .ssp-seat {
-  position: fixed; z-index: 74; pointer-events: none;
-  display: none; color: ${palette.sun};
+  position: fixed; left: 0; top: 0; width: max-content; pointer-events: none;
+  display: none; color: ${palette.sun}; will-change: transform;
 }
-.ssp-seat--on { display: flex; flex-direction: column; align-items: center; min-width: 28px; min-height: 18px; }
-.ssp-seat__you {
+.ssp-seat--on { display: block; }
+.ssp-seat--hide { visibility: hidden; }
+.ssp-seat__stack {
+  position: relative; transform: translate(-50%, -100%);
+  display: flex; flex-direction: column; align-items: center;
+}
+.ssp-seat--edge .ssp-seat__stack { transform: translate(-50%, -50%); }
+.ssp-seat__pill {
   background: ${palette.ink};
   color: ${palette.cream};
   border: 3px solid var(--ssp-seat, ${palette.sun});
@@ -124,13 +133,19 @@ function injectMinigameStyles(): void {
   box-shadow: 0 2px 0 ${palette.ink};
   white-space: nowrap;
 }
+.ssp-seat--peer .ssp-seat__pill { background: var(--ssp-seat, ${palette.sun}); color: ${palette.ink}; border-color: ${palette.ink}; }
+.ssp-seat__down { width: 0; height: 0;
+  border-left: 8px solid transparent; border-right: 8px solid transparent;
+  border-top: 12px solid currentColor;
+  filter: drop-shadow(0 2px 0 ${palette.ink});
+}
+.ssp-seat--edge .ssp-seat__down { display: none; }
 .ssp-seat__arrow { display: none; width: 0; height: 0;
   border-left: 10px solid transparent; border-right: 10px solid transparent;
   border-bottom: 16px solid currentColor;
   filter: drop-shadow(0 2px 0 ${palette.ink});
 }
 .ssp-seat--edge .ssp-seat__arrow { display: block; }
-.ssp-seat:not(.ssp-seat--you) .ssp-seat__you { display: none; }
 `;
   document.head.appendChild(style);
 }
@@ -272,10 +287,10 @@ function buildVsSplash(self: MgScreenState, mgName: string, themeColor: string):
     el.style.background = `radial-gradient(circle at 32% 28%, rgba(255,255,255,.55) 0%, rgba(255,255,255,0) 50%), linear-gradient(180deg, ${bg} 0%, ${bg} 100%)`;
     el.style.left = `${positions[i].x}vw`;
     el.style.top = `${positions[i].y}vh`;
-    el.textContent = (p.name || "?")[0]?.toUpperCase() ?? "?";
+    el.textContent = (match.players[p.id]?.name || p.name || "?")[0]?.toUpperCase() ?? "?";
     const badge = document.createElement("div");
     badge.className = "ssp-vs-badge";
-    badge.textContent = p.name || "?";
+    badge.textContent = playerLabel(p.id) || p.name || "?";
     el.appendChild(badge);
     root.appendChild(el);
     pipEls.push(el);
@@ -368,7 +383,7 @@ let _hudTweenEl: HTMLElement | null = null;
 let _hudOrigDesc: PropertyDescriptor | null = null;
 let _hudTweenActive = false;
 
-function tweenHudCoins(name: string, from: number, to: number): void {
+function tweenHudCoins(name: string /* chip data-hud-player id */, from: number, to: number): void {
   if (from === to) return;
   _hudCoinName = name;
   _hudCoinFrom = from;
@@ -388,8 +403,7 @@ function tweenHudCoinsStep(): void {
   const chips = document.querySelectorAll(".ssp-hud-chip");
   for (let i = 0; i < chips.length; i++) {
     const chip = chips[i] as HTMLElement;
-    const nameEl = chip.querySelector(".ssp-hud-chip__name") as HTMLElement | null;
-    if (nameEl && nameEl.textContent === _hudCoinName) {
+    if (chip.dataset.hudPlayer === _hudCoinName) {
       const coinEl = chip.querySelector('[aria-label="coins"]') as HTMLElement | null;
       if (coinEl) {
         _hudCoinName = null;
@@ -526,9 +540,8 @@ interface MgScreenState {
   _onKeyDown?: (e: KeyboardEvent) => void;
   _touch?: TouchPad;
   _goalEl?: HTMLDivElement;
-  _seatEl?: HTMLDivElement;
+  _seatTags?: SeatTags;
   _seatMark?: THREE.Group;
-  _markScratch?: THREE.Vector3;
   _pose?: { ch: Character; x: number; y: number; z: number }[];
   _stickX?: number;
   _stickY?: number;
@@ -624,9 +637,7 @@ function applyTeach(self: MgScreenState): void {
 function ensureMarker(self: MgScreenState): void {
   const seat = localSeat(self);
   const ch = seat.char;
-  if (!ch || self._seatMark) return;
-  const players = self._ctx?.players ?? [];
-  const seatId = players[seat.index]?.id ?? seat.index;
+  if (!ch || self._seatTags) return;
   const color = hex(seat.color);
   const group = new THREE.Group();
   group.name = "ssp-seat-mark";
@@ -636,30 +647,27 @@ function ensureMarker(self: MgScreenState): void {
   );
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.06;
-  const arrow = new THREE.Mesh(
-    new THREE.ConeGeometry(0.2, 0.38, 4),
-    new THREE.MeshBasicMaterial({ color }),
-  );
-  arrow.position.y = 2.05;
-  arrow.rotation.x = Math.PI;
-  group.add(ring, arrow);
+  group.add(ring);
   ch.group.add(group);
   self._seatMark = group;
 
-  const el = document.createElement("div");
-  el.className = "ssp-seat ssp-seat--on";
-  el.dataset.seatMarker = String(seatId);
-  el.style.color = seat.color;
-  el.style.setProperty("--ssp-seat", seat.color);
-  const you = document.createElement("div");
-  you.className = "ssp-seat__you";
-  you.textContent = "YOU";
-  const edge = document.createElement("div");
-  edge.className = "ssp-seat__arrow";
-  el.append(you, edge);
-  document.body.appendChild(el);
-  self._seatEl = el;
-  self._markScratch = new THREE.Vector3();
+  // Seats come from match.players: ctx.players are forced to cpu under cpuPlayout.
+  const labels = seatLabels(match.players, onlineMatch());
+  const anyLocal = match.players.some((p) => p.controller === "local");
+  const seats: SeatTagSeat[] = [];
+  match.players.forEach((p, index) => {
+    const lab = labels[index];
+    if (!lab?.human) return;
+    const you = anyLocal ? lab.you : index === seat.index;
+    seats.push({
+      id: p.id,
+      index,
+      color: characterColor(p.kind),
+      text: you ? "YOU" : lab.short.toUpperCase(),
+      you,
+    });
+  });
+  self._seatTags = mountSeatTags({ chars: self._chars ?? [], camera: world.camera, seats });
 }
 
 function snapshotPose(self: MgScreenState): void {
@@ -676,56 +684,6 @@ function restorePose(self: MgScreenState): void {
     pose.ch.group.position.set(pose.x, pose.y, pose.z);
   }
   self._pose = undefined;
-}
-
-function edgePoint(w: number, h: number, dx: number, dy: number): { x: number; y: number } {
-  const inset = 36;
-  const hw = Math.max(1, w / 2 - inset);
-  const hh = Math.max(1, h / 2 - inset);
-  if (Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4) return { x: w / 2, y: inset };
-  const s = Math.min(hw / Math.abs(dx), hh / Math.abs(dy));
-  return { x: w / 2 + dx * s, y: h / 2 + dy * s };
-}
-
-function tickMarker(self: MgScreenState): void {
-  const el = self._seatEl;
-  const cam = world.camera;
-  const ch = localSeat(self).char;
-  const scratch = self._markScratch;
-  if (!el || !cam || !ch || !scratch) return;
-  el.classList.add("ssp-seat--on");
-  ch.group.getWorldPosition(scratch);
-  scratch.y += 1.65;
-  cam.updateMatrixWorld();
-  scratch.project(cam);
-  const w = window.innerWidth || 1;
-  const h = window.innerHeight || 1;
-  const sx = (scratch.x * 0.5 + 0.5) * w;
-  const sy = (-scratch.y * 0.5 + 0.5) * h;
-  const behind = scratch.z > 1;
-  const margin = 28;
-  const arrow = el.querySelector<HTMLElement>(".ssp-seat__arrow");
-  const on = !behind && sx >= margin && sx <= w - margin && sy >= margin && sy <= h - margin;
-  if (on) {
-    el.classList.remove("ssp-seat--edge");
-    el.style.left = `${sx}px`;
-    el.style.top = `${sy}px`;
-    el.style.transform = "translate(-50%, -130%)";
-    if (arrow) arrow.style.transform = "";
-    return;
-  }
-  let dx = sx - w / 2;
-  let dy = sy - h / 2;
-  if (behind) {
-    dx = -dx;
-    dy = -dy;
-  }
-  const pt = edgePoint(w, h, dx, dy);
-  el.classList.add("ssp-seat--edge");
-  el.style.left = `${pt.x}px`;
-  el.style.top = `${pt.y}px`;
-  el.style.transform = "translate(-50%, -50%)";
-  if (arrow) arrow.style.transform = `rotate(${Math.atan2(dy, dx) + Math.PI / 2}rad)`;
 }
 
 function tickPracticeMove(self: MgScreenState, dt: number): void {
@@ -858,7 +816,6 @@ function beginPractice(self: MgScreenState): void {
   snapshotPose(self);
   ensureMarker(self);
   applyTeach(self);
-  self._seatEl?.classList.add("ssp-seat--you");
   self._touch?.show();
 }
 
@@ -869,7 +826,6 @@ function beginGo(self: MgScreenState): void {
   self._goT = 0;
   self._practiceKey = null;
   document.body.dataset.mgPhase = "go";
-  self._seatEl?.classList.remove("ssp-seat--you");
   showGo(self);
 }
 
@@ -878,7 +834,8 @@ function tickTeach(self: MgScreenState, dt: number): void {
   if (self._phase !== "play" || !tapClockIsSim()) tickTapCooldown(dt);
   self._touch?.setCooldown(tapCooldownRatio());
   tickBursts(self, dt);
-  tickMarker(self);
+  // In play the tags tick right after minigame.update instead.
+  if (self._phase !== "play") self._seatTags?.tick();
 }
 
 // When the pre-screen was already shown (and clicked) while the board was still
@@ -1191,7 +1148,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           players: match.players.map(p => ({
             id: p.id,
             kind: p.kind,
-            name: p.name,
+            name: playerLabel(p.id),
             color: characterColor(p.kind),
             controller: cpuPlayout() ? "cpu" : p.controller,
           })),
@@ -1202,7 +1159,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           get time() { return (self as any)._playT ?? 0; },
           announce: (text, opts) => {
             ui.clearFeedback();
-            ui.banner(text, { durationMs: opts?.durationMs ?? 1800, sound: opts?.sound === undefined ? null : opts.sound });
+            ui.banner(youGrammar(text), { durationMs: opts?.durationMs ?? 1800, sound: opts?.sound === undefined ? null : opts.sound });
           },
           playSfx: (name, opts) => audio.sfx.play(name, opts),
           finish: (ranking, coinWinners) => {
@@ -1329,6 +1286,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
         if ((this._playT ?? 0) > GOAL_HOLD) this._goalEl?.classList.remove("ssp-mg-goal--on");
         if (!this._finished) {
           this._minigame?.update(dt);
+          this._seatTags?.tick();
           // Safety net: a minigame that never calls finish must not hang
           // the match. Deterministic fallback ranking (player id order).
           if (!this._finished && (this._playT ?? 0) > settings.minigameTimeLimit) {
@@ -1397,7 +1355,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
     const lead = awards.find((a) => a.playerId === winner) ?? awards[0];
     if (lead && lead.coins !== 0) {
       const leadPlayer = match.players[lead.playerId];
-      if (leadPlayer) tweenHudCoins(leadPlayer.name, playerCoins(lead.playerId) - lead.coins, playerCoins(lead.playerId));
+      if (leadPlayer) tweenHudCoins(String(leadPlayer.id),playerCoins(lead.playerId) - lead.coins, playerCoins(lead.playerId));
     }
 
     // Crowd cheer via the existing bus hook (minigame:end wired in crowd.ts).
@@ -1531,8 +1489,8 @@ const minigameScreenImpl: MgScreenState & Screen = {
     this._flashEl = undefined;
     this._goalEl?.remove();
     this._goalEl = undefined;
-    this._seatEl?.remove();
-    this._seatEl = undefined;
+    this._seatTags?.destroy();
+    this._seatTags = undefined;
     this._seatMark = undefined;
     this._bursts = undefined;
     this._pose = undefined;

@@ -223,6 +223,15 @@ body {
   box-shadow: 0 2px 0 rgba(43,29,78,.5), inset 0 -2px 0 rgba(43,29,78,.18), inset 0 2px 0 rgba(255,255,255,.35);
 }
 .ssp-hud-chip__avatar::after { display: none; }
+.ssp-hud-chip { position: relative; }
+.ssp-hud-chip__you {
+  position: absolute; left: 6px; bottom: 2px; z-index: 1;
+  font-size: 8px; font-weight: 700; line-height: 1; letter-spacing: .5px;
+  padding: 1px 3px; border-radius: 6px;
+  background: ${palette.sun}; color: ${palette.ink}; border: 1.5px solid ${palette.ink};
+  pointer-events: none;
+}
+.ssp-hud-chip__you[hidden] { display: none; }
 .ssp-hud-chip__info { display: flex; flex-direction: column; min-width: 0; }
 .ssp-hud-chip__name {
   font-size: 13px; font-weight: 700; color: ${palette.ink};

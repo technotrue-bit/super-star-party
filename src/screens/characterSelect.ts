@@ -1,11 +1,16 @@
 /**
  * SUPER STAR PARTY — character select screen ('select').
  *
- * MP7-style: 4 characters on pedestals in 3D, each with a name plate +
- * tagline card. The selected character steps forward under a bright
- * spotlight; the others sit idle with a "CPU" badge. Tap a card or a
- * character, use arrows/keys to cycle, START! confirms (chosen character
- * becomes the local seat, the rest CPU seats), BACK returns to the title.
+ * MP-style: the selected hero stands centre-stage on a podium under one
+ * spotlight, idling, with ◀ ▶ at the slot edges (or swipe) and a name +
+ * tagline plate under it. The other three sit in a small row of DOM cards
+ * with a CPU badge (tap one to pick it). One "Match settings" card and one
+ * big START! row finish the column. START! makes the chosen hero the local
+ * seat and the rest CPU seats; BACK returns to the title.
+ *
+ * The camera is fitted to the DOM hero slot every resize/selection: the
+ * hero's projected box sits inside the slot with an 8% margin, so no phone
+ * shape can clip the model or hide it behind the cards.
  */
 import * as THREE from "three";
 import { world } from "../main";
@@ -20,9 +25,19 @@ import { createCharacter, type Character } from "../characters/characterFactory"
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
 import { onViewportChange, viewportSize } from "../ui/viewport";
-import { mountPackPicker } from "../ui/packPicker";
+import { mountMatchSettings } from "../ui/packPicker";
+import { setSelectBoundsReader, type SelectBounds, type SelectRect } from "../core/debug";
 
 const SLOT_COUNT = roster.length;
+const PARTY_FOV = 45;
+/** Lens for the hero shot: long enough that the model isn't fish-eyed. */
+const HERO_FOV = 30;
+/** Fraction of the slot kept clear around the hero box. */
+const FIT_MARGIN = 0.08;
+/** Camera looks down on the hero by this much (radians). */
+const CAM_ELEV = 0.22;
+const PODIUM_H = 0.26;
+const SWIPE_PX = 40;
 
 // ------------------------------------------------------------------
 //  Scoped styles (injected once; every color from the palette)
@@ -37,109 +52,110 @@ function injectSelectStyles(): void {
   const style = document.createElement("style");
   style.id = "ssp-select-styles";
   style.textContent = `
-    .ssp-sel-stage{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:space-between;pointer-events:none;z-index:10;padding:calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px));box-sizing:border-box}
-    .ssp-sel-top{display:flex;justify-content:space-between;align-items:center;width:100%;pointer-events:auto}
-    .ssp-sel-title{font-size:24px;font-weight:700;color:${palette.cream};text-shadow:3px 3px 0 ${palette.ink},6px 6px 0 rgba(43,29,78,.35);pointer-events:none;letter-spacing:1px}
-    .ssp-sel-cards{display:flex;gap:10px;width:100%;max-width:520px;pointer-events:auto;margin-bottom:14px}
-    .ssp-sel-card{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 6px;border-radius:18px;border:3px solid ${palette.ink};box-shadow:4px 4px 0 ${palette.ink};cursor:pointer;transition:transform .14s cubic-bezier(.34,1.56,.64,1),box-shadow .14s;user-select:none;position:relative;min-width:0;overflow:hidden}
-    .ssp-sel-card:hover{transform:translateY(-3px) scale(1.03);box-shadow:5px 6px 0 ${palette.ink}}
-    .ssp-sel-card:active{transform:scale(.93) translateY(2px);box-shadow:2px 2px 0 ${palette.ink}}
-    .ssp-sel-card__name{font-size:16px;font-weight:700;line-height:1.1;text-align:center;word-break:break-word;text-shadow:2px 2px 0 rgba(255,255,255,.65)}
-    .ssp-sel-card__tag{font-size:12px;font-weight:500;color:${palette.ink};opacity:.85;text-align:center;line-height:1.25}
-    .ssp-sel-card__cpu{position:absolute;top:-8px;right:-6px;background:${palette.lava};color:${palette.white};font-size:10px;font-weight:700;padding:2px 7px;border-radius:9px;border:2px solid ${palette.ink};box-shadow:2px 2px 0 ${palette.ink};transform:rotate(8deg);white-space:nowrap;z-index:2}
-    .ssp-sel-card--sel{transform:translateY(-10px) scale(1.07);box-shadow:6px 9px 0 ${palette.ink},0 0 22px var(--sel-color)}
-    .ssp-sel-card--sel:hover{transform:translateY(-13px) scale(1.1)}
-    .ssp-sel-card--sel:active{transform:translateY(-7px) scale(1.04);box-shadow:4px 5px 0 ${palette.ink},0 0 22px var(--sel-color)}
-    .ssp-sel-ctrls{display:flex;gap:14px;align-items:center;width:100%;max-width:520px;justify-content:center;pointer-events:auto;margin-bottom:8px}
-    .ssp-sel-packs{width:100%;max-width:520px;pointer-events:auto;margin-bottom:8px;max-height:38vh;overflow-y:auto}
-    @media(max-width:520px){.ssp-sel-cards{gap:8px}.ssp-sel-card{padding:14px 6px;min-height:72px}.ssp-sel-card__name{font-size:15px}.ssp-sel-card__tag{font-size:12px}.ssp-sel-title{font-size:22px}}
+    .ssp-sel-stage{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;z-index:10;padding:calc(10px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px));box-sizing:border-box;overflow:hidden}
+    .ssp-sel-top{display:flex;justify-content:space-between;align-items:center;width:100%;max-width:520px;pointer-events:auto;flex:none}
+    .ssp-sel-title{font-size:22px;font-weight:700;color:${palette.cream};text-shadow:3px 3px 0 ${palette.ink},6px 6px 0 rgba(43,29,78,.35);pointer-events:none;letter-spacing:1px}
+    .ssp-sel-hero{position:relative;flex:1 1 auto;min-height:150px;width:100%;max-width:520px;pointer-events:auto;touch-action:none;user-select:none}
+    .ssp-sel-arrow{position:absolute;top:calc(50% - 25px);min-width:48px;padding-left:0;padding-right:0;z-index:2}
+    .ssp-sel-arrow--l{left:0}
+    .ssp-sel-arrow--r{right:0}
+    .ssp-sel-side{display:flex;flex-direction:column;gap:8px;width:100%;max-width:520px;flex:none;pointer-events:none}
+    .ssp-sel-plate{align-self:center;display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 22px 6px;border-radius:16px;background:${palette.cream};border:4px solid var(--sel-color);box-shadow:0 0 0 3px ${palette.ink},4px 5px 0 3px ${palette.ink};pointer-events:none;max-width:92%;box-sizing:border-box}
+    .ssp-sel-plate__name{font-size:24px;font-weight:700;line-height:1.05;color:var(--sel-color);-webkit-text-stroke:1.5px ${palette.ink};paint-order:stroke fill;text-shadow:2px 2px 0 ${palette.ink};letter-spacing:.5px}
+    .ssp-sel-plate__tag{font-size:14px;font-weight:600;line-height:1.15;color:${palette.inkSoft};text-align:center}
+    .ssp-sel-cards{display:flex;gap:8px;width:100%;pointer-events:auto}
+    .ssp-sel-card{font-family:inherit;flex:1 1 0;min-width:0;display:flex;align-items:center;gap:5px;padding:6px 5px;border-radius:16px;border:3px solid ${palette.ink};box-shadow:3px 3px 0 ${palette.ink};cursor:pointer;user-select:none;color:${palette.ink};transition:transform .12s cubic-bezier(.34,1.56,.64,1)}
+    .ssp-sel-card:active{transform:scale(.94) translateY(2px);box-shadow:1px 1px 0 ${palette.ink}}
+    .ssp-sel-card:focus-visible{outline:4px solid ${palette.sun};outline-offset:2px}
+    .ssp-sel-card .ssp-avatar{width:30px;height:30px;font-size:15px;flex:none;border-width:3px}
+    .ssp-sel-card .ssp-avatar::after{top:4px;left:6px;width:8px;height:5px}
+    .ssp-sel-card__text{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0}
+    .ssp-sel-card__name{font-size:14.5px;font-weight:700;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+    .ssp-sel-card__cpu{font-size:10px;font-weight:700;line-height:1;letter-spacing:.6px;padding:3px 6px;border-radius:8px;background:${palette.ink};color:${palette.cream}}
+    .ssp-sel-start{width:100%;flex:none;pointer-events:auto;min-height:60px;font-size:28px;letter-spacing:1px}
+    @media (max-height:720px) and (orientation:portrait){.ssp-ms-tile__blurb{font-size:10px}.ssp-sel-start{min-height:52px;font-size:24px}.ssp-sel-plate__name{font-size:20px}}
+    @media (orientation:landscape){
+      .ssp-sel-stage{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,400px);grid-template-rows:auto minmax(0,1fr);grid-template-areas:"top top" "hero side";column-gap:12px;row-gap:6px;justify-items:stretch}
+      .ssp-sel-top{grid-area:top;max-width:none}
+      .ssp-sel-hero{grid-area:hero;max-width:none;min-height:0}
+      .ssp-sel-side{grid-area:side;max-width:none;min-height:0;overflow-y:auto;pointer-events:auto;padding:2px 6px 6px 2px;box-sizing:border-box}
+    }
   `;
   document.head.appendChild(style);
 }
 
 // ------------------------------------------------------------------
-//  Layout
+//  Spotlight cone (additive, fades toward the lamp and at the rim)
 // ------------------------------------------------------------------
 
-interface Layout {
-  spread: number;
-  baseZ: number;
-  selZ: number;
-  /** Extra scale on the selected hero. Unselected uses 1. */
-  selScale: number;
-  pedR: number;
-  portrait: boolean;
+function makeLightCone(height: number, radius: number): THREE.Mesh {
+  const geo = new THREE.CylinderGeometry(radius * 0.12, radius, height, 40, 1, true);
+  geo.translate(0, height / 2, 0);
+  const mat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    uniforms: { uColor: { value: new THREE.Color(hex(palette.lampHot)) } },
+    vertexShader: `
+      varying float vH;
+      varying float vRim;
+      void main(){
+        vH = uv.y;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vec3 n = normalize(normalMatrix * normal);
+        vRim = abs(dot(n, normalize(-mv.xyz)));
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform vec3 uColor;
+      varying float vH;
+      varying float vRim;
+      void main(){
+        float a = 0.30 * pow(1.0 - vH, 1.4) * pow(vRim, 1.6);
+        gl_FragColor = vec4(uColor * a, a);
+      }`,
+  });
+  const cone = new THREE.Mesh(geo, mat);
+  cone.renderOrder = 5;
+  return cone;
 }
 
-const PARTY_FOV = 45;
+// ------------------------------------------------------------------
+//  Screen-space helpers
+// ------------------------------------------------------------------
 
-/**
- * Fit four heroes to the visible phone width.
- * At fov 45 a 430-wide phone only sees ~±1.9 world units, and the old
- * spread of 1.9 put Pip and Tusk at ±2.85 — off both edges. Portrait
- * widens fov slightly and places the outer hero's edge at 84% of the
- * screen so all four stay in proportion to the phone.
- */
-function applySelectCamera(cam: THREE.PerspectiveCamera): Layout {
-  const { w, h } = viewportSize();
-  const aspect = w / Math.max(1, h);
-  const portrait = aspect < 1;
-  cam.aspect = aspect;
-  cam.fov = portrait ? 46 : PARTY_FOV;
-  cam.updateProjectionMatrix();
-
-  if (!portrait) {
-    const camDist = 13;
-    const elev = 0.85;
-    cam.position.set(0, camDist * Math.sin(elev), camDist * Math.cos(elev));
-    cam.lookAt(0, 0.4, 0);
-    cam.updateMatrixWorld();
-    return { spread: 3.0, baseZ: 0, selZ: 1.4, selScale: 1.18, pedR: 0.62, portrait: false };
-  }
-
-  const camDist = 6.4;
-  const elev = 0.48;
-  cam.position.set(0, camDist * Math.sin(elev), camDist * Math.cos(elev));
-  cam.lookAt(0, -0.05, 0);
-  cam.updateMatrixWorld();
-
-  const probe = new THREE.Vector3();
-  let lo = 0;
-  let hi = 12;
-  for (let i = 0; i < 24; i++) {
-    const mid = (lo + hi) / 2;
-    probe.set(mid, 1.0, 0);
-    probe.project(cam);
-    if (probe.x < 0.9) lo = mid;
-    else hi = mid;
-  }
-  // Outer center is 1.5 spreads out; a little of the slot is body half-width.
-  const spread = lo / 1.68;
-  return {
-    spread,
-    baseZ: 0,
-    selZ: 0.12,
-    selScale: 1.08,
-    pedR: spread * 0.32,
-    portrait: true,
-  };
+function domRect(el: Element | null | undefined): SelectRect | null {
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { x: r.left, y: r.top, w: r.width, h: r.height };
 }
 
-/** Scale a hero so height and width match the phone slot, not the raw mesh. */
-function measureHero(group: THREE.Group, layout: Layout): { fit: number; foot: number } {
-  group.position.set(0, 0, 0);
-  group.scale.set(1, 1, 1);
-  group.updateWorldMatrix(true, true);
-  const box = new THREE.Box3().setFromObject(group);
-  const size = box.getSize(new THREE.Vector3());
-  if (!layout.portrait) return { fit: 1, foot: box.min.y };
-  const targetH = Math.max(1.15, layout.spread * 2.35);
-  const targetW = layout.spread * 0.8;
-  const fit = Math.min(
-    targetH / Math.max(0.05, size.y),
-    targetW / Math.max(0.05, size.x),
-  );
-  return { fit, foot: box.min.y };
+/** Canvas origin in client px (the app is pinned to the visual viewport). */
+function canvasOrigin(): { x: number; y: number } {
+  const vv = window.visualViewport;
+  return { x: vv?.offsetLeft ?? 0, y: vv?.offsetTop ?? 0 };
+}
+
+const corner = new THREE.Vector3();
+/** Projected client-px box of a world Box3 through the current camera. */
+function projectBox(box: THREE.Box3, cam: THREE.PerspectiveCamera, w: number, h: number): SelectRect {
+  const o = canvasOrigin();
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (let i = 0; i < 8; i++) {
+    corner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
+    corner.project(cam);
+    const px = ((corner.x + 1) / 2) * w;
+    const py = ((1 - corner.y) / 2) * h;
+    x0 = Math.min(x0, px);
+    x1 = Math.max(x1, px);
+    y0 = Math.min(y0, py);
+    y1 = Math.max(y1, py);
+  }
+  return { x: x0 + o.x, y: y0 + o.y, w: x1 - x0, h: y1 - y0 };
 }
 
 // ------------------------------------------------------------------
@@ -149,21 +165,31 @@ function measureHero(group: THREE.Group, layout: Layout): { fit: number; foot: n
 interface SelectScreenState {
   _active?: boolean;
   _chars?: Character[];
-  _selected?: number;
-  _platforms?: THREE.Mesh[];
-  _spotlights?: THREE.SpotLight[];
-  _cardEls?: HTMLDivElement[];
-  _cpuEls?: HTMLDivElement[];
-  _floor?: THREE.Mesh;
   _holders?: THREE.Group[];
-  _fit?: number[];
-  _foot?: number[];
-  _offResize?: () => void;
+  /** Rest-pose box of each hero standing on the podium (holder at origin). */
+  _restBox?: THREE.Box3[];
+  _selected?: number;
+  _time?: number;
+  _popT?: number;
+  _podium?: THREE.Group;
+  _spot?: THREE.SpotLight;
+  _cone?: THREE.Mesh;
   _hemi?: THREE.HemisphereLight;
+  _stage?: HTMLDivElement;
+  _slot?: HTMLDivElement;
+  _plate?: HTMLDivElement;
+  _cardRow?: HTMLDivElement;
+  _settingsEl?: HTMLElement;
+  _startEl?: HTMLButtonElement;
+  _arrowEls?: HTMLButtonElement[];
+  _slotObserver?: ResizeObserver;
+  _offResize?: () => void;
   _existing?: Set<THREE.Object3D>;
   _onKeyDown?: (e: KeyboardEvent) => void;
   _applySelection: () => void;
-  _placeHeroes: (layout: Layout) => void;
+  _renderCards: () => void;
+  _fitCamera: () => void;
+  _bounds: () => SelectBounds | null;
   _doSelect: (idx: number) => void;
   _confirmStart: () => void;
   _goBack: () => void;
@@ -181,91 +207,97 @@ const characterSelectImpl: SelectScreenState & Screen = {
     ui.clearScreen();
     this._active = true;
     this._selected = 0;
+    this._time = 0;
+    this._popT = 1;
     this._chars = [];
-    this._platforms = [];
-    this._spotlights = [];
-    this._cardEls = [];
-    this._cpuEls = [];
     this._holders = [];
-    this._fit = [];
-    this._foot = [];
+    this._restBox = [];
 
     // Snapshot existing scene children so exit() only sweeps what we add.
     this._existing = new Set(world.scene?.children ?? []);
 
-    // Camera fitted to the phone's visible width (landscape keeps the old party shot).
-    const cam = world.camera!;
-    const layout = applySelectCamera(cam);
-
-    // Extra fill light for the stage.
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x2b1d4e, 0.85);
+    const hemi = new THREE.HemisphereLight(0xffffff, hex(palette.ink), 0.75);
     world.scene?.add(hemi);
     this._hemi = hemi;
 
-    // Candy floor disk — wide enough to fill a phone frustum.
+    // Candy floor disk around the stage.
     const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(14, 40),
+      new THREE.CircleGeometry(14, 48),
       new THREE.MeshToonMaterial({ color: hex(palette.grassA) })
     );
     floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.03;
+    floor.position.y = -PODIUM_H - 0.01;
     world.scene?.add(floor);
-    this._floor = floor;
     const floorRing = new THREE.Mesh(
-      new THREE.RingGeometry(13.2, 14, 40),
+      new THREE.RingGeometry(13.2, 14, 48),
       new THREE.MeshToonMaterial({ color: hex(palette.grassB) })
     );
     floorRing.rotation.x = -Math.PI / 2;
-    floorRing.position.y = -0.02;
+    floorRing.position.y = -PODIUM_H;
     world.scene?.add(floorRing);
 
-    // Characters + pedestals + spotlights. Positions come from _placeHeroes
-    // so a phone resize can refit without rebuilding meshes.
+    // Podium: top is y = 0, the hero's feet stand on it. Scaled per hero.
+    const podium = new THREE.Group();
+    const top = new THREE.Mesh(
+      new THREE.CylinderGeometry(1, 1.06, PODIUM_H * 0.62, 40),
+      new THREE.MeshToonMaterial({ color: hex(palette.sun) })
+    );
+    top.position.y = -PODIUM_H * 0.31;
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.1, 1.16, PODIUM_H * 0.38, 40),
+      new THREE.MeshToonMaterial({ color: hex(palette.berry) })
+    );
+    base.position.y = -PODIUM_H * 0.81;
+    podium.add(top, base);
+    world.scene?.add(podium);
+    this._podium = podium;
+
+    // One spotlight from above-front, plus a soft additive beam.
+    const spot = new THREE.SpotLight(0xffffff, 40, 0, Math.PI / 7, 0.5, 1.2);
+    spot.position.set(0, 5.5, 2.2);
+    spot.target.position.set(0, 0.4, 0);
+    world.scene?.add(spot, spot.target);
+    this._spot = spot;
+    const cone = makeLightCone(5.2, 1.2);
+    world.scene?.add(cone);
+    this._cone = cone;
+
+    // All four load now so a swap is instant; only the selected one shows.
     roster.forEach((charKind) => {
-      const pedTop = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.62, 0.72, 0.22, 28),
-        new THREE.MeshToonMaterial({ color: hex(charKind.color) })
-      );
-      pedTop.castShadow = true;
-      pedTop.receiveShadow = true;
-      world.scene?.add(pedTop);
-      this._platforms!.push(pedTop);
-
-      const pedBase = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.72, 0.78, 0.12, 28),
-        new THREE.MeshToonMaterial({ color: hex(palette.ink) })
-      );
-      world.scene?.add(pedBase);
-      this._platforms!.push(pedBase);
-
       const ch = createCharacter(charKind.key);
       ch.setFacing(0);
       ch.anim.idle();
-      const measured = measureHero(ch.group, layout);
+      ch.group.position.set(0, 0, 0);
+      ch.group.updateWorldMatrix(true, true);
+      const raw = new THREE.Box3().setFromObject(ch.group);
       const holder = new THREE.Group();
       holder.add(ch.group);
+      holder.position.y = -raw.min.y;
+      holder.visible = false;
       world.scene?.add(holder);
-      this._holders!.push(holder);
-      this._fit!.push(measured.fit);
-      this._foot!.push(measured.foot);
+      holder.updateWorldMatrix(true, true);
+      const rest = new THREE.Box3().setFromObject(holder);
+      // Room for the idle sway (rotation about Y) and squash.
+      const size = rest.getSize(new THREE.Vector3());
+      const pad = Math.max(size.x, size.z) * 0.12;
+      rest.min.x -= pad;
+      rest.max.x += pad;
+      rest.min.z -= pad;
+      rest.max.z += pad;
+      rest.max.y += size.y * 0.06;
       this._chars!.push(ch);
-
-      const spot = new THREE.SpotLight(0xffffff, 0.25, 9, Math.PI / 6, 0.45, 1.4);
-      world.scene?.add(spot);
-      world.scene?.add(spot.target);
-      this._spotlights!.push(spot);
+      this._holders!.push(holder);
+      this._restBox!.push(rest);
     });
-    this._placeHeroes(layout);
 
     // ---- DOM overlay ----
     const stage = document.createElement("div");
     stage.className = "ssp-sel-stage";
     document.body.appendChild(stage);
+    this._stage = stage;
 
-    // Top bar: back button + title.
     const topBar = document.createElement("div");
     topBar.className = "ssp-sel-top";
-
     const backBtn = ui.button({
       label: "◀ BACK",
       kind: "ghost",
@@ -273,72 +305,66 @@ const characterSelectImpl: SelectScreenState & Screen = {
       onClick: () => this._goBack(),
       sound: "ui.back",
     });
-
     const titleEl = document.createElement("div");
     titleEl.className = "ssp-sel-title";
     titleEl.textContent = "PICK A HERO!";
-
     topBar.append(backBtn.el, titleEl);
-    stage.appendChild(topBar);
 
-    // Middle spacer (3D scene shows through).
-    const spacer = document.createElement("div");
-    spacer.style.flex = "1";
-    stage.appendChild(spacer);
-
-    // Card row: one tappable card per character.
-    const cardRow = document.createElement("div");
-    cardRow.className = "ssp-sel-cards";
-    roster.forEach((charKind, i) => {
-      const card = document.createElement("div");
-      card.className = "ssp-sel-card";
-      card.style.setProperty("--sel-color", charKind.color);
-      card.style.background = charKind.color;
-
-      const cpu = document.createElement("div");
-      cpu.className = "ssp-sel-card__cpu";
-      cpu.textContent = "CPU";
-      cpu.style.display = "none";
-
-      const name = document.createElement("div");
-      name.className = "ssp-sel-card__name";
-      name.textContent = charKind.name;
-      name.style.color = palette.ink;
-
-      const tag = document.createElement("div");
-      tag.className = "ssp-sel-card__tag";
-      tag.textContent = charKind.tagline;
-
-      card.append(cpu, name, tag);
-      card.addEventListener("pointerdown", (e) => {
-        e.preventDefault();
-        this._doSelect(i);
-      });
-
-      this._cardEls!.push(card);
-      this._cpuEls!.push(cpu);
-      cardRow.appendChild(card);
-    });
-    stage.appendChild(cardRow);
-
-    // Host picks the rotation, their pack, and the coin multiplier
-    // before the match. Same keys as title / pause settings.
-    const packSlot = document.createElement("div");
-    packSlot.className = "ssp-sel-packs";
-    packSlot.appendChild(mountPackPicker({ card: true }).el);
-    stage.appendChild(packSlot);
-
-    // Controls row: arrows + big START! button.
-    const ctrlRow = document.createElement("div");
-    ctrlRow.className = "ssp-sel-ctrls";
-
+    // Hero slot: the 3D hero is fitted into this rect. Arrows at its edges.
+    const slot = document.createElement("div");
+    slot.className = "ssp-sel-hero";
+    this._slot = slot;
     const arrowL = ui.button({
       label: "◀",
       kind: "ghost",
       size: "md",
       onClick: () => this._doSelect((this._selected ?? 0) - 1),
-      ariaLabel: "Previous character",
+      ariaLabel: "Previous hero",
     });
+    const arrowR = ui.button({
+      label: "▶",
+      kind: "ghost",
+      size: "md",
+      onClick: () => this._doSelect((this._selected ?? 0) + 1),
+      ariaLabel: "Next hero",
+    });
+    arrowL.el.classList.add("ssp-sel-arrow", "ssp-sel-arrow--l");
+    arrowR.el.classList.add("ssp-sel-arrow", "ssp-sel-arrow--r");
+    slot.append(arrowL.el, arrowR.el);
+    this._arrowEls = [arrowL.el, arrowR.el];
+
+    // Swipe on the slot: |dx| > 40px steps one hero.
+    let downX: number | null = null;
+    let downId = -1;
+    slot.addEventListener("pointerdown", (e) => {
+      if ((e.target as HTMLElement).closest("button")) return;
+      downX = e.clientX;
+      downId = e.pointerId;
+    });
+    const endSwipe = (e: PointerEvent): void => {
+      if (downX === null || e.pointerId !== downId) return;
+      const dx = e.clientX - downX;
+      downX = null;
+      if (Math.abs(dx) > SWIPE_PX) this._doSelect((this._selected ?? 0) + (dx < 0 ? 1 : -1));
+    };
+    slot.addEventListener("pointerup", endSwipe);
+    slot.addEventListener("pointercancel", () => {
+      downX = null;
+    });
+
+    const side = document.createElement("div");
+    side.className = "ssp-sel-side";
+
+    const plate = document.createElement("div");
+    plate.className = "ssp-sel-plate";
+    this._plate = plate;
+
+    const cardRow = document.createElement("div");
+    cardRow.className = "ssp-sel-cards";
+    this._cardRow = cardRow;
+
+    const settingsCard = mountMatchSettings().el;
+    this._settingsEl = settingsCard;
 
     const okBtn = ui.button({
       label: "START!",
@@ -347,19 +373,12 @@ const characterSelectImpl: SelectScreenState & Screen = {
       onClick: () => this._confirmStart(),
       ariaLabel: "Start the match",
     });
+    okBtn.el.classList.add("ssp-sel-start");
+    this._startEl = okBtn.el;
 
-    const arrowR = ui.button({
-      label: "▶",
-      kind: "ghost",
-      size: "md",
-      onClick: () => this._doSelect((this._selected ?? 0) + 1),
-      ariaLabel: "Next character",
-    });
+    side.append(plate, cardRow, settingsCard, okBtn.el);
+    stage.append(topBar, slot, side);
 
-    ctrlRow.append(arrowL.el, okBtn.el, arrowR.el);
-    stage.appendChild(ctrlRow);
-
-    // Apply initial selection.
     this._applySelection();
 
     // Keyboard: arrows cycle, Enter/Space confirms, Escape goes back.
@@ -372,7 +391,8 @@ const characterSelectImpl: SelectScreenState & Screen = {
         this._doSelect((this._selected ?? 0) + 1);
       } else if (e.key === "Enter" || e.key === " ") {
         const target = e.target as HTMLElement | null;
-        if (target?.closest?.("[data-ssp-pack-picker]")) return;
+        // A focused button handles its own Enter/Space.
+        if (target?.closest?.("[data-ssp-pack-picker], button")) return;
         e.preventDefault();
         this._confirmStart();
       } else if (e.key === "Escape") {
@@ -381,59 +401,167 @@ const characterSelectImpl: SelectScreenState & Screen = {
       }
     };
     window.addEventListener("keydown", this._onKeyDown);
-    this._offResize = onViewportChange(() => {
-      if (!this._active || !world.camera) return;
-      this._placeHeroes(applySelectCamera(world.camera));
-    });
+
+    // Re-fit on viewport change, on slot layout change, and after fonts land.
+    this._offResize = onViewportChange(() => this._fitCamera());
+    if (typeof ResizeObserver !== "undefined") {
+      this._slotObserver = new ResizeObserver(() => this._fitCamera());
+      this._slotObserver.observe(slot);
+    }
+    void document.fonts?.ready.then(() => this._fitCamera());
+    requestAnimationFrame(() => this._fitCamera());
+
+    setSelectBoundsReader(() => this._bounds());
   },
 
   _applySelection() {
-    if (!world.camera) return;
-    this._placeHeroes(applySelectCamera(world.camera));
+    const sel = this._selected ?? 0;
+    const kind = roster[sel];
+    this._holders?.forEach((h, i) => {
+      h.visible = i === sel;
+    });
+
+    const rest = this._restBox?.[sel];
+    if (rest && this._podium) {
+      const size = rest.getSize(new THREE.Vector3());
+      const r = Math.max(size.x, size.z) * 0.5;
+      this._podium.scale.set(r, 1, r);
+      (this._podium.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>).material.color.set(
+        hex(kind.color)
+      );
+      this._cone?.scale.set(r / 1.2 + 0.1, 1, r / 1.2 + 0.1);
+    }
+
+    if (this._plate) {
+      this._plate.style.setProperty("--sel-color", kind.color);
+      const name = document.createElement("div");
+      name.className = "ssp-sel-plate__name";
+      name.textContent = kind.name;
+      const tag = document.createElement("div");
+      tag.className = "ssp-sel-plate__tag";
+      tag.textContent = kind.tagline;
+      this._plate.replaceChildren(name, tag);
+    }
+    this._renderCards();
+    this._fitCamera();
   },
 
-  _placeHeroes(layout: Layout) {
+  _renderCards() {
+    const row = this._cardRow;
+    if (!row) return;
     const sel = this._selected ?? 0;
-    const pedScale = layout.portrait ? layout.pedR / 0.62 : 1;
+    row.replaceChildren();
+    roster.forEach((charKind, i) => {
+      if (i === sel) return;
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "ssp-sel-card";
+      card.style.background = charKind.color;
+      card.setAttribute("aria-label", `Pick ${charKind.name}`);
+      card.dataset.sspHero = charKind.key;
 
-    this._chars?.forEach((_ch, i) => {
-      const isSel = i === sel;
-      const x = (i - (SLOT_COUNT - 1) / 2) * layout.spread;
-      const fit = (this._fit?.[i] ?? 1) * (isSel ? layout.selScale : layout.portrait ? 0.94 : 0.9);
-      const foot = this._foot?.[i] ?? 0;
-      const holder = this._holders?.[i];
-      if (holder) {
-        holder.position.set(x, 0.22 - foot * fit, isSel ? layout.selZ : layout.baseZ);
-        holder.scale.setScalar(fit);
-      }
+      const text = document.createElement("div");
+      text.className = "ssp-sel-card__text";
+      const name = document.createElement("div");
+      name.className = "ssp-sel-card__name";
+      name.textContent = charKind.name;
+      const cpu = document.createElement("div");
+      cpu.className = "ssp-sel-card__cpu";
+      cpu.textContent = "CPU";
+      text.append(name, cpu);
 
-      const pedTop = this._platforms?.[i * 2];
-      const pedBase = this._platforms?.[i * 2 + 1];
-      if (pedTop) {
-        pedTop.position.set(x, 0.11, 0);
-        pedTop.scale.set(pedScale, 1, pedScale);
-      }
-      if (pedBase) {
-        pedBase.position.set(x, 0, 0);
-        pedBase.scale.set(pedScale, 1, pedScale);
-      }
-
-      const spot = this._spotlights?.[i];
-      if (spot) {
-        spot.position.set(x, 4.2, 1.2);
-        spot.target.position.set(x, 0.6, isSel ? layout.selZ : 0);
-        spot.intensity = isSel ? 3.5 : 0.25;
-      }
-
-      const card = this._cardEls?.[i];
-      if (card) {
-        if (isSel) card.classList.add("ssp-sel-card--sel");
-        else card.classList.remove("ssp-sel-card--sel");
-      }
-
-      const cpu = this._cpuEls?.[i];
-      if (cpu) cpu.style.display = isSel ? "none" : "flex";
+      card.append(ui.playerAvatar(charKind.key, charKind.color), text);
+      card.addEventListener("click", (e) => {
+        e.preventDefault();
+        this._doSelect(i);
+      });
+      row.appendChild(card);
     });
+  },
+
+  /**
+   * Point the camera so the hero (plus its podium) fills the DOM slot with
+   * an 8% margin. A view offset moves the projection centre onto the slot;
+   * a few passes of "scale distance by box/target, shift by centre error"
+   * converge in well under a millisecond.
+   */
+  _fitCamera() {
+    const cam = world.camera;
+    const slot = this._slot;
+    const rest = this._restBox?.[this._selected ?? 0];
+    if (!this._active || !cam || !slot || !rest) return;
+    const { w, h } = viewportSize();
+    const r = slot.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) return;
+    const o = canvasOrigin();
+
+    const arrowW = this._arrowEls?.[0]?.getBoundingClientRect().width ?? 48;
+    const mx = Math.max(r.width * FIT_MARGIN, arrowW + 6);
+    const my = r.height * FIT_MARGIN;
+    const target = {
+      x: r.left - o.x + mx,
+      y: r.top - o.y + my,
+      w: Math.max(8, r.width - 2 * mx),
+      h: Math.max(8, r.height - 2 * my),
+    };
+
+    // Fit box: the hero's rest box (sway room included) plus the podium top.
+    const box = rest.clone();
+    const podR = this._podium?.scale.x ?? 1;
+    box.union(new THREE.Box3(new THREE.Vector3(-podR, -PODIUM_H, -podR), new THREE.Vector3(podR, 0, podR)));
+    const centre = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+
+    cam.fov = HERO_FOV;
+    cam.aspect = w / h;
+    const dir = new THREE.Vector3(0, Math.sin(CAM_ELEV), Math.cos(CAM_ELEV));
+    let dist = (size.y * 0.5) / Math.tan(THREE.MathUtils.degToRad(HERO_FOV / 2)) / 0.8 + size.z;
+    let ox = w / 2 - (target.x + target.w / 2);
+    let oy = h / 2 - (target.y + target.h / 2);
+
+    for (let pass = 0; pass < 8; pass++) {
+      cam.position.copy(centre).addScaledVector(dir, dist);
+      cam.lookAt(centre);
+      cam.setViewOffset(w, h, ox, oy, w, h);
+      cam.updateProjectionMatrix();
+      cam.updateMatrixWorld(true);
+      const p = projectBox(box, cam, w, h);
+      p.x -= o.x;
+      p.y -= o.y;
+      const s = Math.max(p.w / target.w, p.h / target.h);
+      dist = Math.max(1, dist * s);
+      ox += p.x + p.w / 2 - (target.x + target.w / 2);
+      oy += p.y + p.h / 2 - (target.y + target.h / 2);
+    }
+    cam.position.copy(centre).addScaledVector(dir, dist);
+    cam.lookAt(centre);
+    cam.setViewOffset(w, h, ox, oy, w, h);
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld(true);
+  },
+
+  _bounds() {
+    const cam = world.camera;
+    const sel = this._selected ?? 0;
+    const ch = this._chars?.[sel];
+    if (!this._active || !cam) return null;
+    const { w, h } = viewportSize();
+    let heroBox: SelectRect | null = null;
+    if (ch) {
+      ch.group.updateWorldMatrix(true, true);
+      const b = new THREE.Box3().setFromObject(ch.group);
+      if (!b.isEmpty()) heroBox = projectBox(b, cam, w, h);
+    }
+    return {
+      viewport: { w, h },
+      hero: { selected: roster[sel].key, box: heroBox },
+      slot: domRect(this._slot),
+      cards: [...(this._cardRow?.querySelectorAll(".ssp-sel-card") ?? [])].map((c) => domRect(c)!),
+      settings: domRect(this._settingsEl),
+      start: domRect(this._startEl),
+      arrows: (this._arrowEls ?? []).map((a) => domRect(a)!),
+      plate: domRect(this._plate),
+    };
   },
 
   _doSelect(idx: number) {
@@ -443,6 +571,7 @@ const characterSelectImpl: SelectScreenState & Screen = {
       return;
     }
     this._selected = wrapped;
+    this._popT = 0;
     audio.sfx.play("pop");
     audio.sfx.play("boing");
     this._applySelection();
@@ -477,9 +606,13 @@ const characterSelectImpl: SelectScreenState & Screen = {
 
   exit() {
     this._active = false;
+    setSelectBoundsReader(null);
     this._offResize?.();
     this._offResize = undefined;
+    this._slotObserver?.disconnect();
+    this._slotObserver = undefined;
     if (world.camera) {
+      world.camera.clearViewOffset();
       world.camera.fov = PARTY_FOV;
       world.camera.updateProjectionMatrix();
     }
@@ -490,42 +623,16 @@ const characterSelectImpl: SelectScreenState & Screen = {
     }
 
     for (const h of this._holders ?? []) world.scene?.remove(h);
+    for (const ch of this._chars ?? []) ch.dispose();
     this._holders = undefined;
-    this._fit = undefined;
-    this._foot = undefined;
-
-    for (const ch of this._chars ?? []) {
-      ch.dispose();
-    }
     this._chars = undefined;
+    this._restBox = undefined;
+    this._podium = undefined;
+    this._spot = undefined;
+    this._cone = undefined;
+    this._hemi = undefined;
 
-    for (const p of this._platforms ?? []) {
-      world.scene?.remove(p);
-      p.geometry.dispose();
-      (p.material as THREE.Material).dispose();
-    }
-    this._platforms = undefined;
-
-    for (const s of this._spotlights ?? []) {
-      world.scene?.remove(s.target);
-      world.scene?.remove(s);
-      s.dispose();
-    }
-    this._spotlights = undefined;
-
-    if (this._floor) {
-      world.scene?.remove(this._floor);
-      this._floor.geometry.dispose();
-      (this._floor.material as THREE.Material).dispose();
-      this._floor = undefined;
-    }
-    if (this._hemi) {
-      world.scene?.remove(this._hemi);
-      this._hemi.dispose();
-      this._hemi = undefined;
-    }
-
-    // Sweep every scene object added since enter.
+    // Sweep every scene object added since enter (floor, podium, light, beam).
     const existing = this._existing;
     if (existing && world.scene) {
       for (const obj of [...world.scene.children]) {
@@ -546,17 +653,33 @@ const characterSelectImpl: SelectScreenState & Screen = {
     }
     this._existing = undefined;
 
-    // Remove DOM overlay.
-    const stages = document.querySelectorAll(".ssp-sel-stage");
-    for (const s of stages) s.remove();
-    this._cardEls = undefined;
-    this._cpuEls = undefined;
+    this._stage?.remove();
+    for (const s of document.querySelectorAll(".ssp-sel-stage")) s.remove();
+    this._stage = undefined;
+    this._slot = undefined;
+    this._plate = undefined;
+    this._cardRow = undefined;
+    this._settingsEl = undefined;
+    this._startEl = undefined;
+    this._arrowEls = undefined;
 
     ui.clearScreen();
   },
 
   update(dt: number) {
     for (const ch of this._chars ?? []) ch.update(dt);
+    // Cosmetic only: deterministic sway + a small pop-in on a new pick.
+    this._time = (this._time ?? 0) + dt;
+    this._popT = Math.min(1, (this._popT ?? 1) + dt / 0.32);
+    const holder = this._holders?.[this._selected ?? 0];
+    if (holder) {
+      const t = this._time;
+      holder.rotation.y = Math.sin(t * 1.15) * 0.14;
+      const k = 1 - this._popT;
+      const s = 1 - 0.14 * k * k;
+      holder.scale.set(s, s, s);
+    }
+    if (this._spot) this._spot.intensity = 40 + Math.sin((this._time ?? 0) * 2.1) * 4;
   },
 
   render() {},

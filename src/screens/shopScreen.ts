@@ -17,6 +17,7 @@
  * Under autoplay the turn loop opens it too but auto-closes after >=1.2s.
  */
 import { match } from "../core/game";
+import { playerLabel } from "../ui/labels";
 import { bus } from "../core/events";
 import { palette } from "../config/palette";
 import { audio } from "../audio/audioEngine";
@@ -147,7 +148,7 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
     avatar.style.fontSize = "13px";
     const name = document.createElement("span");
     name.className = "ssp-shop__wallet-name";
-    name.textContent = player?.name ?? `P${playerId + 1}`;
+    name.textContent = player ? playerLabel(playerId) : `P${playerId + 1}`;
     const coin = document.createElement("span");
     coin.className = "ssp-shop__coin";
     coin.setAttribute("aria-hidden", "true");

@@ -43,6 +43,32 @@ import {
   setMinigameCoinMultiplier as saveCoinMultiplier,
 } from "../minigames/packRules";
 import { effectsPassCount, getEffectsQuality, setEffectsQuality as applyEffectsQuality } from "../render/postFx";
+import { seatLabels, youGrammar, type SeatLabel } from "../ui/labels";
+import { readSeatTags, type SeatTagReading } from "../minigames/seatTags";
+
+/** Same gate as framework.contactProbeLive (not imported: avoids a minigame-graph cycle). */
+function seatTagsLive(): boolean {
+  if (import.meta.env.DEV) return true;
+  const flag = import.meta.env.VITE_SSP_TEST;
+  return flag === "1" || flag === "true";
+}
+export interface SelectRect { x: number; y: number; w: number; h: number }
+/** Pick a Hero layout as last drawn: screen boxes in CSS px. */
+export interface SelectBounds {
+  viewport: { w: number; h: number };
+  hero: { selected: string; box: SelectRect | null };
+  slot: SelectRect | null;
+  cards: SelectRect[];
+  settings: SelectRect | null;
+  start: SelectRect | null;
+  arrows: SelectRect[];
+  plate: SelectRect | null;
+}
+let selectBoundsReader: (() => SelectBounds | null) | null = null;
+/** Character select registers its reader on enter and clears it on exit. */
+export function setSelectBoundsReader(fn: (() => SelectBounds | null) | null): void {
+  selectBoundsReader = fn;
+}
 import { rapierStatus, runContactScenario as runRapierContactScenario } from "../physics/contact";
 import { setOnlineMatch, setPartyAssist } from "../net/mode";
 import { dropOut, partyView } from "../net/session";
@@ -183,6 +209,12 @@ export interface SSPDebug {
    * has not already. Returns whether they met and bounced apart.
    */
   runContactScenario(): Promise<{ contacted: boolean; separated: boolean; minGap: number }>;
+  /** Dev/CI only: minigame seat tags as last positioned (empty in prod builds). */
+  seatTags(): SeatTagReading[];
+  /** Dev/CI only: seatLabels() for synthetic players Pip/Bounce/Glimmer/Tusk; controllers are L(ocal)/R(emote)/C(pu). */
+  labelRules(controllers: string[], online?: boolean): { labels: SeatLabel[]; grammar: Record<string, string> } | null;
+  /** Dev/CI only: Pick a Hero boxes (projected hero mesh, slot, cards, settings, START, arrows, plate); null elsewhere. */
+  selectBounds(): SelectBounds | null;
   /** Open one minigame directly. Starts a match first when the board is empty. */
   openMinigame(id: string): void;
   /** Friends-room status. Offline until a room starts. */
@@ -605,6 +637,21 @@ export function installDebugAPI(): void {
     },
     runContactScenario() {
       return runRapierContactScenario();
+    },
+    seatTags() {
+      return seatTagsLive() ? readSeatTags() : [];
+    },
+    labelRules(controllers: string[], online = false) {
+      if (!seatTagsLive()) return null;
+      const names = ["Pip", "Bounce", "Glimmer", "Tusk"];
+      const full: Record<string, string> = { L: "local", R: "remote", C: "cpu" };
+      const players = controllers.map((c, id) => ({ id, name: names[id] ?? `P${id}`, controller: full[c] ?? c }));
+      const grammar: Record<string, string> = {};
+      for (const t of ["YOU WINS THE ROUND", "You's turn", "YOU IS NEXT", "YOU PASS"]) grammar[t] = youGrammar(t);
+      return { labels: seatLabels(players, online), grammar };
+    },
+    selectBounds() {
+      return seatTagsLive() && selectBoundsReader ? selectBoundsReader() : null;
     },
     openMinigame(id: string) {
       void import("../screens/minigameScreen").then((mod) => mod.launchMinigame(id));

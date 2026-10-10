@@ -94,7 +94,7 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
     const geo = new THREE.SphereGeometry(radius, 20, 16);
     const m = addMesh(g, geo, bodyMat, [0, 0, 0]);
     group.add(g);
-    inkClone(m, outline);
+    inkClone(m, g);
     return g;
   };
 

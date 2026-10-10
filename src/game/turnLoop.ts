@@ -63,6 +63,7 @@ import { getMinigameDescription, showMinigamePreview, skipNextMinigamePreScreen 
 import { screens } from "../screens/screenManager";
 import { consumeTrap, resolveTrap, trapAt, payCircusToll, growTrees, ageCircuses, placeTrap } from "./traps";
 import { onlineMatch, partyAssist, setCpuPlayout } from "../net/mode";
+import { playerLabel, isYou, labelPossessive, labelDoes } from "../ui/labels";
 import {
   checkpoint,
   isHost,
@@ -574,7 +575,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       match.players.map((p) => ({
         id: p.id,
         kind: p.kind,
-        name: p.name,
+        name: playerLabel(p.id, "short"),
+        you: isYou(p.id),
         coins: p.coins,
         stars: p.stars,
         minigameWins: p.minigameWins,
@@ -618,7 +620,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     if (player.itemFx.skipTurn) {
       player.itemFx.skipTurn = false;
       bus.emit("turn:start", { turn: match.turn, player: pid });
-      hud.showBanner(`${player.name} LOSES A TURN!`, { durationMs: 1400 });
+      hud.showBanner(`${labelDoes(pid, "LOSE", "LOSES")} A TURN!`, { durationMs: 1400 });
       ui.toast("The Grumpus Coat ate their turn!", { durationMs: 1800 });
       chars[pid]?.anim.sad();
       audio.sfx.play("sad");
@@ -633,7 +635,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     refreshHud();
     hud.showBanner(`TURN ${match.turn}`, { durationMs: 900 });
     pause(0.95, () => {
-      hud.showBanner(`${player.name}'S TURN!`, { durationMs: 1150 });
+      hud.showBanner(`${labelPossessive(pid)} TURN!`, { durationMs: 1150 });
       pause(0.75, () => offerFizzyPity(pid, beginDice));
     });
   };
@@ -1140,7 +1142,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     dice.setFace(face);
     audio.sfx.play("dice.land");
     bus.emit("dice:land", { player: pid, face });
-    hud.showBanner(`${match.players[pid].name} rolled ${face}!`, { durationMs: 1300 });
+    hud.showBanner(`${playerLabel(pid)} rolled ${face}!`, { durationMs: 1300 });
     S.rolling = false;
     if (S.diceFaces.length < S.rollsNeeded) {
       S.betweenRolls = 0.85;
@@ -2049,7 +2051,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         const p = match.players[b.playerId];
         audio.sfx.play("fanfare.win");
         ui.confettiBurst(undefined, undefined, { count: 90, sound: null });
-        hud.showBanner(`★ ${bonusStarLabel(b.star)} → ${p.name}!`, { durationMs: 1900 });
+        hud.showBanner(`★ ${bonusStarLabel(b.star)} → ${playerLabel(b.playerId)}!`, { durationMs: 1900 });
       });
     }
     steps.push(() => {
@@ -2058,7 +2060,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       audio.music.play("results", { intensity: 0.85 });
       audio.sfx.play("fanfare.win");
       ui.confettiBurst(undefined, undefined, { count: 140, sound: null });
-      hud.showBanner(`WINNER: ${winner?.name ?? "?"}!`, { durationMs: 2600 });
+      hud.showBanner(`WINNER: ${winner ? playerLabel(winner.id) : "?"}!`, { durationMs: 2600 });
       chars[entries[0]?.playerId ?? 0]?.anim.cheer();
       bus.emit("results:show", { ranking: entries.map((r) => r.playerId) });
       bus.emit("match:end", { ranking: entries.map((r) => r.playerId) });
@@ -2070,7 +2072,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         const row = document.createElement("div");
         row.className = `ssp-podium__row${i === 0 ? " ssp-podium__row--win" : ""}`;
         const tags = r.bonus.map((b) => bonusStarTag(b)).join(" ");
-        row.textContent = `${i + 1}. ${p?.name ?? "?"}  ★${r.stars} · ${r.coins}c${tags ? `  ${tags}` : ""}`;
+        row.textContent = `${i + 1}. ${p ? playerLabel(p.id) : "?"}  ★${r.stars} · ${r.coins}c${tags ? `  ${tags}` : ""}`;
         content.appendChild(row);
       });
       ui.popup({

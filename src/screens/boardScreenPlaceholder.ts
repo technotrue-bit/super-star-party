@@ -14,6 +14,7 @@ import { world } from "../main";
 import { palette } from "../config/palette";
 import { settings } from "../config/settings";
 import { match, playerController, startMatch, rollForTurnOrder } from "../core/game";
+import { playerLabel, labelDoes } from "../ui/labels";
 import { setOnlineMatch } from "../net/mode";
 import { rng, ease } from "../core/rng";
 import { bus } from "../core/events";
@@ -770,7 +771,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
         if (!p) return;
         const roll = rolls[pid] || 1;
         setTimeout(() => {
-          queuedHud.showBanner(`${p.name} rolled ${roll}!`, { durationMs: 850, style: "default" });
+          queuedHud.showBanner(`${playerLabel(pid)} rolled ${roll}!`, { durationMs: 850, style: "default" });
         }, delay);
         delay += 900;
       });
@@ -778,7 +779,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
       setTimeout(() => {
         const first = match.players[order[0]];
         if (first) {
-          queuedHud.showBanner(`${first.name} GOES FIRST!`, { durationMs: 1500, style: "default" });
+          queuedHud.showBanner(`${labelDoes(first.id, "GO", "GOES")} FIRST!`, { durationMs: 1500, style: "default" });
         }
         // The match now officially begins. The first player in the determined order gets their turn.
         this._loop?.start();

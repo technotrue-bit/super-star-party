@@ -14,6 +14,7 @@ import * as THREE from "three";
 import { world } from "../main";
 import { palette, hex } from "../config/palette";
 import { match, startMatch } from "../core/game";
+import { playerLabel, labelDoes } from "../ui/labels";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
 import { mulberry32 } from "../core/rng";
@@ -243,7 +244,7 @@ class FinaleScreen implements Screen {
       const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "4.";
       standingsRows.push(
         `<div id="finale-row-${i}" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:4px 0;color:${color};font-weight:700;font-size:16px;">
-          <span>${medal} ${p?.name ?? "?"}</span>
+          <span>${medal} ${p ? playerLabel(p.id) : "?"}</span>
           <span>★<span id="finale-stars-${i}">0</span> · <span id="finale-coins-${i}">0</span>c</span>
         </div>`
       );
@@ -449,7 +450,7 @@ class FinaleScreen implements Screen {
 
     if (this._bannerEl) {
       this._bannerEl.style.color = color;
-      this._bannerEl.textContent = `${player?.name ?? "?"} WINS THE ${starLabel}!`;
+      this._bannerEl.textContent = player ? `${labelDoes(player.id, "WIN", "WINS")} THE ${starLabel}!` : `? WINS THE ${starLabel}!`;
       this._bannerEl.style.transform = "translate(-50%,-50%) scale(1)";
       audio.sfx.play("fanfare.win");
     }
@@ -546,7 +547,7 @@ class FinaleScreen implements Screen {
 
     // winner banner
     if (this._winnerBannerEl) {
-      this._winnerBannerEl.textContent = `${winnerPlayer?.name ?? "?"} WINS!`;
+      this._winnerBannerEl.textContent = winnerPlayer ? `${labelDoes(winnerPlayer.id, "WIN", "WINS")}!` : "?";
       this._winnerBannerEl.style.color = winnerColor;
       this._winnerBannerEl.style.transform = "translate(-50%,-50%) scale(1)";
     }

@@ -184,7 +184,7 @@ const friendsImpl = {
         const who = roster.find((c) => c.key === seat.kind);
         const label = document.createElement("span");
         const tag = seat.peerId === view.peerId ? "YOU" : seat.peerId ? seat.name : "CPU";
-        label.textContent = `P${seat.index + 1} ${who?.name ?? seat.kind} · ${tag}`;
+        label.textContent = `Player ${seat.index + 1} ${who?.name ?? seat.kind} · ${tag}`;
         row.appendChild(label);
         const mine = seat.peerId === view.peerId;
         const cpu = seat.peerId === null;

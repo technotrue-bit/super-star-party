@@ -160,6 +160,8 @@ interface ContactProbeHook {
   placeLocal?: { x: number; z: number } | null;
 }
 
+export { mountSeatTags, type SeatTags, type SeatTagSeat } from "./seatTags";
+
 /** True when this build may honor the contact probe hook. */
 export function contactProbeLive(): boolean {
   if (import.meta.env.DEV) return true;

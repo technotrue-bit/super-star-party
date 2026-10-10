@@ -34,6 +34,8 @@ export interface HudPlayerState {
   stamps?: string[];
   active?: boolean;
   color?: string;
+  /** True for the seat this phone controls (shows the YOU pill). */
+  you?: boolean;
 }
 
 export interface HudHandle {
@@ -46,6 +48,7 @@ export interface HudHandle {
 
 interface ChipRec {
   chip: HTMLElement;
+  youPill: HTMLElement;
   avatar: HTMLElement;
   avKey: string;
   nameEl: HTMLElement;
@@ -64,9 +67,15 @@ function makeChip(p: HudPlayerState, idx: number): ChipRec {
   const kind = p.kind ?? "";
   const chip = document.createElement("div");
   chip.className = "ssp-hud-chip";
+  chip.dataset.hudPlayer = String(p.id ?? `p${idx}`);
 
   const avatar = playerAvatar(kind || `player ${idx + 1}`, p.color);
   avatar.classList.add("ssp-hud-chip__avatar");
+  const youPill = document.createElement("span");
+  youPill.className = "ssp-hud-chip__you";
+  youPill.textContent = "YOU";
+  youPill.hidden = true;
+  chip.appendChild(youPill);
 
   const info = document.createElement("div");
   info.className = "ssp-hud-chip__info";
@@ -117,6 +126,7 @@ function makeChip(p: HudPlayerState, idx: number): ChipRec {
 
   return {
     chip,
+    youPill,
     avatar,
     avKey: `${kind}|${p.color ?? ""}`,
     nameEl,
@@ -164,6 +174,10 @@ export function hud(): HudHandle {
       const name = p.name ?? (kind ? cap(kind) : `Player ${idx + 1}`);
       rec.nameEl.textContent = name;
       rec.chip.title = name;
+      const you = p.you === true;
+      rec.youPill.hidden = !you;
+      if (you) rec.chip.dataset.you = "1";
+      else delete rec.chip.dataset.you;
 
       rec.coinsEl.textContent = String(Math.max(0, Math.round(p.coins ?? 0)));
       rec.starsEl.textContent = String(Math.max(0, Math.round(p.stars ?? 0)));

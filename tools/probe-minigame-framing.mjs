@@ -148,7 +148,7 @@ async function shoot(page, file, w, h, beat) {
   const boxes = await textBoxes(page);
   const issues = checkBoxes(boxes, w, h);
   if (flat.share > FLAT_MAX) issues.push(`flat ${flat.colour} ${(flat.share * 100).toFixed(0)}%`);
-  if (beat === "3-win" && !boxes.some((b) => b.kind === "headline" && /WINS!/.test(b.text))) issues.push("no WINS! headline");
+  if (beat === "3-win" && !boxes.some((b) => b.kind === "headline" && /WINS?!/.test(b.text))) issues.push("no WINS! headline");
   if (beat === "4-card" && !boxes.some((b) => b.kind === "card")) issues.push("no rank card");
   return { flat: flat.share, issues };
 }
