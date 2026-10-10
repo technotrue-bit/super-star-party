@@ -8,6 +8,7 @@ import { defaultSeatController, type SeatController } from "./seat";
 import { resetMinigameTracking } from "../minigames/registry";
 import { assignPlayerPacks, blankPlayedByPack, readPersistedRules, syncPersistedRules } from "../minigames/packRules";
 import { bindLiveRules } from "../minigames/liveRules";
+import { restockShops } from "../game/shopStock";
 import type { CoinMultiplier, MinigamePackId } from "../minigames/packRules";
 
 export type SpaceType =
@@ -181,6 +182,10 @@ export interface MatchState {
    * A pack opens again once every game in it has been dealt.
    */
   playedByPack: Record<string, string[]>;
+  /** Gumball stock per shop space index ("10", "21"): 3 item keys in draw order. */
+  shopStock: Record<string, string[]>;
+  /** match.turn the current stock was drawn for. */
+  shopStockRound: number;
 }
 
 function makePlayer(id: number, kind: string, name: string, controller: SeatController): PlayerState {
@@ -233,6 +238,8 @@ export const match: MatchState = {
   coinMultiplier: persistedRules.coinMultiplier,
   humanPack: persistedRules.humanPack,
   playedByPack: blankPlayedByPack(),
+  shopStock: {},
+  shopStockRound: 0,
 };
 
 bindLiveRules(match);
@@ -273,6 +280,8 @@ export function startMatch(
   match.lastMinigameId = null;
   match.lastMinigamePack = null;
   match.minigameDice = null;
+  match.shopStock = {};
+  match.shopStockRound = 0;
 
   // Pull the host's saved rotation onto this match, then deal packs.
   // Local seats keep the human pack; CPU and remote seats draw.
@@ -281,6 +290,9 @@ export function startMatch(
 
   // Reset minigame pack tracking for a fresh match (MP7 no-repeat within pack)
   resetMinigameTracking();
+
+  // Round 1 gumball stock. Fixed draw count, same point on every peer.
+  restockShops(match);
 }
 
 /** Deep snapshot for the debug API / critics. */

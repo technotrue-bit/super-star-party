@@ -7,6 +7,8 @@
  * Golden Zip Mushroom, Sour Mushroom, double dice, Funhouse Hatch, dueling
  * glove, Lucky Card, Cogfly, swap card, Wisp Bell, genie lamp, Balloon Tug,
  * and Grumpus Coat.
+ * Each shop space only sells the 3 keys shopStock.ts drew for this round;
+ * ITEM_ORDER is the full catalog (Barker pity, debug, draw pool order).
  * All coin changes go through economy.addCoins; all randomness through rng.
  * Dice stay outcome-first: dash and poison edit the movement total after
  * the face is chosen. The turn loop imports the pinned shapes below.
@@ -18,6 +20,7 @@ import { bus } from "../core/events";
 import { fizzyFairground } from "../board/boardData";
 import { addCoins } from "./economy";
 import { canPlaceTrap, placeTrap } from "./traps";
+import { shopStockAt, shopVisitLog } from "./shopStock";
 import type { TrapKind } from "../core/game";
 
 export interface ItemDef {
@@ -471,22 +474,31 @@ export interface ShopDecision {
 
 /**
  * One automatic shop visit for a CPU or an autoplay human.
- * Buys a single affordable item the player does not already hold, chosen
- * with rng (so the visit is a real decision and a seeded run replays).
+ * Buys a single affordable item from the 3 on sale at `shopSpace` that the
+ * player does not already hold, chosen with rng (so the visit is a real
+ * decision and a seeded run replays).
  * Orb items are included only when a legal space exists, and are thrown
  * immediately — the same placement rules as the stall's picker — so the
  * visit never opens a modal. No candidate means they leave without buying
  * and without drawing from rng.
  */
-export function decideShopPurchase(playerId: number): ShopDecision | null {
+export function decideShopPurchase(playerId: number, shopSpace?: number): ShopDecision | null {
   const player = match.players[playerId];
   if (!player) return null;
+  const space = shopSpace ?? player.space;
+  const stock = shopStockAt(space);
+  const decision = pickShopPurchase(playerId, player, stock);
+  shopVisitLog.push({ turn: match.turn, pid: playerId, space, stock, bought: decision?.key ?? null });
+  return decision;
+}
+
+function pickShopPurchase(playerId: number, player: PlayerState, stock: readonly string[]): ShopDecision | null {
   const shopSpaces = fizzyFairground.spaces.filter((s) => s.type === "shop").map((s) => s.index);
   const legal = fizzyFairground.spaces
     .filter((s) => canPlaceTrap(playerId, s.index, match.starBalloonPos, shopSpaces))
     .map((s) => s.index);
   const candidates: string[] = [];
-  for (const key of ITEM_ORDER) {
+  for (const key of stock) {
     const def = ITEM_DEFS[key];
     if (!def) continue;
     if (def.lateGame && !starCannonAvailable()) continue;

@@ -11,7 +11,7 @@
  * loop can publish the choice; party assist is that loop's concern.
  * Solo autoplay is unchanged.
  */
-import { playerController } from "../core/game";
+import { match, playerController } from "../core/game";
 import { isAutoplay } from "../core/debug";
 import { onlineMatch } from "../net/mode";
 import { rng } from "../core/rng";
@@ -112,7 +112,7 @@ export const decisions: DecisionSource = {
 
   shop(playerId) {
     if (!automatic(playerId)) return { pending: true };
-    return { decision: decideShopPurchase(playerId) };
+    return { decision: decideShopPurchase(playerId, match.players[playerId]?.space) };
   },
 
   starBundle(playerId) {

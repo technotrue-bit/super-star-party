@@ -56,6 +56,7 @@ import {
   type UseItemResult,
 } from "./items";
 import { openShop } from "../screens/shopScreen";
+import { restockShops } from "./shopStock";
 import { tryPickMinigame } from "../minigames/registry";
 import { setPendingMinigame } from "../minigames/framework";
 import { getMinigameDescription, showMinigamePreview, skipNextMinigamePreScreen } from "../screens/minigameScreen";
@@ -304,7 +305,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     poisonPopup: PopupHandle | null;
     poisonAutoCommit: (() => void) | null;
     netDice: boolean;
-    netShop: { pid: number; done: () => void } | null;
+    netShop: { pid: number; space: number; done: () => void } | null;
     netStar: { pid: number; commit: (count: number) => void; pass: () => void } | null;
     netPoison: { holderId: number; finish: (use: boolean) => void } | null;
     netPath: {
@@ -459,7 +460,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       const wait = S.netShop;
       if (playerController(wait.pid) === "cpu") {
         S.netShop = null;
-        const decision = decideShopPurchase(wait.pid);
+        const decision = decideShopPurchase(wait.pid, wait.space);
         if (decision) toastShop(decision);
         else ui.toast("Just looking!", { durationMs: 900 });
         wait.done();
@@ -470,7 +471,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       shiftChoice();
       S.netShop = null;
       if (msg.auto) {
-        const decision = decideShopPurchase(wait.pid);
+        const decision = decideShopPurchase(wait.pid, wait.space);
         if (decision) toastShop(decision);
         else ui.toast("Just looking!", { durationMs: 900 });
       } else if ((msg.bought ?? []).length === 0) {
@@ -1764,17 +1765,19 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       refreshHud();
       then();
     };
+    // The player already stands on the shop (land and pass), so this picks its stock.
+    const space = match.players[pid].space;
     const gate = netGate(pid);
     if (gate === "assist") {
       publishChoice({ kind: "shop", playerId: pid, auto: true });
-      const decision = decideShopPurchase(pid);
+      const decision = decideShopPurchase(pid, space);
       if (decision) toastShop(decision);
       else ui.toast("Just looking!", { durationMs: 900 });
       done();
       return;
     }
     if (gate === "remote") {
-      S.netShop = { pid, done };
+      S.netShop = { pid, space, done };
       pumpNet();
       return;
     }
@@ -1806,7 +1809,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     };
     // The stall has its own cheerful music-box jingle while the human is choosing.
     audio.music.play("shop", { intensity: 0.35 });
-    openShop(pid)
+    openShop(pid, { shopSpace: space })
       .then((res) => {
         if (S.disposed) return;
         S.shopOpen = false;
@@ -1928,6 +1931,12 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   /* ---------------- minigame round ---------------- */
 
+  /** Round rollover: next turn, then fresh gumball stock (fixed rng draws, every peer). */
+  const advanceRound = (): void => {
+    match.turn += 1;
+    restockShops(match);
+  };
+
   const minigameRound = (): void => {
     growTrees();
     ageCircuses();
@@ -1939,7 +1948,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     match.minigameTriggeredThisRound = false;
     if (!popped) {
       ui.toast("No balloon popped — the midway stays quiet.", { durationMs: 1500 });
-      match.turn += 1;
+      advanceRound();
       if (match.turn > match.totalTurns) {
         results();
       } else {
@@ -1962,7 +1971,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     if (!mg) {
       // No minigames registered yet — toast and carry on.
       ui.toast("Minigames arrive in Wave 3!", { durationMs: 2200 });
-      match.turn += 1;
+      advanceRound();
       if (match.turn > match.totalTurns) {
         results();
       } else {
@@ -1976,7 +1985,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     // the "MINI GAME TIME!" card exactly as requested. Only after the user
     // clicks START do we switch screens and let the players "jump in".
     console.log('[turnLoop] minigameRound triggered for turn', match.turn, 'mg=', mg.id);
-    match.turn += 1;
+    advanceRound();
     match.lastMinigameId = mg.id;
     match.lastMinigamePack = mg.pack ?? "midway";
     if (onlineMatch()) {
