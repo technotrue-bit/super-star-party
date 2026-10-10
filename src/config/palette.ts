@@ -28,6 +28,7 @@ export const palette = {
   // ---- board-world colors (Fizzy Fairground) ----
   grassA: "#7ED957", // checker light
   grassB: "#5BBE3E", // checker dark
+  grassMid: "#6BCB49", // lawn rings between the checker tones (minigame floor)
   path: "#FFE9B8", // sandy path
   pathEdge: "#E8C987",
   tentRed: "#FF5A6E",

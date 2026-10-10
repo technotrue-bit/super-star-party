@@ -24,7 +24,8 @@ import * as THREE from "three";
 import { isLocalPlayer, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import type { Character } from "../../characters/characterFactory";
 import { palette, hex } from "../../config/palette";
-import { Course, FINISH_X, START_X, LANE_Z } from "./course";
+import { Course, FINISH_X, START_X, LANE_Z, GROUND_HALF } from "./course";
+import { box as frameBox, frameMinigame } from "../framing";
 import {
   buildObstacle,
   cpuPlanFor,
@@ -396,6 +397,9 @@ const S = {
   shakeT: 0,
   bursts: [] as BurstShard[],
   camLook: new THREE.Vector3(),
+  /** Fitted follow rig, relative to the anchor x (see fitFollowCamera). */
+  camOff: new THREE.Vector3(7.2, 4.4, 9.6),
+  lookOff: new THREE.Vector3(0.3, 1.5, 0),
   /** Position indicator (pure display — never read by gameplay). */
   hud: {
     group: null as THREE.Group | null,
@@ -578,14 +582,23 @@ function setup(ctx: MinigameContext): void {
   for (let l = 0; l < 4; l++) S.nextSpawn[l] = 11 + ctx.rng() * 5;
   pregenerateObstacles();
 
-  // Camera frames the start line during the countdown. Initialise the look
-  // target to the human's lane (z=2.55) so the human is centred from the
-  // first frame — no lerp from z=0 needed.
-  const localRunner = S.runners.find((r) => isLocalPlayer(ctx.players, r.id)) ?? S.runners[0];
-  const cam = ctx.camera;
-  cam.position.set(START_X + 7.2, 4.4, 9.6);
-  S.camLook.set(START_X + 0.3, 1.5, LANE_Z[localRunner?.lane ?? 3]);
-  cam.lookAt(S.camLook);
+  // Camera frames the start line during the countdown: all four lanes and a
+  // stretch of course ahead, fitted to the screen (a tall phone backs the
+  // camera off instead of cropping the other runners). The fitted pose is
+  // kept as an offset from the start line and follows the human from there.
+  frameMinigame(
+    ctx.camera,
+    {
+      box: frameBox([START_X - 1.2, 0, -GROUND_HALF], [START_X + 4.6, 3.0, GROUND_HALF]),
+      dir: new THREE.Vector3(6.9, 2.9, 9.6),
+      fov: 50,
+    },
+    (f) => {
+      S.camOff.set(f.pos.x - START_X, f.pos.y, f.pos.z);
+      S.lookOff.set(f.look.x - START_X, f.look.y, f.look.z);
+      S.camLook.copy(f.look);
+    }
+  );
 
   // Local seat: any press jumps (buffered 0.15s if pressed mid-air).
   const localIndex = localPlayerIndex(ctx.players);
@@ -737,29 +750,23 @@ function updateCamera(dt: number): void {
   let leaderX = humanX;
   for (const r of S.runners) if (r.x > leaderX) leaderX = r.x;
 
-  // Look at the human's lane. The camera sits 7.2 ahead and 9.6 to the
-  // side of the human (nearest lane, z=2.55); looking at z=0 would put
-  // the human ~15° off-centre — outside the ~11° portrait horizontal
-  // half-FOV. Looking at the human's lane centres them horizontally.
-  // A tiny forward bias (0.3) gives a hint of the course ahead without
-  // pushing the human off-frame; it grows slightly when trailing so the
-  // leaders peek in, but is capped so the human never leaves the viewport.
+  // The fitted rig (setup) keeps all four lanes on screen at any aspect, so
+  // the camera follows the human along the course only; the lane framing
+  // stays put. A small forward bias grows when trailing so leaders peek in.
   const trail = Math.max(0, leaderX - humanX);
-  const lead = 0.3 + Math.min(trail * 0.1, 0.7);
-  const humanZ = LANE_Z[human.lane];
+  const bias = Math.min(trail * 0.1, 0.7);
+  const anchor = clamp(humanX, START_X, 56.8);
 
   // Snap camera position to the human (no lag — the human moves at
   // 6 u/s * speed, and a lerp would fall behind at high speed).
-  cam.position.x = clamp(humanX + 7.2, START_X + 7.2, 64);
-  cam.position.y = 4.4;
-  cam.position.z = 9.6;
+  cam.position.set(anchor + S.camOff.x, S.camOff.y, S.camOff.z);
 
   // Lerp look target for smoothness (no snap/jitter).
   const k = 1 - Math.exp(-5 * dt);
-  const lx = clamp(humanX + lead, START_X + 3.2, 58);
+  const lx = clamp(humanX + bias, START_X, 56.8) + S.lookOff.x;
   S.camLook.x += (lx - S.camLook.x) * k;
-  S.camLook.y += (1.5 - S.camLook.y) * k;
-  S.camLook.z += (humanZ - S.camLook.z) * k;
+  S.camLook.y += (S.lookOff.y - S.camLook.y) * k;
+  S.camLook.z += (S.lookOff.z - S.camLook.z) * k;
 
   let sx = 0;
   let sy = 0;

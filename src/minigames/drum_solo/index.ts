@@ -38,6 +38,8 @@ import * as THREE from "three";
 import { automatedSeatIds, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
+import { box as frameBox, frameMinigame } from "../framing";
+import { viewportSize } from "../../ui/viewport";
 import { palette, hex } from "../../config/palette";
 import { isAutoplay } from "../../core/debug";
 import { buildSong, type BeatMask } from "./patterns";
@@ -211,15 +213,25 @@ function makeStarTexture(): THREE.CanvasTexture {
   return toTexture(canvas);
 }
 
-/** Marquee banner: ink "DRUM SOLO" flanked by gold stars (transparent bg). */
+/**
+ * Marquee banner: ink "DRUM SOLO" on a gold board, flanked by gold stars.
+ * The board is painted (not left transparent): the marquee material is
+ * opaque, so a transparent canvas rendered black and the ink lettering
+ * vanished into it.
+ */
 function makeMarqueeTexture(): THREE.CanvasTexture {
   const [canvas, c] = makeCanvas(1024, 160);
+  c.fillStyle = palette.sun;
+  c.fillRect(0, 0, 1024, 160);
+  c.fillStyle = palette.sunDeep;
+  c.fillRect(0, 0, 1024, 10);
+  c.fillRect(0, 150, 1024, 10);
   c.font = "700 110px Fredoka, sans-serif";
   c.textAlign = "center";
   c.textBaseline = "middle";
   c.lineJoin = "round";
-  c.lineWidth = 16;
-  c.strokeStyle = palette.ink;
+  c.lineWidth = 14;
+  c.strokeStyle = palette.cream;
   c.strokeText("DRUM SOLO", 512, 86);
   c.fillStyle = palette.ink;
   c.fillText("DRUM SOLO", 512, 86);
@@ -310,7 +322,7 @@ function buildStage(st: DrumSoloState): void {
   root.add(wall);
   const marquee = new THREE.Mesh(
     new THREE.BoxGeometry(11.6, 0.8, 0.2),
-    new THREE.MeshBasicMaterial({ map: marqueeTex, color: hex(palette.sun) })
+    new THREE.MeshBasicMaterial({ map: marqueeTex })
   );
   marquee.position.set(0, 4.75, -3.4);
   root.add(marquee);
@@ -684,14 +696,17 @@ const drumSolo: Minigame = {
     st.dotPool = makeParticlePool(st, MAX_DOT_PARTICLES, dotTex);
     st.starPool = makeParticlePool(st, MAX_STAR_PARTICLES, starTex);
 
-    /* ---- fixed front camera (portrait widens the fov to fit 4 lanes) ---- */
-    const cam = ctx.camera;
-    const portrait = window.innerWidth / window.innerHeight < 1;
-    cam.fov = portrait ? 68 : 45;
-    if (portrait) cam.position.set(0, 6.2, 11.8);
-    else cam.position.set(0, 4.6, 9.2);
-    cam.updateProjectionMatrix();
-    cam.lookAt(0, 0.9, 0.5);
+    /* ---- fixed front camera, fitted to the screen: the four lanes with
+       their drummers, the wall and its marquee always on screen ---- */
+    frameMinigame(ctx.camera, () => {
+      const { w, h } = viewportSize();
+      const halfX = w / h >= 1 ? 6.45 : 4.15;
+      return {
+        box: frameBox([-halfX, 0, -3.65], [halfX, 5.2, 4.95]),
+        dir: new THREE.Vector3(0, 5.3, 11.3),
+        fov: 50,
+      };
+    });
 
     /* ---- input: tap anywhere or confirm = strike lane 0 ---- */
     ctx.input.pointer = (_x: number, _y: number, down: boolean): void => {

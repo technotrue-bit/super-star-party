@@ -23,6 +23,7 @@
 import * as THREE from "three";
 import { isLocalPlayer, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import { registerMinigame } from "../registry";
+import { box as frameBox, frameMinigame } from "../framing";
 import { palette, hex } from "../../config/palette";
 import { celGradient } from "../../characters/cel";
 
@@ -205,11 +206,22 @@ function newGeo(st: State, g: THREE.BufferGeometry): THREE.BufferGeometry {
   return g;
 }
 
-/** Ink outline shell: a slightly larger clone of the same geometry. */
-function outlineShell(st: State, geo: THREE.BufferGeometry, scale = 1.06): THREE.Mesh {
-  const g = geo.clone();
+/**
+ * Ink outline for a mesh: a back-face shell that sits exactly where the mesh
+ * is. (The shell used to keep only the geometry, so it landed at the origin
+ * as a solid ink slab in front of the camera.)
+ */
+function outlineShell(st: State, src: THREE.Mesh, scale = 1.06): THREE.Mesh {
+  const g = src.geometry.clone();
   g.scale(scale, scale, scale);
-  return new THREE.Mesh(g, basic(st, hex(palette.ink)));
+  const mat = basic(st, hex(palette.ink));
+  mat.side = THREE.BackSide;
+  const shell = new THREE.Mesh(g, mat);
+  shell.position.copy(src.position);
+  shell.quaternion.copy(src.quaternion);
+  shell.scale.copy(src.scale);
+  shell.castShadow = false;
+  return shell;
 }
 
 /** Dispose only geometries under a root (materials are shared/round-scoped). */
@@ -410,18 +422,19 @@ function buildUi(st: State): void {
   const root = document.createElement("div");
   root.id = "ssp-bp-ui";
   root.style.cssText =
-    "position:fixed;top:12px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:8px;z-index:85;pointer-events:none;font-family:Fredoka,system-ui,sans-serif;user-select:none;";
+    "position:fixed;top:12px;left:50%;transform:translateX(-50%);width:max-content;max-width:96vw;display:flex;flex-direction:column;align-items:center;gap:8px;z-index:85;pointer-events:none;font-family:Fredoka,system-ui,sans-serif;user-select:none;";
   const row = document.createElement("div");
-  row.style.cssText = "display:flex;gap:8px;align-items:center;";
+  // Wraps and tightens on a narrow phone so no chip runs off the edge.
+  row.style.cssText = "display:flex;flex-wrap:wrap;justify-content:center;gap:5px;align-items:center;max-width:97vw;";
   for (const P of st.players) {
     const chip = document.createElement("div");
     chip.dataset.pid = String(P.id);
     chip.style.cssText =
-      "display:flex;align-items:center;gap:7px;background:" +
+      "display:flex;align-items:center;gap:5px;background:" +
       (isLocalPlayer(st.ctx.players, P.id) ? palette.sun : palette.cream) +
       ";border:3px solid " +
       palette.ink +
-      ";border-radius:999px;padding:4px 14px;font-weight:700;font-size:15px;color:" +
+      ";border-radius:999px;padding:3px 8px;font-weight:700;font-size:13px;color:" +
       palette.ink +
       ";box-shadow:0 3px 0 " +
       palette.ink +
@@ -473,7 +486,7 @@ function buildArena(st: State): void {
 
   // ---- back wall: horizontal candy stripes (cream + candy/sun bands) ----
   const wall = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(L.wallW + 1.6, 7.6, 0.3)), toon(st, cream), [0, 3.9, wallZ]);
-  st.root.add(outlineShell(st, wall.geometry, 1.02));
+  st.root.add(outlineShell(st, wall, 1.02));
   const stripeColors = [hex(palette.candy), cream, hex(palette.sun), cream, hex(palette.candy), cream];
   const stripeH = 7.6 / stripeColors.length;
   for (let i = 0; i < stripeColors.length; i++) {
@@ -497,7 +510,7 @@ function buildArena(st: State): void {
     const P = st.players[i];
     const px = L.colX[i];
     const panel = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(L.panelW, 7.6, 0.4)), toon(st, cream), [px, 3.9, wallZ + 0.22]);
-    st.root.add(outlineShell(st, panel.geometry, 1.05));
+    st.root.add(outlineShell(st, panel, 1.05));
     addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(L.panelW, 0.36, 0.44)), toon(st, P.color), [px, 7.8, wallZ + 0.18]);
     // soft inner shading strip at the bottom so balloons read against the panel
     addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(L.panelW - 0.3, 0.5, 0.42)), toon(st, hex(palette.creamShadow)), [px, 0.7, wallZ + 0.2]);
@@ -520,12 +533,26 @@ function buildArena(st: State): void {
 
   // ---- stage strip + player pads (characters stand here, front +Z) ----
   const stage = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(L.wallW + 0.8, 0.42, 2.9)), toon(st, cream), [0, 0.21, 0.35]);
-  st.root.add(outlineShell(st, stage.geometry));
+  st.root.add(outlineShell(st, stage));
+  // booth floor boards from the wall to past the stage, so the gap under the
+  // balloons reads as the booth, not as open ground
+  const floor = addMesh(
+    st, st.root, newGeo(st, new THREE.PlaneGeometry(L.wallW + 1.6, 9.4)),
+    toon(st, hex(palette.wood)), [0, 0.005, -2.0], [-Math.PI / 2, 0, 0]
+  );
+  floor.castShadow = false;
+  for (let i = 0; i < 6; i++) {
+    const seam = addMesh(
+      st, st.root, newGeo(st, new THREE.PlaneGeometry(L.wallW + 1.6, 0.07)),
+      toon(st, hex(palette.woodDark)), [0, 0.01, -6.1 + i * 1.5], [-Math.PI / 2, 0, 0]
+    );
+    seam.castShadow = false;
+  }
   const padGeo = newGeo(st, new THREE.CylinderGeometry(0.82, 0.94, 0.16, 16));
   for (let i = 0; i < 4; i++) {
     const px = L.colX[i];
     const pad = addMesh(st, st.root, padGeo, toon(st, st.players[i].color), [px, 0.5, 0.35]);
-    st.root.add(outlineShell(st, pad.geometry, 1.12));
+    st.root.add(outlineShell(st, pad, 1.12));
     void pad;
     // character on the pad, facing +Z (toward the camera)
     const ch = ctx.characters[i] ?? null;
@@ -533,6 +560,9 @@ function buildArena(st: State): void {
       const wrapper = new THREE.Group();
       wrapper.position.set(px, 0.58, 0.85);
       wrapper.add(ch.group);
+      // The screen lined the avatars up at (x, 0, 5.4); inside the wrapper
+      // that offset pushed Pip and Tusk off the pads (and off screen).
+      ch.group.position.set(0, 0, 0);
       st.root.add(wrapper);
       st.players[i].wrapper = wrapper;
       st.players[i].char = ch.group;
@@ -896,12 +926,24 @@ const balloonPop: Minigame = {
       });
     });
 
-    // ---- camera: front view of the carnival wall ----
-    const cam = ctx.camera;
-    cam.position.set(L.cam[0], L.cam[1], L.cam[2]);
-    cam.fov = L.fov;
-    cam.lookAt(0, 3.5, -6);
-    cam.updateProjectionMatrix();
+    // ---- camera: front view of the carnival wall, fitted to the screen ----
+    // The whole booth (wall, awning, pads and the characters on them) stays
+    // between the score chips and the POP button at any aspect.
+    const halfW = (L.wallW + 1.6) / 2;
+    frameMinigame(
+      ctx.camera,
+      {
+        box: frameBox([-halfW, 0, -6.6], [halfW, 8.3, 1.9]),
+        dir: new THREE.Vector3(0, 2.3, 14),
+        fov: 50,
+        // chips + time bar + the announce line under them
+        insets: { top: 104 },
+      },
+      (f) => {
+        st.camBase = [f.pos.x, f.pos.y, f.pos.z];
+        st.camLook = [f.look.x, f.look.y, f.look.z];
+      }
+    );
 
     buildArena(st);
     ctx.scene.add(st.root);

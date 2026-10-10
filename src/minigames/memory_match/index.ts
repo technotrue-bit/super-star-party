@@ -29,6 +29,7 @@ import * as THREE from "three";
 import { automatedSeatIds, isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
 import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
+import { box as frameBox, frameMinigame } from "../framing";
 import { palette, hex } from "../../config/palette";
 import { isAutoplay } from "../../core/debug";
 import {
@@ -287,11 +288,13 @@ const memoryMatch: Minigame = {
       st.pips.push(row);
     }
 
-    /* ---- fixed 3/4 party camera over the table ---- */
-    const portrait = window.innerWidth / window.innerHeight < 1;
-    const cam = ctx.camera;
-    cam.position.set(0, portrait ? 8.8 : 7.4, portrait ? 10.9 : 8.8);
-    cam.lookAt(0, 1.0, 0);
+    /* ---- fixed 3/4 party camera over the table, fitted to the screen:
+       the card table and all four players behind it ---- */
+    frameMinigame(ctx.camera, {
+      box: frameBox([-3.95, 0, -5.75], [3.95, 2.35, 2.45]),
+      dir: new THREE.Vector3(0, 7.8, 10.9),
+      fov: 50,
+    });
 
     /* ---- intro banner + input handlers ---- */
     ctx.announce("MATCH THE PAIRS!", { durationMs: 1500, sound: null });

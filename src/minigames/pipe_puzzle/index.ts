@@ -26,6 +26,7 @@ import * as THREE from "three";
 import { isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
 import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
+import { box as frameBox, frameMinigame } from "../framing";
 import { palette, hex } from "../../config/palette";
 import { isAutoplay } from "../../core/debug";
 import {
@@ -259,16 +260,13 @@ const pipePuzzle: Minigame = {
       st.pips.push(row);
     }
 
-    /* ---- fixed 3/4 party camera (slight +X so the source reads) ---- */
-    const portrait = window.innerWidth / window.innerHeight < 1;
-    const cam = ctx.camera;
-    if (portrait) {
-      cam.position.set(1.2, 9.6, 12.8);
-      cam.lookAt(0.1, 0.9, 0);
-    } else {
-      cam.position.set(1.0, 7.1, 9.9);
-      cam.lookAt(0.1, 0.85, 0);
-    }
+    /* ---- fixed 3/4 party camera (slight +X so the source reads), fitted
+       to the screen: the pipe table and all four players behind it ---- */
+    frameMinigame(ctx.camera, {
+      box: frameBox([-4.2, 0, -5.5], [4.2, 2.45, 3.35]),
+      dir: new THREE.Vector3(1.1, 8.7, 12.8),
+      fov: 50,
+    });
 
     /* ---- round 1 grid ---- */
     st.defs = generateRound(ctx.rng);
