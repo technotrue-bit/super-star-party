@@ -16,6 +16,8 @@
 import * as THREE from "three";
 import { isLocalPlayer, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import { registerMinigame } from "../registry";
+import { box as frameBox, frameMinigame } from "../framing";
+import { viewportSize } from "../../ui/viewport";
 import { palette, hex } from "../../config/palette";
 import { celGradient } from "../../characters/cel";
 
@@ -159,10 +161,21 @@ function basic(st: State, color: number): THREE.MeshBasicMaterial {
 
 const OUTLINE_SCALE = 1.06;
 
-function outlineShell(st: State, geo: THREE.BufferGeometry): THREE.Mesh {
-  const g = geo.clone();
+/**
+ * Ink outline for a mesh: a back-face shell placed exactly on the mesh. (It
+ * used to keep only the geometry, so every shell piled up at the origin as
+ * a solid ink post in the middle of the arena.)
+ */
+function outlineShell(st: State, src: THREE.Mesh): THREE.Mesh {
+  const g = src.geometry.clone();
   g.scale(OUTLINE_SCALE, OUTLINE_SCALE, OUTLINE_SCALE);
-  return new THREE.Mesh(g, basic(st, hex(palette.ink)));
+  const mat = basic(st, hex(palette.ink));
+  mat.side = THREE.BackSide;
+  const shell = new THREE.Mesh(g, mat);
+  shell.position.copy(src.position);
+  shell.quaternion.copy(src.quaternion);
+  shell.scale.copy(src.scale);
+  return shell;
 }
 
 function addMesh(
@@ -369,7 +382,7 @@ function buildArena(st: State): void {
   const b2 = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(22, 0.26, 0.3)), borderMat, [0, 0.03, 7.75], undefined, false);
   const b3 = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(0.3, 0.26, 16.5)), borderMat, [-11.15, 0.03, 0.4], undefined, false);
   const b4 = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(0.3, 0.26, 16.5)), borderMat, [11.15, 0.03, 0.4], undefined, false);
-  for (const b of [b1, b2, b3, b4]) st.root.add(outlineShell(st, b.geometry));
+  for (const b of [b1, b2, b3, b4]) st.root.add(outlineShell(st, b));
 
   // ---- carnival backdrop wall ----
   addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(24, 8.2, 0.3)), toon(st, cream), [0, 4.1, -9.9], undefined, false);
@@ -384,13 +397,13 @@ function buildArena(st: State): void {
   const starGeo = newGeo(st, new THREE.OctahedronGeometry(1));
   const star = addMesh(st, st.root, starGeo, toon(st, hex(palette.sun)), [0, 6.15, -9.7]);
   star.scale.set(1.15, 1.55, 0.5);
-  st.root.add(outlineShell(st, starGeo));
+  st.root.add(outlineShell(st, star));
   // two big gold coins on the wall
   for (const cx of [-4.4, 4.4]) {
     const coinDisc = newGeo(st, new THREE.CylinderGeometry(0.62, 0.62, 0.1, 20));
     const disc = addMesh(st, st.root, coinDisc, toon(st, hex(palette.sun)), [cx, 2.5, -9.72], [Math.PI / 2, 0, 0], false);
     const inner = addMesh(st, st.root, newGeo(st, new THREE.CylinderGeometry(0.38, 0.38, 0.14, 16)), toon(st, hex(palette.sunDeep)), [cx, 2.5, -9.64], [Math.PI / 2, 0, 0], false);
-    st.root.add(outlineShell(st, coinDisc));
+    st.root.add(outlineShell(st, disc));
     void inner;
   }
 
@@ -415,14 +428,14 @@ function buildArena(st: State): void {
     const wallColor = lane % 2 === 0 ? hex(palette.candy) : hex(palette.berry);
     for (const side of [-0.8, 0.8]) {
       const w = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(18.4, 0.36, 0.14)), toon(st, wallColor), [0, 0.18, lz + side], undefined, false);
-      st.root.add(outlineShell(st, w.geometry));
+      st.root.add(outlineShell(st, w));
     }
     // target ring (bubble) + centre dot where coins land
     const ring = addMesh(
       st, st.root, newGeo(st, new THREE.TorusGeometry(0.36, 0.06, 8, 18)),
       toon(st, hex(palette.bubble)), [0, 0.21, lz + LAND_Z_OFF], [Math.PI / 2, 0, 0], false
     );
-    st.root.add(outlineShell(st, ring.geometry));
+    st.root.add(outlineShell(st, ring));
     addMesh(st, st.root, newGeo(st, new THREE.SphereGeometry(1, 8, 6)), toon(st, hex(palette.sun)), [0, 0.22, lz + LAND_Z_OFF], undefined, false).scale.setScalar(0.08);
     // direction chevrons painted on the belt
     for (const cx of [-4.5, -7.5]) {
@@ -488,15 +501,15 @@ function buildArena(st: State): void {
     const color = st.players[lane].color;
     // stilted platform: thin column + floating disk (coin fall lines stay clear)
     const col = addMesh(st, st.root, newGeo(st, new THREE.CylinderGeometry(0.34, 0.44, 4.3, 14)), toon(st, color), [px, 2.15, pz], undefined, true);
-    st.root.add(outlineShell(st, col.geometry));
+    st.root.add(outlineShell(st, col));
     const disk = addMesh(st, st.root, newGeo(st, new THREE.CylinderGeometry(1.05, 1.05, 0.55, 18)), toon(st, color), [px, 4.62, pz], undefined, true);
-    st.root.add(outlineShell(st, disk.geometry));
+    st.root.add(outlineShell(st, disk));
     // cannon group
     const cannon = new THREE.Group();
     cannon.position.set(px, 0, pz);
     st.root.add(cannon);
     const base = addMesh(st, cannon, newGeo(st, new THREE.BoxGeometry(0.5, 0.28, 0.55)), toon(st, hex(palette.metal)), [0, 5.04, 0.62], undefined, true);
-    cannon.add(outlineShell(st, base.geometry));
+    cannon.add(outlineShell(st, base));
     const barrel = new THREE.Group();
     barrel.position.set(0, 5.15, 0.62);
     cannon.add(barrel);
@@ -519,6 +532,9 @@ function buildArena(st: State): void {
       const wrapper = new THREE.Group();
       wrapper.position.set(px + 0.55, 4.895, lz - 3.95);
       wrapper.add(ch.group);
+      // Drop the screen's lineup offset (x, 0, 5.4) so the avatar stands on
+      // its platform instead of down on the belts.
+      ch.group.position.set(0, 0, 0);
       st.root.add(wrapper);
       st.players[lane].wrapper = wrapper;
       st.players[lane].char = ch.group;
@@ -551,9 +567,9 @@ function spawnBasket(st: State, lane: number): void {
   const group = new THREE.Group();
   group.position.set(BASKET_SPAWN_X, 0, lz);
   const body = addMesh(st, group, newGeo(st, new THREE.CylinderGeometry(0.55, 0.42, 0.5, 14)), toon(st, colorHex), [0, 0.41, 0], undefined, true);
-  group.add(outlineShell(st, body.geometry));
+  group.add(outlineShell(st, body));
   const rim = addMesh(st, group, newGeo(st, new THREE.TorusGeometry(0.58, 0.07, 8, 18)), toon(st, hex(palette.cream)), [0, 0.66, 0], [Math.PI / 2, 0, 0], true);
-  group.add(outlineShell(st, rim.geometry));
+  group.add(outlineShell(st, rim));
   st.root.add(group);
   st.baskets.push({ group, lane, x: BASKET_SPAWN_X, speed, bounce: 0, spawnTime: st.simTime });
 }
@@ -846,20 +862,25 @@ const coinCannon: Minigame = {
     });
 
     // ---- camera (party view of all four corridors) ----
-    const cam = ctx.camera;
-    const portrait = window.innerWidth / window.innerHeight < 1;
-    if (portrait) {
-      st.camBase = [0, 16.5, 22];
-      st.camLook = [0, 2.8, -0.5];
-      cam.fov = 64;
-    } else {
-      st.camBase = [0, 12.5, 13.8];
-      st.camLook = [0, 2.6, -0.5];
-      cam.fov = 58;
-    }
-    cam.position.set(st.camBase[0], st.camBase[1], st.camBase[2]);
-    cam.lookAt(st.camLook[0], st.camLook[1], st.camLook[2]);
-    cam.updateProjectionMatrix();
+    // Fitted to the screen: the platforms with their characters and the four
+    // belts' landing rings always; on a wide screen also the full belts and
+    // the scoreboards on the left.
+    frameMinigame(
+      ctx.camera,
+      () => {
+        const { w, h } = viewportSize();
+        const wide = w / h >= 1;
+        return {
+          box: frameBox([wide ? -10.7 : -6.8, 0, -9.4], [wide ? 10 : 6.8, 7.2, 6.4]),
+          dir: new THREE.Vector3(0, 13.7, 22.5),
+          fov: wide ? 50 : 55,
+        };
+      },
+      (f) => {
+        st.camBase = [f.pos.x, f.pos.y, f.pos.z];
+        st.camLook = [f.look.x, f.look.y, f.look.z];
+      }
+    );
 
     buildArena(st);
     st.ctx.scene.add(st.root); // the arena is one root group — add it to the live scene

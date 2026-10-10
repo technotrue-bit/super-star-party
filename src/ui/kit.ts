@@ -111,7 +111,8 @@ function injectFeedbackStyles(): void {
       position: absolute; left: 50%; top: 70px;
       transform: translateX(-50%) scale(.6); opacity: 0;
       font-size: clamp(24px, 5.5vw, 40px); font-weight: 700; color: ${palette.white};
-      text-align: center; max-width: 92vw; white-space: nowrap;
+      text-align: center; width: max-content; max-width: 92vw; box-sizing: border-box;
+      white-space: normal; overflow-wrap: anywhere; text-wrap: balance; line-height: 1.12;
       text-shadow:
         0 2px 0 ${palette.ink}, 2px 0 0 ${palette.ink}, -2px 0 0 ${palette.ink}, 0 -2px 0 ${palette.ink},
         2px 2px 0 ${palette.ink}, -2px 2px 0 ${palette.ink}, 2px -2px 0 ${palette.ink}, -2px -2px 0 ${palette.ink},

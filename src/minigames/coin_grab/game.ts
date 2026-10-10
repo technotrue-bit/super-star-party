@@ -22,6 +22,8 @@ import * as THREE from "three";
 import { contactCpuFrozen, DASH_BURST, DASH_COOLDOWN, DASH_SPEED, dashDirection, isLocalPlayer, isPracticeBeat, localPlayerIndex, stickGround, takeContactPlace, tickTapCooldown, useSimTapClock, type Minigame, type MinigameContext } from "../framework";
 import { ease } from "../../core/rng";
 import { ui } from "../../ui/kit";
+import { viewportSize } from "../../ui/viewport";
+import { box as frameBox, frameMinigame } from "../framing";
 import { characterColor } from "../../characters/roster";
 import { celGradient } from "../../characters/cel";
 import { palette, hex } from "../../config/palette";
@@ -216,6 +218,8 @@ interface RoundState {
   hitStopSteps: number; // integer fixed-step countdown for visual hit-stop freeze
   human: HumanInput;
   camBase: THREE.Vector3;
+  /** Fitted look target (the field centre shifted to sit in the free screen area). */
+  camLook: THREE.Vector3;
   raycaster: THREE.Raycaster;
   plane: THREE.Plane;
   scratch: THREE.Vector3;
@@ -1057,7 +1061,7 @@ function updateCamera(state: RoundState, dt: number): void {
     cam.position.copy(state.camBase);
     cam.rotation.z = 0;
   }
-  cam.lookAt(0, 0, 0);
+  cam.lookAt(state.camLook);
 }
 
 /* ----------------------- critic telemetry mirror --------------------- */
@@ -1157,8 +1161,6 @@ export const coinGrabMinigame: Minigame = {
     useSimTapClock();
     const cam = ctx.camera;
     const portrait = window.innerWidth / window.innerHeight < 1;
-    cam.fov = portrait ? 72 : 62;
-    cam.updateProjectionMatrix();
     const camBase = new THREE.Vector3(0, portrait ? 17.6 : 11, portrait ? 10.3 : 9);
 
     const state: RoundState = {
@@ -1185,6 +1187,7 @@ export const coinGrabMinigame: Minigame = {
       hitStopSteps: 0,
       human: { held: false, tx: 0.5, ty: 0.5, idleT: 0, keyDir: null, keyIdleT: 0, stickX: 0, stickY: 0, dashArmed: false, dashCd: 0 },
       camBase,
+      camLook: new THREE.Vector3(),
       raycaster: new THREE.Raycaster(),
       plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
       scratch: new THREE.Vector3(),
@@ -1203,6 +1206,27 @@ export const coinGrabMinigame: Minigame = {
       physics: null,
     };
     ctx.scene.add(state.dyn);
+
+    // ---- camera fitted to the screen: the whole field inside the corner
+    // score chips and above the touch pads. Authored view direction kept
+    // (stick mapping unchanged); distance and look point adapt. ----
+    frameMinigame(
+      cam,
+      () => {
+        const { w, h } = viewportSize();
+        const tall = w / h < 1;
+        return {
+          box: frameBox([-ARENA_R - 0.6, 0, -ARENA_R - 0.6], [ARENA_R + 0.6, 1.6, ARENA_R + 0.6]),
+          dir: tall ? new THREE.Vector3(0, 17.6, 10.3) : new THREE.Vector3(0, 11, 9),
+          fov: tall ? 55 : 58,
+          insets: { top: 56, bottom: tall ? 205 : 120 },
+        };
+      },
+      (f) => {
+        state.camBase.copy(f.pos);
+        state.camLook.copy(f.look);
+      }
+    );
 
     // ---- characters at the four quarter points (with a touch of jitter) ----
     ctx.players.forEach((p, i) => {

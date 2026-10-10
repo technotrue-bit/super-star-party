@@ -19,6 +19,7 @@ import * as THREE from "three";
 import { isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
 import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
+import { box as frameBox, frameMinigame } from "../framing";
 import { palette, hex } from "../../config/palette";
 import { isAutoplay } from "../../core/debug";
 import { celGradient } from "../../characters/cel";
@@ -126,6 +127,8 @@ interface PushOfWarState {
   winReason?: string;
   prng: () => number;
   camBase: THREE.Vector3;
+  /** Fitted look target; the finish push-in swings away from it. */
+  camLook: THREE.Vector3;
   /* Tension retune + staging state */
   maxAbsCrate: number;
   postGameT: number;
@@ -667,12 +670,12 @@ function updateVisuals(st: PushOfWarState, dt: number): void {
        player; without this the whole match ran off-axis and the TRIO sat outside the
        portrait frame (measured: trio projected to x=-148, solo to x=139, both left of the
        195 centre). Mid-match aim is the court centre, swinging to the winner when pushed. */
-    cam.lookAt(st.camPushDir * 4 * pushEased, 0.5 - 0.1 * pushEased, 0.5 - 0.5 * pushEased);
+    cam.lookAt(st.camLook.x + st.camPushDir * 4 * pushEased, st.camLook.y - 0.1 * pushEased, st.camLook.z - 0.5 * pushEased);
   } else {
     cam.position.x = st.camBase.x + st.camPushDir * CAMERA_PUSH_X * pushEased;
     cam.position.y = st.camBase.y + pushEased;
     cam.position.z = st.camBase.z - 2.5 * pushEased;
-    cam.lookAt(st.camPushDir * 4 * pushEased, 0.5 - 0.1 * pushEased, 0.5 - 0.5 * pushEased);
+    cam.lookAt(st.camLook.x + st.camPushDir * 4 * pushEased, st.camLook.y - 0.1 * pushEased, st.camLook.z - 0.5 * pushEased);
   }
 
   // Solo aura ring — pulses warm during surges, steady soft-glow otherwise
@@ -902,11 +905,23 @@ const pushOfWar: Minigame = {
     ctx.scene.add(root);
 
     const cam = ctx.camera;
-    cam.fov = 60;
-    cam.updateProjectionMatrix();
     const camBase = new THREE.Vector3(0, 11.5, 9.4);
-    cam.position.copy(camBase);
-    cam.lookAt(0, 0.5, 0.5);
+    const camLook = new THREE.Vector3(0, 0.5, 0.5);
+    /* Fitted to the screen: the court, both teams, the crowd rails and the
+       tug meter stay between the HUD and the PUSH pad at any aspect. The
+       finish push-in still rides on camBase/camLook. */
+    frameMinigame(
+      cam,
+      {
+        box: frameBox([-4.3, 0, -3.8], [4.3, 3.55, 3.9]),
+        dir: new THREE.Vector3(0, 11, 8.9),
+        fov: 55,
+      },
+      (f) => {
+        camBase.copy(f.pos);
+        camLook.copy(f.look);
+      }
+    );
 
     makeArena(root);
     const crate = makeCrate(root);
@@ -1012,7 +1027,7 @@ const pushOfWar: Minigame = {
       players, soloId, trioIds, stepIndex: 0, simTime: 0, ended: false, finished: false,
       endPath: null, ranking: [], shakeT: 0, shakeMag: 0, lurchVelocity: 0,
       humanTaps: 0, humanCpu, crate, rope, indicator, dustPool, confettiPool,
-      prng, camBase,
+      prng, camBase, camLook,
       maxAbsCrate: 0, postGameT: 0, camPushDir: 1, lastIntensity: BASE_INTENSITY,
       recentPushes: 0, lastCrowdT: 0, audioLog: [],
       soloAuraRing, soloTAG: soloTag, vignetteEl,

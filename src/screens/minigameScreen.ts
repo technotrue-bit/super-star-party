@@ -66,6 +66,8 @@ import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
 import { startResultsCeremony, type ResultsCeremony } from "./resultsCeremony";
 import { createTouchPad, type TouchPad } from "../ui/touchPad";
+import { onViewportChange } from "../ui/viewport";
+import { clearFraming, makeLawnTexture, makeSkyTexture, reframe } from "../minigames/framing";
 
 /* ------------------------------------------------------------------ */
 /*  Scoped styles (injected once; every color from the palette)        */
@@ -151,9 +153,9 @@ function injectVsSplashStyles(): void {
     .ssp-vs-rect--a { background:linear-gradient(180deg, transparent 0%, ${palette.berry}22 100%); }
     .ssp-vs-rect--b { background:linear-gradient(180deg, transparent 0%, ${palette.sun}18 100%); }
     .ssp-vs-title {
-      position:absolute; left:50%; top:22%; transform:translateX(-50%);
-      font-size:clamp(34px, 9vw, 72px); font-weight:700; color:${palette.white};
-      text-align:center; white-space:nowrap; line-height:1.05;
+      position:absolute; left:4vw; right:4vw; top:22%;
+      font-size:clamp(30px, 9vw, 72px); font-weight:700; color:${palette.white};
+      text-align:center; white-space:normal; overflow-wrap:anywhere; text-wrap:balance; line-height:1.05;
       text-shadow:0 3px 0 ${palette.ink}, 3px 0 0 ${palette.ink}, -3px 0 0 ${palette.ink}, 0 -3px 0 ${palette.ink},
         2px 2px 0 ${palette.ink}, -2px 2px 0 ${palette.ink}, 2px -2px 0 ${palette.ink}, -2px -2px 0 ${palette.ink},
         0 6px 0 ${palette.ink};
@@ -241,9 +243,11 @@ function buildVsSplash(self: MgScreenState, mgName: string, themeColor: string):
   rectB.className = "ssp-vs-rect ssp-vs-rect--b";
   root.appendChild(rectB);
 
-  // Game name title — palette-colored per theme
+  // Game name title — palette-colored per theme. Spans the width (left/right
+  // insets) and wraps, so the pop-in's transform never pushes it off-screen.
   const titleEl = document.createElement("div");
   titleEl.className = "ssp-vs-title";
+  titleEl.dataset.sspHeadline = "vs";
   titleEl.style.color = themeColor || palette.white;
   titleEl.textContent = mgName;
   root.appendChild(titleEl);
@@ -539,6 +543,21 @@ interface MgScreenState {
   _vsTimer?: number;
   _vsPointerX?: number;
   _vsPointerY?: number;
+  /** Shared camera + scene look found on enter, put back on exit. */
+  _saved?: {
+    fov: number;
+    pos: THREE.Vector3;
+    quat: THREE.Quaternion;
+    background: THREE.Scene["background"];
+    fog: THREE.Scene["fog"];
+  };
+  _sky?: THREE.Texture;
+  _lawn?: THREE.Texture;
+  _offResize?: () => void;
+  /** Body children present before the arena was built (minigame HUDs are the rest). */
+  _domExisting?: Set<Element>;
+  /** Minigame HUD elements hidden for the results scene, with their old visibility. */
+  _domHidden?: { el: HTMLElement; vis: string }[];
 }
 
 const COUNT_TICKS = ["3", "2", "1"];
@@ -966,6 +985,23 @@ const minigameScreenImpl: MgScreenState & Screen = {
       // world.camera — same contract as the board/showcase screens) ----
       // Snapshot existing children: on exit we sweep everything added since.
       self._existing = new Set(world.scene?.children ?? []);
+      self._domExisting = new Set(Array.from(document.body.children));
+
+      // Remember the shared camera and scene look; exit() puts them back.
+      const scene0 = world.scene!;
+      const cam0 = world.camera!;
+      self._saved = {
+        fov: cam0.fov,
+        pos: cam0.position.clone(),
+        quat: cam0.quaternion.clone(),
+        background: scene0.background,
+        fog: scene0.fog,
+      };
+      // A sky instead of the ink clear colour: a tall portrait frame shows
+      // sky above the arena, never a flat dark void.
+      self._sky = makeSkyTexture();
+      scene0.background = self._sky;
+      scene0.fog = null;
 
       const hemi = new THREE.HemisphereLight(0xffffff, 0x2b1d4e, 1.1);
       const key = new THREE.DirectionalLight(0xffffff, 1.5);
@@ -973,20 +1009,29 @@ const minigameScreenImpl: MgScreenState & Screen = {
       world.scene?.add(hemi, key);
 
       // Decorative party floor — the minigame builds the actual arena on top.
+      // Wide enough that a far portrait camera never sees past its edge: a
+      // lawn checker (2.5-unit tiles) crossed by rings in a third green, so
+      // no single colour fills the lower half of a tall phone frame.
+      self._lawn = makeLawnTexture(72);
       const ground = new THREE.Mesh(
-        new THREE.CircleGeometry(13, 48),
-        new THREE.MeshBasicMaterial({ color: hex(palette.grassA) })
+        new THREE.CircleGeometry(90, 64),
+        new THREE.MeshBasicMaterial({ map: self._lawn })
       );
       ground.rotation.x = -Math.PI / 2;
-      ground.position.y = -0.02;
+      ground.position.y = -0.03;
       world.scene?.add(ground);
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(12.6, 13, 48),
-        new THREE.MeshBasicMaterial({ color: hex(palette.grassB) })
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = -0.01;
-      world.scene?.add(ring);
+      const bands = new THREE.Group();
+      const bandMat = new THREE.MeshBasicMaterial({ color: hex(palette.grassMid) });
+      for (let r = 13.5; r < 88; r += 5.5) {
+        const band = new THREE.Mesh(new THREE.RingGeometry(r, r + 2.5, 64), bandMat);
+        band.rotation.x = -Math.PI / 2;
+        band.position.y = -0.025;
+        bands.add(band);
+      }
+      world.scene?.add(bands);
+
+      // Rotation / Safari toolbar: re-fit whatever the minigame framed.
+      self._offResize = onViewportChange(() => reframe());
 
       // ---- the 4 live avatars — players "jump in" only after START is clicked ----
       self._chars = match.players.map((p, i) => {
@@ -1358,8 +1403,30 @@ const minigameScreenImpl: MgScreenState & Screen = {
     // Crowd cheer via the existing bus hook (minigame:end wired in crowd.ts).
     audio.music.play("win", { intensity: 0.9 });
 
+    // One headline at a time: the minigame's own finish announce (and any
+    // floating numbers) leave before the ceremony's "X WINS!".
+    ui.clearFeedback();
+    // The results scene leaves the minigame: its HUD (score chips, time bar,
+    // goal pill, seat marker) is hidden until exit, and its 3D arena is hidden
+    // by the ceremony (lights stay so the podium is lit).
+    this._domHidden = [];
+    for (const child of Array.from(document.body.children)) {
+      if (this._domExisting?.has(child) || !(child instanceof HTMLElement)) continue;
+      if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
+      this._domHidden.push({ el: child, vis: child.style.visibility });
+      child.style.visibility = "hidden";
+    }
+    const chars = new Set((this._chars ?? []).map((c) => c.group as THREE.Object3D));
+    const hide: THREE.Object3D[] = [];
+    for (const obj of world.scene?.children ?? []) {
+      if (this._existing?.has(obj) || chars.has(obj) || (obj as THREE.Light).isLight) continue;
+      hide.push(obj);
+    }
+    if (this._seatMark) hide.push(this._seatMark);
+
     // Start the ceremony (camera + podium + banner + coins + confetti + card).
     this._ceremony = startResultsCeremony({
+      hide,
       chars: this._chars ?? [],
       ranking,
       winner,
@@ -1409,6 +1476,12 @@ const minigameScreenImpl: MgScreenState & Screen = {
     this._ceremony?.destroy();
     this._ceremony = null;
     this._ceremonyDone = false;
+    for (const h of this._domHidden ?? []) h.el.style.visibility = h.vis;
+    this._domHidden = undefined;
+    this._domExisting = undefined;
+    this._offResize?.();
+    this._offResize = undefined;
+    clearFraming();
     // VS splash cleanup: remove DOM, clear timer
     if (this._vsTimer) {
       window.clearTimeout(this._vsTimer);
@@ -1437,6 +1510,21 @@ const minigameScreenImpl: MgScreenState & Screen = {
       }
     }
     this._existing = undefined;
+    // Put the shared camera and scene look back as enter() found them.
+    const saved = this._saved;
+    if (saved && world.camera && world.scene) {
+      world.camera.fov = saved.fov;
+      world.camera.updateProjectionMatrix();
+      world.camera.position.copy(saved.pos);
+      world.camera.quaternion.copy(saved.quat);
+      world.scene.background = saved.background;
+      world.scene.fog = saved.fog;
+    }
+    this._saved = undefined;
+    this._sky?.dispose();
+    this._sky = undefined;
+    this._lawn?.dispose();
+    this._lawn = undefined;
     this._countEl?.remove();
     this._countEl = undefined;
     this._flashEl?.remove();

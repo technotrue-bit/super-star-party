@@ -23,6 +23,8 @@
 import * as THREE from "three";
 import { contactCpuFrozen, DASH_BURST, DASH_COOLDOWN, DASH_SPEED, dashDirection, isLocalPlayer, isPracticeBeat, localPlayerIndex, stickGround, takeContactPlace, tickTapCooldown, useSimTapClock, type Minigame, type MinigameContext } from "../framework";
 import { ui } from "../../ui/kit";
+import { viewportSize } from "../../ui/viewport";
+import { box as frameBox, frameMinigame } from "../framing";
 import { characterColor } from "../../characters/roster";
 import { buildArena, ARENA_R, type ArenaHandle } from "./arena";
 import { freshBrain, repick, cpuDesiredDir, type CpuBrain, type CpuRival } from "./ai";
@@ -112,6 +114,7 @@ interface RoundState {
   human: HumanInput;
   camBase: THREE.Vector3;
   lookX: number;
+  lookY: number;
   lookZ: number;
   raycaster: THREE.Raycaster;
   plane: THREE.Plane;
@@ -166,11 +169,7 @@ export const bumperBallsMinigame: Minigame = {
        per-round state out of the cached instance object. */
     const cam = ctx.camera;
     const portrait = window.innerWidth / window.innerHeight < 1;
-    cam.fov = portrait ? 55 : 60;
-    cam.updateProjectionMatrix();
     const camBase = new THREE.Vector3(0, portrait ? 23.5 : 9.6, portrait ? 8.2 : 5.2);
-    cam.position.copy(camBase);
-    cam.lookAt(0, 0, portrait ? 0.5 : 1.0);
 
     const state: RoundState = {
       ctx,
@@ -190,6 +189,7 @@ export const bumperBallsMinigame: Minigame = {
       human: { held: false, tx: 0.5, ty: 0.5, idleT: 0, keyDir: null, keyIdleT: 0, stickX: 0, stickY: 0, dashArmed: false, dashCd: 0 },
       camBase,
       lookX: 0,
+      lookY: 0,
       lookZ: portrait ? 0.5 : 1.0,
       raycaster: new THREE.Raycaster(),
       plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
@@ -201,6 +201,29 @@ export const bumperBallsMinigame: Minigame = {
       stepIndex: 0,
       physics: null,
     };
+
+    /* ---- camera fitted to the screen: the whole arena and its rim stay
+       between the HUD chips and the touch pads. The view direction is the
+       authored one (stick mapping unchanged); only distance and the look
+       point move, so a tall phone sees the full ring. ---- */
+    frameMinigame(
+      cam,
+      () => {
+        const { w, h } = viewportSize();
+        const tall = w / h < 1;
+        return {
+          box: frameBox([-ARENA_R - 0.7, 0, -ARENA_R - 0.7], [ARENA_R + 0.7, 1.6, ARENA_R + 0.7]),
+          dir: tall ? new THREE.Vector3(0, 23.5, 7.7) : new THREE.Vector3(0, 9.6, 4.2),
+          fov: tall ? 50 : 55,
+        };
+      },
+      (f) => {
+        state.camBase.copy(f.pos);
+        state.lookX = f.look.x;
+        state.lookY = f.look.y;
+        state.lookZ = f.look.z;
+      }
+    );
 
     /* ---- bodies + holders (holder owns the fall/sink so the anim
        controller's group transforms never fight us) ---- */
@@ -283,6 +306,21 @@ export const bumperBallsMinigame: Minigame = {
       hudWrap.appendChild(chip);
     });
     document.getElementById("root")?.appendChild(hudWrap) ?? document.body.appendChild(hudWrap);
+    // Narrow phone: shrink the chip row to fit left of the round timer
+    // instead of running off both edges.
+    hudWrap.style.left = "6px";
+    hudWrap.style.right = "70px";
+    hudWrap.style.gap = "4px";
+    hudWrap.style.transformOrigin = "top center";
+    const fitHud = (): void => {
+      hudWrap.style.transform = "";
+      hudWrap.style.justifyContent = "flex-start"; // overflow only to the right while measuring
+      const avail = hudWrap.clientWidth;
+      const natural = hudWrap.scrollWidth;
+      hudWrap.style.justifyContent = "center";
+      if (natural > avail && natural > 0) hudWrap.style.transform = `scale(${(avail / natural).toFixed(3)})`;
+    };
+    fitHud();
 
     // Round timer
     const timerWrap = document.createElement("div");
@@ -863,5 +901,5 @@ function updateCamera(state: RoundState, dt: number): void {
   } else {
     cam.position.copy(state.camBase);
   }
-  cam.lookAt(state.lookX, 0, state.lookZ);
+  cam.lookAt(state.lookX, state.lookY, state.lookZ);
 }
