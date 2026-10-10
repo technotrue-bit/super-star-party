@@ -9,6 +9,7 @@ import { resetMinigameTracking } from "../minigames/registry";
 import { assignPlayerPacks, blankPlayedByPack, readPersistedRules, syncPersistedRules } from "../minigames/packRules";
 import { bindLiveRules } from "../minigames/liveRules";
 import { restockShops } from "../game/shopStock";
+import { pickPrizeSpot } from "../game/economy";
 import { activeBoard, bindActiveBoard, DEFAULT_BOARD, isBoardId, resolveBoardRule, type BoardId } from "../board/registry";
 import type { CoinMultiplier, MinigamePackId } from "../minigames/packRules";
 
@@ -291,9 +292,8 @@ export function startMatch(
   match.players = kinds.map((k, i) =>
     makePlayer(i, k, names[i] ?? `P${i + 1}`, controllers?.[i] ?? defaultSeatController(i), def.startIndex),
   );
-  // The board picks the balloon's start (carnival: 4, one hop after the
-  // Fizz Stamp Stand, so a jackpot on the way in can fund a purchase).
-  match.starBalloonPos = def.prizeStart;
+  // Seeded random start, drawn last (below); -1 until then.
+  match.starBalloonPos = -1;
   match.minigameTriggeredThisRound = false;
   match.turnOrder = [0, 1, 2, 3];
   match.orderRolls = [];
@@ -316,6 +316,10 @@ export function startMatch(
 
   // Round 1 gumball stock. Fixed draw count, same point on every peer.
   restockShops(match);
+
+  // Grand Prize Balloon: seeded random start away from the start space. One
+  // core draw, the last one here, so the round-1 stock above is unchanged.
+  match.starBalloonPos = pickPrizeSpot(def.startIndex, def.startIndex);
 }
 
 /** Deep snapshot for the debug API / critics. */

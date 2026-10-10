@@ -12,7 +12,7 @@ import { screens } from "../screens/screenManager";
 import { world } from "../main";
 import { openShop } from "../screens/shopScreen";
 import { resetWipeRotation } from "../ui/transitions";
-import { awardMinigameResult, minigameCoinAward, minigamePayout, playerCoins, type MinigameAward } from "../game/economy";
+import { awardMinigameResult, minigameCoinAward, minigamePayout, nearSpaces, pickFromSpots, playerCoins, type MinigameAward, type PrizePick } from "../game/economy";
 import {
   buyItem,
   collectLuckyBlue,
@@ -274,6 +274,14 @@ export interface SSPDebug {
   hudRanks(rows: { stars: number; coins: number }[]): number[] | null;
   /** Dev/CI only: the active board's edges plus the prize balloon space (copies). */
   boardLinks(): { id: string; size: number; next: number[][]; star: number } | null;
+  /**
+   * Dev/CI only: the pure Grand Prize pick on the active board for draw r in
+   * [0, 1), no rng. nearOf is a space (its starMoveNearHops set) or an explicit
+   * near list. Null in prod builds.
+   */
+  prizePickPreview(exclude: number, nearOf: number | number[], r: number): (PrizePick & { near: number[] }) | null;
+  /** Dev/CI only: spaces within starMoveNearHops of `space` either way (ascending). Null in prod builds. */
+  prizeNear(space: number): number[] | null;
   /** Playtest: local humans publish the CPU choice over the relay. */
   partyAssist(on: boolean): void;
   /** Leave the room. A guest's seat becomes a CPU. The host ends the room. */
@@ -736,6 +744,16 @@ export function installDebugAPI(): void {
       if (!seatTagsLive()) return null;
       const def = activeBoard();
       return { id: activeBoardId(), size: def.spaces.length, next: def.next.map((row) => [...row]), star: match.starBalloonPos };
+    },
+    prizePickPreview(exclude: number, nearOf: number | number[], r: number) {
+      if (!seatTagsLive()) return null;
+      const def = activeBoard();
+      const near = Array.isArray(nearOf) ? new Set(nearOf) : nearSpaces(def, nearOf);
+      return { ...pickFromSpots(def.prizeSpots, exclude, near, r), near: [...near].sort((a, b) => a - b) };
+    },
+    prizeNear(space: number) {
+      if (!seatTagsLive()) return null;
+      return [...nearSpaces(activeBoard(), space)].sort((a, b) => a - b);
     },
     partyAssist(on: boolean) {
       setPartyAssist(on);

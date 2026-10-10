@@ -158,7 +158,7 @@ export function resolveTrap(victimId: number, trap: SpaceTrap): TrapResult {
 
   if (trap.kind === "star_shift") {
     const from = match.starBalloonPos;
-    const next = movePrizeBalloon(trap.ownerId);
+    const next = movePrizeBalloon(trap.ownerId, "trap", victimId);
     return {
       ...base,
       starShifted: true,

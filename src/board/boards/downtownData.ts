@@ -15,7 +15,7 @@
  */
 import type { SpaceDef, SpaceType, StampKind } from "../../core/game";
 import { settings } from "../../config/settings";
-import type { BoardDef } from "../boardData";
+import { derivePrizeSpots, type BoardDef } from "../boardData";
 
 interface Tile {
   type: SpaceType;
@@ -37,8 +37,8 @@ function ringAt(i: number): [number, number] {
 const RING: Array<Omit<Tile, "at">> = [
   { type: "blue", name: "Central Station" }, // 0 start
   { type: "blue", name: "Ticket Hall" },
-  { type: "stamp", name: "Soda Fountain", stamp: "shy" }, // one hop before the balloon's start
-  { type: "blue", name: "Bakery Corner" }, // Grand Prize Balloon starts here
+  { type: "stamp", name: "Soda Fountain", stamp: "shy" },
+  { type: "blue", name: "Bakery Corner" },
   { type: "red", name: "Pothole Plaza" },
   { type: "blue", name: "Market Gate" }, // fork: Market Street
   { type: "blue", name: "Bus Stop" },
@@ -146,11 +146,14 @@ function buildNext(): number[][] {
   return next;
 }
 
+const downtownSpaces = buildSpaces();
+const downtownNext = buildNext();
+
 /** Downtown — the city board. Start = space 0 (Central Station). */
 export const downtown: BoardDef = {
   id: "downtown",
   name: "Downtown",
-  spaces: buildSpaces(),
+  spaces: downtownSpaces,
   // Only the Ring Road is a closed loop; the forks are open branches.
   loops: [Array.from({ length: RING_N }, (_, i) => i)],
   branches: [
@@ -160,12 +163,11 @@ export const downtown: BoardDef = {
   startIndex: 0,
   // fit = margin over the exact whole-board fit (boardScreenPlaceholder).
   cam: { center: [0, 0], fit: 1.08 },
-  next: buildNext(),
+  next: downtownNext,
   walk: "graph",
-  // rng.pick reads this order: Bakery Corner, Clock Tower, Harbor Avenue,
-  // Grand Bridge, Theater Marquee, City Hall Steps, Plaza Fountain, The Quay.
-  prizeSpots: [3, 8, 12, 19, 23, 28, marketIdx[3], riverIdx[2]],
-  prizeStart: 3,
+  // Same rule as the carnival (derivePrizeSpots); the balloon starts on a
+  // seeded random spot (startMatch).
+  prizeSpots: derivePrizeSpots({ spaces: downtownSpaces, next: downtownNext, startIndex: 0 }),
   theme: "downtown",
   skin: {
     npc: { name: "Grumbles the Meter Maid", short: "Grumbles" },

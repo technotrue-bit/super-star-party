@@ -16,6 +16,8 @@ import { bus } from "../core/events";
 import { audio } from "../audio/audioEngine";
 import { settings } from "../config/settings";
 import { activeBoard } from "../board/registry";
+import type { BoardDef } from "../board/boardData";
+import { distanceTo } from "../board/boardGraph";
 import { getMinigameCoinMultiplier } from "../minigames/packRules";
 
 export type BonusStarKind = "mini" | "coin" | "stamp";
@@ -120,26 +122,65 @@ export function tryBuyStars(playerId: number, requested: number): StarPurchase {
 }
 
 /**
- * Spaces the Grand Prize Balloon may float to: the board's ordered
- * prizeSpots minus where it is now. Order matters, rng.pick reads it.
- * (On the carnival the Funhouse Cut tiles are never a spot.)
+ * Spaces within `hops` of `x` either way along the move graph (x included).
+ * Pure: no match state, no rng.
  */
-function prizeBalloonSpots(except: number): number[] {
-  return activeBoard().prizeSpots.filter((index) => index !== except);
+export function nearSpaces(def: BoardDef, x: number, hops = settings.starMoveNearHops): Set<number> {
+  const within = (from: number, to: number) => (distanceTo(def, from, to, hops) ?? Infinity) <= hops;
+  const near = new Set<number>();
+  for (let s = 0; s < def.spaces.length; s++) {
+    if (within(x, s) || within(s, x)) near.add(s);
+  }
+  return near;
+}
+
+export interface PrizePick {
+  to: number;
+  /** 1 = not current, not near; 2 = near rule dropped; 3 = nowhere else, stays. */
+  tier: 1 | 2 | 3;
+  candidates: number[];
 }
 
 /**
- * Pop the Grand Prize Balloon and reinflate it on a new walkable space.
- * Deterministic via rng. Plays the gasp/pop. Returns the new position
- * (unchanged when there is nowhere else to go).
+ * The Grand Prize pick for a draw r in [0, 1): tier 1 = spots minus exclude
+ * minus near, tier 2 = spots minus exclude, tier 3 = stay on exclude.
+ * Pure, so the debug hook can preview every tier.
  */
-export function movePrizeBalloon(byId: number): number {
+export function pickFromSpots(all: readonly number[], exclude: number, near: ReadonlySet<number>, r: number): PrizePick {
+  let candidates = all.filter((s) => s !== exclude && !near.has(s));
+  let tier: PrizePick["tier"] = 1;
+  if (candidates.length === 0) {
+    candidates = all.filter((s) => s !== exclude);
+    tier = 2;
+  }
+  if (candidates.length === 0) return { to: exclude, tier: 3, candidates };
+  return { to: candidates[Math.floor(r * candidates.length)], tier, candidates };
+}
+
+/**
+ * Pick a Grand Prize spot that is not `exclude` and not near `nearOf`
+ * (falling back as in pickFromSpots). Always exactly one core rng draw,
+ * taken before any filtering, so the draw count never depends on the board.
+ */
+export function pickPrizeSpot(exclude: number, nearOf: number): number {
+  const r = rng.next();
+  const def = activeBoard();
+  return pickFromSpots(def.prizeSpots, exclude, nearSpaces(def, nearOf), r).to;
+}
+
+/**
+ * Pop the Grand Prize Balloon and reinflate it on a new spot away from the
+ * player `nearPlayer` (default `byId`: the buyer, or whoever set off the
+ * breeze; for a star_shift trap, the victim who stepped on it). One core rng
+ * draw. Plays the gasp/pop. Returns the new position (unchanged when there is
+ * nowhere else to go).
+ */
+export function movePrizeBalloon(byId: number, cause: "buy" | "breeze" | "trap" = "buy", nearPlayer = byId): number {
   const current = match.starBalloonPos;
-  const spots = prizeBalloonSpots(current);
-  if (spots.length === 0) return current;
-  const next = rng.pick(spots);
+  const next = pickPrizeSpot(current, match.players[nearPlayer]?.space ?? current);
+  if (next === current) return current;
   match.starBalloonPos = next;
-  bus.emit("star:balloon_moved", { from: current, to: next, by: byId });
+  bus.emit("star:balloon_moved", { from: current, to: next, by: byId, cause });
   audio.sfx.play("balloon.gasp");
   return next;
 }
