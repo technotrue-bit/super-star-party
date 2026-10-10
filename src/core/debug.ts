@@ -4,6 +4,7 @@
  * Must always exist, even with audio off. Never remove fields; add freely.
  */
 import { match, snapshot, startMatch } from "./game";
+import type { SeatController } from "./seat";
 import { rng } from "./rng";
 import { bus, type SSPEventMap } from "./events";
 import { audio } from "../audio/audioEngine";
@@ -170,7 +171,7 @@ export interface SSPDebug {
   phaseLog(): PhaseMark[];
   /** Emit a bus event (probe aid for presentation listeners). */
   emit(event: string, payload: unknown): void;
-  startMatch(kinds: string[], names?: string[]): void;
+  startMatch(kinds: string[], names?: string[], controllers?: SeatController[]): void;
   /** Debug-only: jump to end-of-match (set phase='ended' for finale wiring). */
   endMatch(): void;
   resetWipeRotation(): void;
@@ -568,11 +569,11 @@ export function installDebugAPI(): void {
     emit(event: string, payload: unknown) {
       bus.emit(event as keyof SSPEventMap, payload as never);
     },
-    startMatch(kinds: string[], names?: string[]) {
+    startMatch(kinds: string[], names?: string[], controllers?: SeatController[]) {
       // Preserve the current seed (set via __SSP__.seed(n)) so critic
       // replays are byte-identical; plain startMatch still reseeds randomly.
       setOnlineMatch(false);
-      startMatch(kinds, names ?? [], 10, match.seed);
+      startMatch(kinds, names ?? [], 10, match.seed, controllers);
       screens.goto("board");
     },
     /** Debug-only: start a match with varied data and jump to finale. */
