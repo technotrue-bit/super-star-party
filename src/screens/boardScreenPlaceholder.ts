@@ -60,6 +60,7 @@ body.ssp-board-on { --ssp-fb-banner-top: calc(env(safe-area-inset-top, 0px) + 14
 .ssp-roll-wrap { position:fixed; left:50%; bottom:calc(22px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); z-index:89; }
 .ssp-roll-pulse { animation:sspRollPulse 1.15s ease-in-out infinite; }
 @keyframes sspRollPulse { 0%,100% { filter:brightness(1); } 50% { filter:brightness(1.18); } }
+.ssp-item-bar [data-item-used] { opacity:.45; filter:grayscale(1); cursor:default; pointer-events:none; }
 .ssp-item-bar { position:fixed; left:50%; bottom:calc(118px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); display:flex; gap:10px; z-index:63; max-width:96vw; flex-wrap:wrap; justify-content:center; }
 .ssp-die { position:fixed; left:50%; top:32%; transform:translateX(-50%); width:104px; height:104px; border-radius:24px; background:${palette.cream}; border:5px solid ${palette.ink}; box-shadow:7px 7px 0 ${palette.ink}; display:flex; align-items:center; justify-content:center; z-index:90; }
 .ssp-die__face { font-size:52px; font-weight:700; color:${palette.ink}; user-select:none; line-height:1; }

@@ -4,7 +4,9 @@
  *   A. countdown: forced walks (placePlayer + rollDice + the ROLL button) on the human seat, then
  *      natural autoplay turns. Per walk: first value == hops walked, cd + hopsDoneSoFar == start on
  *      every sampled frame, values run start..1, null at/after landing and outside "moving",
- *      never shown on a teleport / non-rolled walk.
+ *      never shown on a teleport / non-rolled walk. A roll that reaches a fork before its last pip
+ *      pauses for the lane pick (STAY/BRANCH) and keeps counting across it; a Midway Whistle teleport
+ *      returns to the dice phase (item bar greyed out) and a normal counted walk follows.
  *   B. prize hint: probe-side BFS over __SSP__.board().next (fork = min) == hint on every sampled
  *      dice/moving frame; "1 space" singular; 0 -> "On the Grand Prize Balloon!"; hidden otherwise;
  *      the hint follows a balloon move within 2 frames.
@@ -368,28 +370,26 @@ function planner(B, star) {
   const SAFE = new Set(["blue", "green", "red"]);
   const isFork = (s) => B.next[s].length === 2;
   const ok = (s) => SAFE.has(B.spaces[s].type) && s !== star && s !== B.startIndex;
-  /** Mirror of turnLoop.startMoving: truncate at a fork before the last hop; standing on a fork picks a lane. */
-  const sim = (start, face, pick = 0) => {
+  /** Full walk of `face` hops: each fork stood on before the last hop takes the next entry of `picks` (0 STAY, 1 BRANCH; default STAY). */
+  const sim = (start, face, picks = []) => {
     let cur = start;
+    let pi = 0;
     const path = [];
-    if (isFork(cur)) {
-      cur = B.next[cur][pick];
-      path.push(cur);
-      for (let i = 1; i < face; i++) { cur = B.next[cur][0]; path.push(cur); if (isFork(cur) && i < face - 1) return null; }
-      return { path, subs: [face], landing: cur };
-    }
+    const passed = [];
     for (let i = 0; i < face; i++) {
-      cur = B.next[cur][0];
+      if (isFork(cur)) {
+        if (i > 0) passed.push(cur);
+        cur = B.next[cur][picks[pi++] ?? 0];
+      } else cur = B.next[cur][0];
       path.push(cur);
-      if (isFork(cur) && i < face - 1) return { path, subs: [i + 1], landing: cur, truncated: true };
     }
-    return { path, subs: [face], landing: cur };
+    return { path, subs: [face], landing: cur, passed };
   };
   const clean = (s, r) => r && r.path.every(ok);
   const find = (pred, faces) => {
     for (let s = 0; s < B.next.length; s++) for (const f of faces) {
       for (const pick of [0, 1]) {
-        const r = sim(s, f, pick);
+        const r = sim(s, f, [pick, pick]);
         if (clean(s, r) && pred(s, r, f)) return { start: s, face: f, pick, ...r };
       }
     }
@@ -397,19 +397,26 @@ function planner(B, star) {
   };
   const forks = B.next.map((r, i) => (r.length === 2 ? i : -1)).filter((i) => i >= 0);
   const out = [];
-  const normal = find((s, r) => !r.truncated && r.path.every((p) => !isFork(p)) && !isFork(s), [4, 5, 3]);
+  const normal = find((s, r) => !r.passed.length && r.path.every((p) => !isFork(p)) && !isFork(s), [4, 5, 3]);
   if (normal) out.push({ name: "normal walk", ...normal, picks: [] });
-  const used = new Set();
-  forks.slice(0, 1).forEach((f) => {
-    const trunc = find((s, r) => r.truncated && r.landing === f && !used.has(`t${f}`) && !isFork(s), [5, 6, 4]);
-    if (trunc) { used.add(`t${f}`); out.push({ name: `fork truncation at ${f}`, ...trunc, picks: [] }); }
-  });
+  // Pass through fork f mid-roll: start on a plain space, fork strictly before the last pip, the pick chooses the lane.
+  for (const f of forks.slice(0, 1)) {
+    for (const pick of [0, 1]) {
+      let hit = null;
+      for (let s = 0; s < B.next.length && !hit; s++) for (const face of [5, 6, 4, 3]) {
+        if (isFork(s)) continue;
+        const r = sim(s, face, [pick]);
+        if (r.passed.length === 1 && r.passed[0] === f && !isFork(r.landing) && r.path.every(ok)) { hit = { start: s, face, pick, ...r }; break; }
+      }
+      if (hit) out.push({ name: `pass through fork ${f}, ${pick ? "BRANCH" : "STAY"}`, ...hit, picks: [pick ? "BRANCH" : "STAY"], through: true });
+    }
+  }
   for (const f of forks.slice(0, 1)) {
     for (const pick of [0, 1]) {
       let hit = null;
       for (const face of [4, 3, 5, 2]) {
-        const r = sim(f, face, pick);
-        if (r && r.path.every(ok)) { hit = { start: f, face, pick, ...r }; break; }
+        const r = sim(f, face, [pick]);
+        if (!r.passed.length && r.path.every(ok)) { hit = { start: f, face, pick, ...r }; break; }
       }
       if (hit) out.push({ name: `standing on fork ${f}, ${pick ? "BRANCH" : "STAY"}`, ...hit, picks: [pick ? "BRANCH" : "STAY"], standing: true });
     }
@@ -503,10 +510,11 @@ async function abRun() {
   const hasForks = plan.forks.length > 0;
   check("A scenarios found (normal walk)", plan.out.some((s) => s.name === "normal walk"));
   if (hasForks) {
-    check("A scenarios found (fork truncation)", plan.out.some((s) => s.name.startsWith("fork truncation")));
+    check("A scenarios found (pass through fork, STAY)", plan.out.some((s) => s.through && s.picks[0] === "STAY"));
+    check("A scenarios found (pass through fork, BRANCH)", plan.out.some((s) => s.through && s.picks[0] === "BRANCH"));
     check("A scenarios found (standing on fork)", plan.out.some((s) => s.standing));
   } else note("A board has no forks: fork scenarios skipped");
-  note("A5 mid-walk second lane choice skipped: a d6 cannot reach a second fork after the first pick");
+  note("A5 a second mid-roll lane choice is not scripted: one fork per roll is enough to show the countdown holding across the popup");
 
   const runs = [];
   for (const sc of plan.out) {
@@ -532,11 +540,13 @@ async function abRun() {
     note(`t+${((Date.now() - t0) / 1000).toFixed(0)}s: ${sc.name} done`);
   }
 
-  // A6 teleport: Midway Whistle from the item bar. Skipped (not failed) when the UI path is unavailable.
+  // A6 teleport: Midway Whistle from the item bar, then the normal counted roll (one item per turn).
   let teleported = false;
+  let a6 = null;
   try {
     // The item bar is rebuilt when the turn arms the dice, so the whistle goes in during the CPUs' turns.
-    const granted = await page.evaluate(() => window.__SSP__.grantItem(0, "warp_whistle"));
+    // Two whistles: the used one must stay listed (greyed) after the first is spent.
+    const granted = await page.evaluate(() => window.__SSP__.grantItem(0, "warp_whistle") && window.__SSP__.grantItem(0, "warp_whistle"));
     await waitHumanDice(page);
     const idx = (await page.evaluate(() => window.__HUDLOG.length)) - 1;
     const clicked = await page.evaluate(() => {
@@ -544,17 +554,41 @@ async function abRun() {
       if (b) b.click();
       return !!b;
     });
+    const lands0 = await page.evaluate(() => window.__SSP__.phaseLog().filter((x) => x.event === "player:land").length);
+    check("A6 whistle granted and item button present", !!granted && clicked, `granted=${granted} button=${clicked}`);
     if (granted && clicked) {
       for (let i = 0; i < 40 && !teleported; i++) {
         await sleep(150);
         const log = await page.evaluate((s) => window.__HUDLOG.slice(s).some((e) => e.ph === "moving" && e.cur === 0), idx);
         if (log) teleported = true;
       }
-      if (teleported) await driveWalk(page, [], 25000);
+      check("A6 whistle teleport started (phase moving)", teleported);
+      if (teleported) {
+        // The teleport no longer ends the turn: back to the pre-roll dice phase, ROLL live, item bar greyed out.
+        let back = true;
+        try { await waitHumanDice(page, 30000); } catch { back = false; }
+        const st = await page.evaluate(() => ({
+          ph: window.__SSP__.state().match.phase,
+          cur: window.__SSP__.state().match.currentPlayer,
+          sp: window.__SSP__.state().match.players[0].space,
+          btns: Array.from(document.querySelectorAll(".ssp-item-bar button")).map((b) => [b.disabled, b.getAttribute("data-item-used")]),
+        }));
+        check("A6 whistle: back to dice phase with ROLL enabled, same player", back && st.ph === "dice" && st.cur === 0, J({ back, ...st }));
+        check("A6 whistle: item bar greyed out (disabled, data-item-used=1)", st.btns.length > 0 && st.btns.every(([d, u]) => d && u === "1"), J(st.btns));
+        if (back) {
+          const face = 3;
+          const idx2 = (await page.evaluate(() => window.__HUDLOG.length)) - 1;
+          const rolled = await forceRoll(page, st.sp, face);
+          const done = rolled && (await driveWalk(page, []));
+          const lands = (await page.evaluate(() => window.__SSP__.phaseLog().filter((x) => x.event === "player:land").length)) - lands0;
+          check(`A6 whistle: counted walk followed (${st.sp} +${face})`, rolled && done, `rolled=${rolled} done=${done} ${J(await last(page))}`);
+          check("A6 whistle: exactly two player:land (teleport hop + walk end)", lands === 2, `${lands} lands`);
+          a6 = { dest: st.sp, face, idx: idx2 };
+        }
+      }
     }
-    if (!teleported) note(`A6 whistle teleport skipped (granted=${granted}, item button=${clicked})`);
   } catch (err) {
-    note(`A6 whistle teleport skipped: ${String(err).slice(0, 100)}`);
+    check("A6 whistle flow", false, String(err).slice(0, 160));
   }
 
   // B: explicit 0 / 1 / balloon-move frames
@@ -613,6 +647,11 @@ async function abRun() {
   if (teleported) {
     const tw = walks.filter((w) => w.cur === 0 && w.tele && !w.sawCd);
     check("A6 whistle teleport never showed a countdown", tw.length > 0, `${tw.length} teleport walks without a number`);
+  }
+  if (a6) {
+    const fromF = log[a6.idx]?.f ?? 0;
+    const w = walks.find((x) => x.f0 > fromF && x.cur === 0 && x.rolled && x.startSpace === a6.dest && x.subs.length);
+    check(`A6 whistle: countdown ${a6.face}..1 from the destination ${a6.dest}`, !!w && J(w.subs.map((s) => s.start)) === J([a6.face]) && w.landed && !w.tele, `walk ${J(w)}`);
   }
   const hn = checkHints(log, G);
   check("B hint == probe BFS on every dice/moving frame, hidden otherwise", hn.bad.length === 0 && hn.shown > 50, `${hn.shown} shown frames, ${hn.bad.length} bad: ${hn.bad.slice(0, 3).join(" | ")}`);

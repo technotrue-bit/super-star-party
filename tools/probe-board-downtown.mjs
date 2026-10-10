@@ -14,7 +14,8 @@
  * carnival-style type mix (2 shops, 2 grumpus, 3 stamps, 2 minigame balloons).
  *
  * Part 3 (Downtown runtime): autoplays seed 7 on Downtown and checks boardId,
- * that tokens only stand on valid spaces, the balloon only sits on prize spots,
+ * that tokens only stand on valid spaces, the balloon only sits on prize spots
+ * (or on a space a Balloon Tug pulled it to),
  * and that both forks were taken both ways (a branch tile and a skipped ring
  * tile seen) across the seeds in SSP_DT_SEEDS (default "7,2"), zero page errors.
  *
@@ -125,11 +126,21 @@ try {
     await p.goto(`${BASE}/?board=downtown&seed=${seed}&screen=board&autoplay=1&audio=0&speed=4`, { waitUntil: "domcontentloaded", timeout: 60000 });
     await p.waitForFunction(() => window.__SSP__?.state, null, { timeout: 45000 });
     await p.evaluate(() => {
-      const seen = { spaces: [], balloons: [], boards: [], turn: 0 };
+      // tugged: balloon positions set by a Balloon Tug (chomp_call moves the balloon onto the user's space,
+      // which need not be a prize spot); the prize-spot check skips those.
+      const seen = { spaces: [], balloons: [], boards: [], tugged: [], turn: 0 };
+      let prevPos = null, prevItems = null, tugUsers = [];
       const tick = () => {
         const m = window.__SSP__?.state?.()?.match;
         if (m && (m.players?.length ?? 0) > 0) {
           for (const pl of m.players ?? []) if (!seen.spaces.includes(pl.space)) seen.spaces.push(pl.space);
+          const items = m.players.map((x) => JSON.stringify(x.items ?? x.inventory ?? []));
+          if (prevItems) items.forEach((it, i) => { if (prevItems[i]?.includes("chomp_call") && !it.includes("chomp_call")) tugUsers.push({ i, turn: m.turn }); });
+          prevItems = items;
+          if (m.starBalloonPos !== prevPos) {
+            prevPos = m.starBalloonPos;
+            if (tugUsers.some((u) => u.turn === m.turn && m.players[u.i]?.space === prevPos) && !seen.tugged.includes(prevPos)) seen.tugged.push(prevPos);
+          }
           if (!seen.balloons.includes(m.starBalloonPos)) seen.balloons.push(m.starBalloonPos);
           if (m.boardId && !seen.boards.includes(m.boardId)) seen.boards.push(m.boardId);
           seen.turn = m.turn;
@@ -155,8 +166,8 @@ try {
       if (f.path.some((s) => spaces.has(s))) taken[k].branch = true;
       if (f.skipped.some((s) => spaces.has(s))) taken[k].ring = true;
     });
-    const badBalloon = seen.balloons.filter((b) => !ps.includes(b));
-    console.log(`    seed ${seed}: reached turn ${seen.turn}${finale ? " (finale)" : ""} in ${Math.round((Date.now() - t0) / 1000)}s, ${spaces.size} spaces stood on, balloon at [${seen.balloons.join(",")}]`);
+    const badBalloon = seen.balloons.filter((b) => !ps.includes(b) && !seen.tugged.includes(b));
+    console.log(`    seed ${seed}: reached turn ${seen.turn}${finale ? " (finale)" : ""} in ${Math.round((Date.now() - t0) / 1000)}s, ${spaces.size} spaces stood on, balloon at [${seen.balloons.join(",")}]${seen.tugged.length ? ` (Balloon Tug to ${seen.tugged.join(",")})` : ""}`);
     check(seen.boards.length === 1 && seen.boards[0] === "downtown", `seed ${seed}: match.boardId stays downtown (${seen.boards.join(",")})`);
     check(seen.turn >= Math.min(RUN_TURNS, 3) || finale, `seed ${seed}: match progressed (turn ${seen.turn})`);
     check([...spaces].every((s) => Number.isInteger(s) && s >= 0 && s < n), `seed ${seed}: tokens only on valid spaces`);

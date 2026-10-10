@@ -150,6 +150,15 @@ export type LoopPhase =
   | "results"
   | "ended";
 
+/**
+ * What a finished move does next: the landing's space effect, end the turn,
+ * or (a teleport item) go back to the pre-roll menu and still roll.
+ */
+type AfterMove = "effect" | "done" | "preroll";
+
+/** Items that change this turn's roll. They arm the die directly (no menu step). */
+const ROLL_MODS = new Set(["mushroom", "double_dice", "dash_mushroom", "golden_dash"]);
+
 /* ------------------------------------------------------------------ */
 /*  Public contracts                                                   */
 /* ------------------------------------------------------------------ */
@@ -274,7 +283,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     hopTo: number;
     hopT: number;
     hopActive: boolean;
-    afterMove: "effect" | "done";
+    afterMove: AfterMove;
     moveFromOverride: number | null;
     // blocking UI
     shopOpen: boolean;
@@ -376,6 +385,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   let stingerTO: number | null = null;
   /** Display only (not in S/MatchState): true while a rolled walk is in progress. */
   let countedWalk = false;
+  /** Display only: a roll modifier was used, so the item bar stays empty until the roll. */
+  let itemBarCleared = false;
 
   /* ---------------- helpers ---------------- */
 
@@ -503,33 +514,37 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       const pid = match.currentPlayer;
       if (playerController(pid) === "cpu") {
         S.netDice = false;
-        const key = pickAutoItem(pid);
+        // One item per turn: a seat that already used one goes straight to the die.
+        const key = match.itemUsedThisTurn ? null : pickAutoItem(pid);
         if (key) {
           const res = useItem(pid, key);
-          if (applyAutoItem(pid, res)) return S.phase === "dice";
+          // True: the item's beat / teleport / prize offer re-arms via returnToPreRoll.
+          if (applyAutoItem(pid, key, res)) return false;
         }
         armDice(pid);
         return false;
       }
       const msg = peekChoice();
       if (!msg || msg.playerId !== pid) return false;
+      if ((msg.kind === "preitem" || msg.kind === "item") && match.itemUsedThisTurn) {
+        // Every peer holds the same flag, so every peer drops this the same way.
+        shiftChoice();
+        console.warn(`[net] dropped a second ${msg.kind} from player ${pid}: one item per turn`);
+        return true;
+      }
       if (msg.kind === "preitem") {
         shiftChoice();
         const key = pickAutoItem(pid);
         if (key) {
           const res = useItem(pid, key);
-          if (applyAutoItem(pid, res)) {
-            if (S.phase !== "dice") S.netDice = false;
-            return true;
-          }
+          applyAutoItem(pid, key, res);
         }
         return true;
       }
       if (msg.kind === "item") {
         shiftChoice();
         const trade = msg.give || msg.take ? { give: msg.give, take: msg.take } : undefined;
-        finishBarUse(pid, useItem(pid, msg.key, msg.target, trade));
-        if (S.phase !== "dice") S.netDice = false;
+        finishBarUse(pid, msg.key, useItem(pid, msg.key, msg.target, trade));
         return true;
       }
       if (msg.kind === "roll") {
@@ -699,44 +714,108 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     }
   };
 
+  /** One pre-roll item per turn. Only a successful use counts (not Sour Mushroom, shop buys or a cancel). */
+  const markItemUsed = (): void => {
+    match.itemUsedThisTurn = true;
+  };
+
   /**
-   * CPU and autoplay use one held item before the roll. Returns true when
-   * that item left the dice phase (warp) or will arm the die itself (chomp).
+   * Back to the pre-roll menu after an item's beat, teleport or prize offer:
+   * the die hovers, the item bar shows greyed out, and the seat still rolls.
+   * No rng here beyond armDice's one CPU timer draw (the same draw the turn
+   * always makes before its roll).
    */
-  const applyAutoItem = (pid: number, res: UseItemResult): boolean => {
-    if (!res.ok) return false;
-    ui.toast(res.message, { durationMs: 1600 });
-    audio.sfx.play("boing");
-    refreshHud();
+  const returnToPreRoll = (pid: number): void => {
+    if (S.disposed) return;
+    S.phase = "dice";
+    match.phase = "dice";
+    S.itemResolving = false;
+    S.rolling = false;
+    const gate = netGate(pid);
+    if (gate === "remote") {
+      dice.hover(pid);
+      S.netDice = true;
+      pumpNet();
+      return;
+    }
+    armDice(pid);
+    if (gate === "assist") rollPressed();
+  };
+
+  /** Roll modifiers go straight into the roll: empty item bar, banner, die stays up. */
+  const armRollMod = (pid: number, res: UseItemResult): void => {
     if (res.extraDice) {
       S.rollsNeeded = 2;
       const p = match.players[pid];
       if (p) p.itemFx.doubleDice = false;
     }
+    itemBarCleared = true;
+    itemBar.innerHTML = "";
+    const bonus = match.players[pid]?.itemFx.rollBonus ?? 0;
+    hud.showBanner(res.extraDice ? "ROLL TWICE!" : `+${bonus} MOVE!`, { durationMs: 1100 });
+  };
+
+  /** Effect beat for every other item: banner, a sim-time pause, then the menu again. */
+  const itemBeat = (pid: number, res: UseItemResult): void => {
+    S.itemResolving = true;
+    S.netDice = false;
+    rollButton.setEnabled(false);
+    itemBar.innerHTML = "";
+    hud.showBanner(res.label, { durationMs: 900 });
+    pause(0.8, () => returnToPreRoll(pid));
+  };
+
+  /** Teleport items hop to the destination, then return to the pre-roll menu (afterMove "preroll"). */
+  const teleportThenRoll = (dest: number): void => {
+    S.itemResolving = true;
+    S.netDice = false;
+    rollButton.setEnabled(false);
+    itemBar.innerHTML = "";
+    dice.hide();
+    pause(0.35, () => {
+      S.itemResolving = false;
+      startMoving([dest], "preroll");
+    });
+  };
+
+  /** Balloon Tug: the prize offer is the beat, then the menu again. */
+  const chompThenRoll = (pid: number): void => {
+    S.itemResolving = true;
+    S.netDice = false;
+    rollButton.setEnabled(false);
+    offerPrizeBalloon(pid, () => {
+      if (S.disposed || S.phase !== "dice") return;
+      returnToPreRoll(pid);
+    });
+  };
+
+  /**
+   * CPU and autoplay use one held item before the roll. Returns true when the
+   * item took over (beat, teleport, prize offer): returnToPreRoll arms the die
+   * later, so the caller must not. False: arm the die now (roll modifier, or
+   * the use failed).
+   */
+  const applyAutoItem = (pid: number, key: string, res: UseItemResult): boolean => {
+    if (!res.ok) return false;
+    markItemUsed();
+    ui.toast(res.message, { durationMs: 1600 });
+    audio.sfx.play("boing");
+    refreshHud();
     if (res.swappedWith !== undefined) syncCharPositions();
+    if (ROLL_MODS.has(key)) {
+      armRollMod(pid, res);
+      return false;
+    }
     if (res.moveTo !== undefined) {
-      S.itemResolving = true;
-      rollButton.setEnabled(false);
-      itemBar.innerHTML = "";
-      dice.hide();
-      const after = res.landEffect ? "effect" : "done";
-      pause(0.35, () => {
-        S.itemResolving = false;
-        startMoving([res.moveTo as number], after);
-      });
+      teleportThenRoll(res.moveTo);
       return true;
     }
     if (res.chomp) {
-      S.itemResolving = true;
-      offerPrizeBalloon(pid, () => {
-        S.itemResolving = false;
-        if (S.disposed || S.phase !== "dice") return;
-        armDice(pid);
-        if (partyAssist() && playerController(pid) === "local") rollPressed();
-      });
+      chompThenRoll(pid);
       return true;
     }
-    return false;
+    itemBeat(pid, res);
+    return true;
   };
 
   const beginDice = (): void => {
@@ -750,6 +829,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     S.rolling = false;
     S.betweenRolls = 0;
     S.itemResolving = false;
+    itemBarCleared = false;
     if (player?.itemFx.doubleDice) {
       S.rollsNeeded = 2;
       player.itemFx.doubleDice = false;
@@ -761,7 +841,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       const key = pickAutoItem(pid);
       if (key) {
         const res = useItem(pid, key);
-        if (applyAutoItem(pid, res)) return;
+        if (applyAutoItem(pid, key, res)) return;
       }
       armDice(pid);
       rollPressed();
@@ -775,12 +855,12 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     const autoItem = decisions.preRollItem(pid);
     if (!isPending(autoItem) && autoItem.key && decisions.aim(pid) === "rng") {
       const res = useItem(pid, autoItem.key);
-      if (applyAutoItem(pid, res)) return;
+      if (applyAutoItem(pid, autoItem.key, res)) return;
     }
     armDice(pid);
   };
 
-  const startMoving = (queued: number[], after: "effect" | "done", total = 0): void => {
+  const startMoving = (queued: number[], after: AfterMove, total = 0): void => {
     const pid = match.currentPlayer;
     const player = match.players[pid];
     if (!player) return;
@@ -800,12 +880,14 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         offerJunction(pid, total, after);
         return;
       }
+      // Queue the whole roll on stay edges. A fork passed mid-roll is resolved on
+      // arrival by resumeMove (lane choice, then the rest of the pips); the fork
+      // only counts as the landing when the last pip ends on it.
       let cur = player.space;
       for (let i = 0; i < total; i++) {
         const nxt = stepOn(cur);
         S.moveQueue.push(nxt);
         cur = nxt;
-        if (forkAt(nxt) !== undefined && i < total - 1) break;
       }
     }
     if (S.moveQueue.length === 0) {
@@ -841,7 +923,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     }
   };
 
-  const offerJunction = (pid: number, hopsLeft = 0, after: "effect" | "done" = "effect"): void => {
+  const offerJunction = (pid: number, hopsLeft = 0, after: AfterMove = "effect"): void => {
     const here = match.players[pid]?.space ?? 0;
     const branchTo = forkAt(here);
     if (branchTo === undefined || hopsLeft <= 0) {
@@ -1095,6 +1177,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   const nextTurn = (): void => {
     if (match.players.length === 0) return;
+    // Before both minigameRound and beginTurn, so every checkpoint sees false.
+    match.itemUsedThisTurn = false;
 
     const order = match.turnOrder.length === match.players.length ? match.turnOrder : [0,1,2,3];
     const idx = order.indexOf(match.currentPlayer);
@@ -1294,68 +1378,62 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const rebuildItemBar = (pid: number): void => {
     itemBar.innerHTML = "";
     if (!decisions.choosesLocally(pid)) return;
+    // A roll modifier went straight into the roll: no menu until it is thrown.
+    if (itemBarCleared) return;
+    // After the turn's one item, held items stay listed but greyed out.
+    const used = match.itemUsedThisTurn;
     const keys = Array.from(new Set(match.players[pid]?.items ?? []));
     for (const key of keys) {
       if (key === "poison_mushroom") continue;
-      if (!canUseItem(pid, key)) continue;
+      if (!used && !canUseItem(pid, key)) continue;
       const def = ITEM_DEFS[key];
+      if (!def) continue;
       const btn = ui.button({
         label: `${def.icon} ${def.name}`,
         kind: "primary",
         size: "sm",
         sound: "ui.click",
-        ariaLabel: `Use ${def.name}`,
+        ariaLabel: used ? `${def.name} (one item per turn)` : `Use ${def.name}`,
       });
       btn.el.setAttribute("data-item-use", key);
-      btn.el.addEventListener("click", () => useItemPressed(pid, key));
+      if (used) {
+        btn.setEnabled(false);
+        btn.el.setAttribute("data-item-used", "1");
+        btn.el.setAttribute("aria-disabled", "true");
+      } else {
+        btn.el.addEventListener("click", () => useItemPressed(pid, key));
+      }
       itemBar.appendChild(btn.el);
     }
   };
 
-  const finishBarUse = (pid: number, res: UseItemResult): void => {
+  /** A bar (or net-replayed) item use resolved: roll modifier, teleport, prize offer, or the effect beat. */
+  const finishBarUse = (pid: number, key: string, res: UseItemResult): void => {
     if (!res.ok) {
       ui.toast(res.message, { durationMs: 1400 });
       rebuildItemBar(pid);
       if (decisions.usesRollButton(pid)) rollButton.setEnabled(true);
       return;
     }
+    markItemUsed();
     ui.toast(res.message, { durationMs: 2200 });
     audio.sfx.play("boing");
     refreshHud();
     if (res.swappedWith !== undefined) syncCharPositions();
-    if (res.extraDice) {
-      S.rollsNeeded = 2;
-      const p = match.players[pid];
-      if (p) p.itemFx.doubleDice = false;
-      rebuildItemBar(pid);
+    if (ROLL_MODS.has(key)) {
+      armRollMod(pid, res);
       if (decisions.usesRollButton(pid)) rollButton.setEnabled(true);
       return;
     }
     if (res.moveTo !== undefined) {
-      S.itemResolving = true;
-      dice.hide();
-      rollButton.setEnabled(false);
-      itemBar.innerHTML = "";
-      const after = res.landEffect ? "effect" : "done";
-      pause(0.35, () => {
-        S.itemResolving = false;
-        startMoving([res.moveTo as number], after);
-      });
+      teleportThenRoll(res.moveTo);
       return;
     }
     if (res.chomp) {
-      S.itemResolving = true;
-      rollButton.setEnabled(false);
-      offerPrizeBalloon(pid, () => {
-        S.itemResolving = false;
-        if (S.disposed || S.phase !== "dice") return;
-        if (decisions.usesRollButton(pid)) rollButton.setEnabled(true);
-        rebuildItemBar(pid);
-      });
+      chompThenRoll(pid);
       return;
     }
-    rebuildItemBar(pid);
-    if (decisions.usesRollButton(pid)) rollButton.setEnabled(true);
+    itemBeat(pid, res);
   };
 
   const openTargetPicker = (pid: number, key: string): void => {
@@ -1391,7 +1469,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         give: trade?.give,
         take: trade?.take,
       });
-      finishBarUse(pid, useItem(pid, key, target, trade));
+      finishBarUse(pid, key, useItem(pid, key, target, trade));
     };
     // Autoplay that flips on mid-picker chooses with rng and never waits.
     S.itemAutoCommit = () => {
@@ -1458,7 +1536,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   };
 
   const useItemPressed = (pid: number, key: string): void => {
-    if (S.phase !== "dice" || S.rolling || S.itemResolving) return;
+    if (S.phase !== "dice" || S.rolling || S.itemResolving || match.itemUsedThisTurn) return;
     if (TARGET_PICK.has(key)) {
       const aim = decisions.aim(pid);
       if (aim === "picker") {
@@ -1467,11 +1545,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       }
       if (aim === "wait") return;
       publishLocal(pid, { kind: "item", playerId: pid, key });
-      finishBarUse(pid, useItem(pid, key));
+      finishBarUse(pid, key, useItem(pid, key));
       return;
     }
     publishLocal(pid, { kind: "item", playerId: pid, key });
-    finishBarUse(pid, useItem(pid, key));
+    finishBarUse(pid, key, useItem(pid, key));
   };
 
   /* ---------------- space effects ---------------- */
@@ -2200,14 +2278,22 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
             // Coins land before the space effect, so they can fund a star or a shop.
             playCarnivalSqueeze(pid);
             if (S.afterMove === "effect") enterSpaceEffect(pid);
-            else finishTurn();
+            else if (S.afterMove === "preroll") {
+              // Teleport item: no space effect here (the roll's landing has it).
+              // The Grand Prize is offered as on a pass, then the seat still rolls.
+              const back = (): void => returnToPreRoll(pid);
+              if (S.hopTo === match.starBalloonPos) offerPrizeBalloon(pid, back);
+              else back();
+            } else finishTurn();
           } else {
             // Pass fires stamps, minigame balloons, the Grand Prize Balloon, and shops.
             // Red, blue, green, and grumpus stay land-only.
+            // A fork with pips left asks for the lane after those pass effects;
+            // pick() rebuilds the rest of the queue from the chosen lane.
             const resumeMove = (): void => {
               const branch = forkAt(S.hopTo);
               const hopsLeft = S.moveQueue.length - S.moveIdx;
-              if (branch !== undefined && hopsLeft > 0) offerJunction(pid, hopsLeft);
+              if (branch !== undefined && hopsLeft > 0) offerJunction(pid, hopsLeft, S.afterMove);
               else startHop(pid);
             };
             arriveCarnival(pid, S.hopTo, false);
