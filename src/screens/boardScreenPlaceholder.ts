@@ -25,7 +25,10 @@ import { setAutoplay } from "../core/debug";
 import { isAutoplay } from "../core/debug";
 import { buildBoardScene, boardBounds, type BoardScene } from "../board/boardScene";
 import { activeBoard } from "../board/registry";
-import { createCharacter, type Character } from "../characters/characterFactory";
+import { distanceTo } from "../board/boardGraph";
+import { createMoveCountdown, type MoveCountdown } from "../ui/moveCountdown";
+import { createPrizeHint, type PrizeHint } from "../ui/prizeHint";
+import { setHudViewReader, type HudView } from "../core/debug";import { createCharacter, type Character } from "../characters/characterFactory";
 import { createTurnLoop, PLAYER_OFFSETS, type DiceView, type TurnLoop } from "../game/turnLoop";
 import { createDie3d, type Die3DHandle } from "../ui/die3d";
 import { createPauseOverlay, makePauseButton } from "./pauseMenu";
@@ -53,6 +56,7 @@ function injectBoardStyles(): void {
 /* The wrap stays STABLE for clickability — pulse is a non-layout glow on the
    inner button (.ssp-roll-pulse), never on the hit target itself. Playwright's
    actionability check (stable bounding box) and a real finger both succeed. */
+body.ssp-board-on { --ssp-fb-banner-top: calc(env(safe-area-inset-top, 0px) + 140px); }
 .ssp-roll-wrap { position:fixed; left:50%; bottom:calc(22px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); z-index:89; }
 .ssp-roll-pulse { animation:sspRollPulse 1.15s ease-in-out infinite; }
 @keyframes sspRollPulse { 0%,100% { filter:brightness(1); } 50% { filter:brightness(1.18); } }
@@ -249,6 +253,11 @@ interface BoardScreenState {
   _chars?: Character[];
   _hud?: ReturnType<typeof ui.hud>;
   _loop?: TurnLoop;
+  _countdown?: MoveCountdown;
+  _hint?: PrizeHint;
+  _hintKey?: string;
+  _hintDist?: number | null;
+  _headY?: Map<number, number>;
   _rollWrap?: HTMLDivElement;
   _rollBtn?: ReturnType<typeof ui.button>;
   _itemBar?: HTMLDivElement;
@@ -274,9 +283,14 @@ interface BoardScreenState {
   _unfreezeAutoplay?: boolean;
   _finaleShown?: boolean;
   _unsubs: Array<() => void>;
+  _updateHudExtras: () => void;
+  _readHudView: () => HudView;
   _openPause: () => void;
   _closePause: () => void;
 }
+
+/** The board the match plays; the hint's BFS reads its edges. */
+const graphDef = () => activeBoard();
 
 function projectToScreen(pos: THREE.Vector3): { x: number; y: number } | null {
   const cam = world.camera;
@@ -301,6 +315,26 @@ function projectToScreen(pos: THREE.Vector3): { x: number; y: number } | null {
   return {
     x: (v.x * 0.5 + 0.5) * viewportSize().w,
     y: (-v.y * 0.5 + 0.5) * viewportSize().h,
+  };
+}
+
+/**
+ * Screen point for the move countdown: the head's projection kept inside a safe band of the viewport
+ * (clear of the corner cards, the hint and ROLL), so a swooping camera never makes the number blink out
+ * mid-walk. null only when the point is not in front of the camera.
+ */
+function projectCountdown(pos: THREE.Vector3): { x: number; y: number } | null {
+  const cam = world.camera;
+  if (!cam) return null;
+  cam.updateMatrixWorld();
+  cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
+  const v = pos.clone().project(cam);
+  if (!Number.isFinite(v.x) || !Number.isFinite(v.y) || v.z > 1) return null;
+  const { w, h } = viewportSize();
+  const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+  return {
+    x: clamp((v.x * 0.5 + 0.5) * w, 28, w - 28),
+    y: clamp((-v.y * 0.5 + 0.5) * h, 190, h - 190),
   };
 }
 
@@ -343,6 +377,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
 
   enter() {
     injectBoardStyles();
+    document.body.classList.add("ssp-board-on");
     ui.clearScreen();
     this._t = 0;
     this._punch = null;
@@ -420,6 +455,15 @@ const boardScreenImpl: BoardScreenState & Screen = {
     // ---- HUD ----
     const hud = ui.hud();
     this._hud = hud;
+    setHudViewReader(() => this._readHudView());
+    this._countdown = createMoveCountdown();
+    this._hint = createPrizeHint();
+    this._hintKey = undefined;
+    this._hintDist = null;
+    this._headY = new Map();
+    this._chars.forEach((ch, pid) => {
+      this._headY?.set(pid, new THREE.Box3().setFromObject(ch.group).max.y - ch.group.position.y);
+    });
 
     // ---- ROLL button (gold, pulsing — pulse is an inner glow so the
     // ---- wrap stays a STABLE hit target for automation and real fingers)
@@ -862,6 +906,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
 
 
   exit() {
+    document.body.classList.remove("ssp-board-on");
     for (const off of this._unsubs ?? []) off();
     this._unsubs = [];
     ui.clearFeedback();
@@ -883,6 +928,12 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._die3d = undefined;
     this._hud?.destroy();
     this._hud = undefined;
+    this._countdown?.destroy();
+    this._countdown = undefined;
+    this._hint?.destroy();
+    this._hint = undefined;
+    this._headY = undefined;
+    setHudViewReader(null);
     this._rollBtn?.destroy();
     this._rollBtn = undefined;
     this._rollWrap?.remove();
@@ -942,6 +993,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
     }
     this._board?.setTimeOfDay(match.turn, match.totalTurns);
     if (this._mapLook?.isOpen()) {
+      this._countdown?.update(null);
+      this._hint?.update(null);
       this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
       this._board?.update(dt);
       return;
@@ -1015,6 +1068,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
 
     this._loop?.update(dt);
     this._die3d?.update(dt);
+    this._updateHudExtras();
 
     // Animate active star travels (MP7: the star physically arcs to the buyer).
     if (this._starTravels && this._starTravels.length > 0) {
@@ -1062,6 +1116,94 @@ const boardScreenImpl: BoardScreenState & Screen = {
   },
 
   render() {},
+
+  /** Display only: move countdown over the mover's head and the prize distance hint. */
+  _updateHudExtras() {
+    const mc = this._loop?.moveCountdown ?? null;
+    const ch = mc ? this._chars?.[mc.pid] : undefined;
+    let at: { left: number; x: number; y: number } | null = null;
+    if (mc && ch) {
+      const head = ch.group.position.clone();
+      head.y += (this._headY?.get(mc.pid) ?? 2) + 0.35;
+      const p = projectCountdown(head);
+      if (p) at = { left: mc.left, x: p.x, y: p.y - 6 };
+    }
+    this._countdown?.update(at);
+
+    const pid = match.currentPlayer;
+    const pl = match.players[pid];
+    if (!pl || !(match.phase === "dice" || match.phase === "moving")) {
+      this._hint?.update(null);
+      return;
+    }
+    const key = `${pid}:${pl.space}:${match.starBalloonPos}`;
+    if (key !== this._hintKey) {
+      this._hintKey = key;
+      this._hintDist = distanceTo(graphDef(), pl.space, match.starBalloonPos);
+    }
+    this._hint?.update(this._hintDist ?? null);
+  },
+
+  /** Display only: DOM-measured HUD layout for probes (registered on enter, gated in debug.ts). */
+  _readHudView(): HudView {
+    const box = (el: Element | null | undefined) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return null;
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    };
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const cards = Array.from(document.querySelectorAll<HTMLElement>(".ssp-hud-chip")).map((c) => {
+      const pill = c.querySelector<HTMLElement>(".ssp-hud-chip__you");
+      const rankEl = c.querySelector<HTMLElement>(".ssp-hud-chip__rank");
+      const num = (label: string) => Number(c.querySelector(`[aria-label="${label}"]`)?.textContent ?? 0);
+      return {
+        id: Number(c.dataset.hudPlayer),
+        corner: (c.dataset.corner ?? "tl") as "tl" | "tr" | "bl" | "br",
+        rank: Number(rankEl?.dataset.rank ?? 0),
+        rankText: rankEl?.textContent ?? "",
+        label: c.querySelector(".ssp-hud-chip__name")?.textContent ?? "",
+        stars: num("stars"),
+        coins: num("coins"),
+        you: c.dataset.you === "1",
+        active: c.classList.contains("ssp-hud-chip--active"),
+        rect: box(c) ?? { x: 0, y: 0, w: 0, h: 0 },
+        pillRect: pill && !pill.hidden ? box(pill) : null,
+      };
+    });
+    const banners = Array.from(document.querySelectorAll<HTMLElement>(".ssp-fb-banner, .ssp-hud-banner"))
+      .filter((b) => Number(getComputedStyle(b).opacity) > 0.05)
+      .map((b) => box(b))
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+    const hintRect = this._hint?.rect();
+    const hintText = this._hint?.text();
+    const mc = this._loop?.moveCountdown ?? null;
+    const cdRect = this._countdown?.rect();
+    return {
+      viewport: { w: vw, h: vh },
+      cards,
+      banners,
+      hint:
+        hintText && hintRect
+          ? { text: hintText, distance: this._hintDist ?? null, rect: { x: hintRect.x, y: hintRect.y, w: hintRect.width, h: hintRect.height } }
+          : null,
+      countdown: mc
+        ? { pid: mc.pid, value: mc.left, rect: cdRect ? { x: cdRect.x, y: cdRect.y, w: cdRect.width, h: cdRect.height } : null }
+        : null,
+      chrome: {
+        roll: box(document.querySelector(".ssp-roll-wrap")),
+        itemBar: box(document.querySelector(".ssp-item-bar")),
+        pause: box(document.querySelector(".ssp-pause-fab")),
+        mapFab: box(document.querySelector(".ssp-map-fab--on")),
+        toast: box(document.querySelector(".ssp-fb-toast")),
+        pads: Array.from(document.querySelectorAll(".ssp-stick, .ssp-act"))
+          .map((p) => box(p))
+          .filter((r): r is NonNullable<typeof r> => r !== null),
+      },
+      centre: { x: vw * 0.25, y: vh * 0.3, w: vw * 0.5, h: vh * 0.4 },
+    };
+  },
 
   _openPause() {
     if (!this._pause || this._pause.isOpen()) return;
