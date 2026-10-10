@@ -3,12 +3,12 @@
  *
  *   node tools/probe-items.mjs
  *
- * Expects the game at http://localhost:5177/. Exits non-zero on failure.
+ * Expects the game at SSP_URL (or SSP_BASE), default http://localhost:5177/. Exits non-zero on failure.
  * Two back-to-back seeded passes must report the same results.
  */
 import { chromium } from "@playwright/test";
 
-const BASE = process.env.SSP_BASE ?? "http://localhost:5177";
+const BASE = process.env.SSP_URL ?? process.env.SSP_BASE ?? "http://localhost:5177";
 
 const EXPECTED = [
   { key: "dash_mushroom", name: "Zip Mushroom", price: 5, kind: "dash", value: 3 },
@@ -55,29 +55,47 @@ await page.waitForFunction(() => {
 const shop = await page.evaluate((expected) => {
   const ssp = window.__SSP__;
   ssp.fundPlayer(0, 80);
-  ssp.openShop(0);
-  const rows = [];
-  for (const item of expected) {
-    const card = document.querySelector(`[data-item="${item.key}"]`);
-    const btn = card?.querySelector("button");
-    const name = card?.querySelector(".ssp-shop__name")?.textContent ?? "";
-    rows.push({
-      key: item.key,
-      found: !!card,
-      name,
-      price: card?.getAttribute("data-price") ?? "",
+  const { stock } = ssp.shopStock();
+  const catalog = ssp.itemState().catalog;
+  const spaces = Object.keys(stock);
+  const space = Number(spaces[0]);
+  ssp.openShop(0, space);
+  const cards = [...document.querySelectorAll("[data-item]")].map((card) => {
+    const key = card.getAttribute("data-item");
+    const btn = card.querySelector("button");
+    const spec = expected.find((e) => e.key === key);
+    const cat = catalog.find((c) => c.key === key);
+    return {
+      key,
+      name: card.querySelector(".ssp-shop__name")?.textContent ?? "",
+      price: card.getAttribute("data-price") ?? "",
+      wantName: spec?.name ?? cat?.name ?? null,
+      wantPrice: String(spec?.price ?? cat?.price),
       buyH: btn ? btn.offsetHeight : 0,
-    });
-  }
+    };
+  });
   document.querySelector("[data-shop-close]")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  return rows;
+  const catalogRows = expected.map((e) => {
+    const c = catalog.find((x) => x.key === e.key);
+    return { key: e.key, name: c?.name ?? null, price: c?.price ?? null };
+  });
+  return { space, want: stock[spaces[0]], cards, catalogRows };
 }, EXPECTED);
-console.log("   cards", JSON.stringify(shop));
-for (const row of shop) {
+console.log("   shop", JSON.stringify(shop));
+for (const row of shop.catalogRows) {
   const spec = EXPECTED.find((e) => e.key === row.key);
-  if (!row.found) fail(`shop missing ${row.key}`);
-  if (row.name !== spec.name) fail(`${row.key} shop name ${row.name}`);
-  if (row.price !== String(spec.price)) fail(`${row.key} shop price ${row.price}`);
+  if (row.name === null) fail(`catalog missing ${row.key}`);
+  if (row.name !== spec.name) fail(`${row.key} catalog name ${row.name}`);
+  if (row.price !== spec.price) fail(`${row.key} catalog price ${row.price}`);
+}
+if (shop.want.length !== 3) fail(`shopStock has ${shop.want.length} keys for space ${shop.space}`);
+if (shop.cards.length !== 3) fail(`shop shows ${shop.cards.length} cards, want 3`);
+if (JSON.stringify(shop.cards.map((c) => c.key).sort()) !== JSON.stringify([...shop.want].sort())) {
+  fail(`shop cards ${shop.cards.map((c) => c.key)} != stock ${shop.want}`);
+}
+for (const row of shop.cards) {
+  if (row.name !== row.wantName) fail(`${row.key} shop name ${row.name}`);
+  if (row.price !== row.wantPrice) fail(`${row.key} shop price ${row.price}`);
   if (row.buyH < 44) fail(`${row.key} buy button is ${row.buyH}px`);
 }
 await page.waitForSelector("[data-shop='true']", { state: "detached" });

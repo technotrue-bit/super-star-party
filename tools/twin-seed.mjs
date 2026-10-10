@@ -1,6 +1,7 @@
 import { chromium } from "@playwright/test";
 
-const URL = "http://127.0.0.1:5177/?seed=7&screen=board&autoplay=1&audio=0&speed=4";
+const BASE = (process.env.SSP_URL ?? "http://127.0.0.1:5177").replace(/\/$/, "");
+const URL = `${BASE}/?seed=7&screen=board&autoplay=1&audio=0&speed=4`;
 const TURNS = 9;
 // A GitHub runner matched turns 1–8, then both pages hit a 300s cap during
 // turn 9. Nine minutes lets that turn finish. Speed stays 4: past five

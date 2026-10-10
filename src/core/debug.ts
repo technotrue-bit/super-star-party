@@ -25,6 +25,14 @@ import {
   useItem,
   type UseItemResult,
 } from "../game/items";
+import {
+  STOCK_WEIGHTS,
+  restockLog,
+  shopSpaceList,
+  shopVisitLog,
+  type RestockLogEntry,
+  type ShopVisitLogEntry,
+} from "../game/shopStock";
 import { minigameCatalog, minigameCount, resetMinigameTracking, tryPickMinigame } from "../minigames/registry";
 import {
   getEnabledPacks,
@@ -106,9 +114,19 @@ export interface SSPDebug {
    * Open the Gumball Shop for `playerId` (default 0 = human) on demand for
    * visual inspection. Resolves when the player closes or buys. This is the
    * critic's deterministic entry point — the shop stays open indefinitely
-   * (no auto-resolve) so it can be inspected.
+   * (no auto-resolve) so it can be inspected. `shopSpace` picks whose
+   * stock to show (default: the player's shop, else the first shop).
    */
-  openShop(playerId?: number): Promise<{ bought: string[] }>;
+  openShop(playerId?: number, shopSpace?: number): Promise<{ bought: string[] }>;
+  /** Gumball stock now, every restock this match (with rng.draws around it), and CPU visits. */
+  shopStock(): {
+    round: number;
+    stock: Record<string, string[]>;
+    restockLog: RestockLogEntry[];
+    visits: ShopVisitLogEntry[];
+  };
+  /** Stock weights [early, mid, late] per item key. */
+  shopWeights(): Record<string, readonly [number, number, number]>;
   /** Host rotation. Returns the packs actually left on (at least one). */
   setMinigamePacks(ids: string[]): string[];
   /** Persisted coin scale, 1–4. */
@@ -375,6 +393,11 @@ export function installDebugAPI(): void {
         rngDraws: rng.draws,
         autoplay: autoplayOn,
         items: itemDebugSnapshot(),
+        shop: {
+          stock: JSON.parse(JSON.stringify(match.shopStock)) as Record<string, string[]>,
+          round: match.shopStockRound,
+          spaces: [...shopSpaceList()],
+        },
         minigameRules: {
           enabledPacks: getEnabledPacks(),
           coinMultiplier: getMinigameCoinMultiplier(),
@@ -483,9 +506,21 @@ export function installDebugAPI(): void {
       match.turn = match.totalTurns;
       screens.goto("finale");
     },
-    openShop(playerId = 0) {
+    openShop(playerId = 0, shopSpace?: number) {
       // Open the shop directly for inspection — no auto-resolve timer.
-      return openShop(playerId);
+      return openShop(playerId, { shopSpace });
+    },
+    shopStock() {
+      const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+      return {
+        round: match.shopStockRound,
+        stock: copy(match.shopStock),
+        restockLog: copy(restockLog),
+        visits: copy(shopVisitLog),
+      };
+    },
+    shopWeights() {
+      return JSON.parse(JSON.stringify(STOCK_WEIGHTS)) as typeof STOCK_WEIGHTS;
     },
     resetWipeRotation() {
       // Re-export so headless probes can reset the deterministic wipe cycle.

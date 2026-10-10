@@ -3,7 +3,8 @@
  * Wave 2 (items + shop). Owned by the items builder.
  *
  * A gumball-machine themed popup: wallet header (avatar + live coin
- * counter), one cream card per item with a gold BUY button that disables
+ * counter), a "New stock next round" pill, one cream card for each of the
+ * 3 gumballs this shop space stocks this round, with a gold BUY button that disables
  * when the player can't afford it, and a CLOSE button. Buying goes through
  * buyItem (which spends coins via economy.addCoins and plays the shop
  * sting). The turn loop owns music — this screen only plays SFX.
@@ -20,7 +21,8 @@ import { bus } from "../core/events";
 import { palette } from "../config/palette";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
-import { ITEM_DEFS, ITEM_ORDER, buyItem, starCannonAvailable } from "../game/items";
+import { ITEM_DEFS, buyItem, starCannonAvailable } from "../game/items";
+import { shopSpaceFor, shopStockAt } from "../game/shopStock";
 import { addCoins } from "../game/economy";
 import { canPlaceTrap, placeTrap } from "../game/traps";
 import { fizzyFairground } from "../board/boardData";
@@ -36,8 +38,10 @@ function injectShopStyles(): void {
   const style = document.createElement("style");
   style.id = "ssp-shop-styles";
   style.textContent = `
-.ssp-shop { display:flex; flex-direction:column; gap:14px; width:min(74vw, 380px); text-align:left; }
-.ssp-shop__wallet { display:flex; align-items:center; gap:10px; background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:999px; padding:5px 16px 5px 5px; box-shadow:0 4px 0 ${palette.ink}; }
+.ssp-shop { display:flex; flex-direction:column; gap:8px; width:min(74vw, 380px); max-width:100%; text-align:left; }
+.ssp-popup__card:has(.ssp-shop) .ssp-popup__body:empty { display:none; }
+.ssp-shop__wallet { display:flex; align-items:center; gap:10px; background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:999px; padding:4px 16px 4px 4px; box-shadow:0 4px 0 ${palette.ink}; }
+.ssp-shop__restock { align-self:center; font-size:12px; font-weight:700; color:${palette.inkSoft}; background:${palette.cream}; border:2px solid ${palette.ink}; border-radius:999px; padding:2px 10px; line-height:1.3; }
 .ssp-shop__wallet-name { font-size:15px; font-weight:700; color:${palette.ink}; }
 .ssp-shop__wallet-coin { margin-left:auto; display:flex; align-items:center; gap:6px; }
 .ssp-shop__coin { width:22px; height:22px; border-radius:50%; flex:none;
@@ -45,25 +49,26 @@ function injectShopStyles(): void {
               linear-gradient(180deg, ${palette.sun} 0%, ${palette.sunDeep} 100%);
   border:2px solid ${palette.ink}; box-shadow: inset 0 -3px 0 rgba(43,29,78,.25); }
 .ssp-shop__counter { min-width:30px; text-align:center; font-size:20px; font-weight:700; color:${palette.ink}; }
-.ssp-shop__grid { display:flex; flex-direction:column; gap:12px; max-height:min(52vh, 460px); overflow-y:auto; padding:3px 2px; -webkit-overflow-scrolling:touch; }
+.ssp-shop__grid { display:flex; flex-direction:column; gap:8px; max-height:none; overflow:visible; padding:3px 2px; }
+.ssp-shop__grid--picker { max-height:min(46dvh, 400px); overflow-y:auto; -webkit-overflow-scrolling:touch; }
 .ssp-shop__space { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:48px; width:100%; text-align:left; font-family:inherit; font-weight:700; font-size:15px; color:${palette.ink}; background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:14px; padding:8px 12px; box-shadow:0 3px 0 ${palette.ink}; cursor:pointer; touch-action:manipulation; }
 .ssp-shop__space:active { transform:translateY(2px); box-shadow:0 1px 0 ${palette.ink}; }
-.ssp-shop__card { display:flex; align-items:center; gap:12px; background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:20px; padding:10px 12px; box-shadow:0 4px 0 ${palette.ink}; transition: opacity .25s ease-out, filter .25s ease-out; }
+.ssp-shop__card { display:flex; align-items:center; gap:10px; background:${palette.cream}; border:3px solid ${palette.ink}; border-radius:20px; padding:7px 10px; box-shadow:0 4px 0 ${palette.ink}; transition: opacity .25s ease-out, filter .25s ease-out; }
 .ssp-shop__card--poor { opacity:.62; filter: grayscale(.55) brightness(.92); }
-.ssp-shop__icon { font-size:34px; line-height:1; width:46px; text-align:center; flex:none; }
+.ssp-shop__icon { font-size:28px; line-height:1; width:38px; text-align:center; flex:none; }
 .ssp-shop__info { flex:1; min-width:0; }
-.ssp-shop__name { font-size:17px; font-weight:700; color:${palette.ink}; }
-.ssp-shop__desc { font-size:13px; color:${palette.inkSoft}; line-height:1.3; }
-.ssp-shop__price { display:flex; align-items:center; gap:5px; margin-top:4px; font-size:16px; font-weight:700; color:${palette.ink}; }
-.ssp-shop__unaffordable { margin-top:6px; font-size:12px; font-weight:700; color:${palette.lava}; }
+.ssp-shop__name { font-size:15px; font-weight:700; color:${palette.ink}; }
+.ssp-shop__desc { font-size:12px; color:${palette.inkSoft}; line-height:1.3; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow:hidden; }
+.ssp-shop__price { display:flex; align-items:center; gap:5px; margin-top:3px; font-size:14px; font-weight:700; color:${palette.ink}; }
+.ssp-shop__unaffordable { margin-top:4px; font-size:12px; font-weight:700; color:${palette.lava}; }
 /* --- Fizzy Fairgrounds carnival awning (the stall front) --- */
-.ssp-shop__awning { display:flex; align-items:center; gap:10px; background:repeating-linear-gradient(45deg, ${palette.tentRed} 0%, ${palette.tentRed} 10px, ${palette.cream} 10px, ${palette.cream} 20px); border:3px solid ${palette.ink}; border-bottom-width:5px; border-radius:16px; padding:8px 14px; margin:0 0 12px; box-shadow:0 4px 0 ${palette.ink}; }
-.ssp-shop__shopkeeper { font-size:28px; line-height:1; flex:none; filter:drop-shadow(0 2px 0 rgba(43,29,78,.5)); }
+.ssp-shop__awning { display:flex; align-items:center; gap:10px; background:repeating-linear-gradient(45deg, ${palette.tentRed} 0%, ${palette.tentRed} 10px, ${palette.cream} 10px, ${palette.cream} 20px); border:3px solid ${palette.ink}; border-bottom-width:5px; border-radius:16px; padding:5px 10px; margin:0; box-shadow:0 4px 0 ${palette.ink}; }
+.ssp-shop__shopkeeper { font-size:22px; line-height:1; flex:none; filter:drop-shadow(0 2px 0 rgba(43,29,78,.5)); }
 .ssp-shop__stall-title { font-size:15px; font-weight:700; color:${palette.ink}; flex:1; }
 .ssp-shop__stall-sub { font-size:11px; color:${palette.inkSoft}; }
 /* --- owned item card (player holds this gumball) --- */
 .ssp-shop__card--owned { position:relative; border-color:${palette.mint}; box-shadow:0 0 0 4px ${palette.mint}, 0 4px 0 ${palette.ink}; }
-.ssp-shop__owned-badge { position:absolute; top:-10px; right:-10px; background:${palette.mint}; color:${palette.ink}; border:2px solid ${palette.ink}; border-radius:999px; font-size:11px; font-weight:700; padding:3px 10px; line-height:1; box-shadow:0 2px 0 ${palette.ink}; text-shadow:0 1px 0 rgba(255,255,255,.5); }
+.ssp-shop__owned-badge { position:absolute; top:-6px; right:-4px; background:${palette.mint}; color:${palette.ink}; border:2px solid ${palette.ink}; border-radius:999px; font-size:11px; font-weight:700; padding:3px 10px; line-height:1; box-shadow:0 2px 0 ${palette.ink}; text-shadow:0 1px 0 rgba(255,255,255,.5); }
 .ssp-btn.ssp-shop__buy--owned { background:linear-gradient(180deg, rgba(255,255,255,.5) 0%, rgba(255,255,255,0) 42%), linear-gradient(180deg, ${palette.mint} 0%, ${palette.mintDeep} 100%); color:${palette.ink}; }
 
 /* --- while the stall is open, the board chrome is NOT interactive ---
@@ -85,6 +90,8 @@ body:has(.ssp-shop) .ssp-item-bar {
 export interface OpenShopOpts {
   /** Auto-close after this many ms (used by autoplay to keep flow moving). */
   autoCloseMs?: number;
+  /** Shop space whose stock to show. Defaults to the player's shop. */
+  shopSpace?: number;
 }
 
 /**
@@ -99,6 +106,7 @@ export interface OpenShopOpts {
  */
 export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bought: string[] }> {
   const player = match.players[playerId];
+  const shopSpace = opts?.shopSpace ?? shopSpaceFor(playerId);
   const bought: string[] = [];
   const coinsNow = (): number => match.players[playerId]?.coins ?? 0;
 
@@ -123,7 +131,9 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
     awningTitle.textContent = "GRUMPUS'S GUMBOOTH";
     const awningSub = document.createElement("div");
     awningSub.className = "ssp-shop__stall-sub";
-    awningSub.textContent = "Gumball Emporium · Fizzy Fairgrounds";
+    // Each shop space stocks its own 3, so name the stall the player is at.
+    const stallName = fizzyFairground.spaces.find((s) => s.index === shopSpace)?.name ?? "Gumball Emporium";
+    awningSub.textContent = `${stallName} · Fizzy Fairgrounds`;
     awningText.append(awningTitle, awningSub);
     awning.append(shopkeeper, awningText);
     content.appendChild(awning);
@@ -132,9 +142,9 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
     const wallet = document.createElement("div");
     wallet.className = "ssp-shop__wallet";
     const avatar = ui.playerAvatar(player?.kind ?? "?");
-    avatar.style.width = "34px";
-    avatar.style.height = "34px";
-    avatar.style.fontSize = "15px";
+    avatar.style.width = "28px";
+    avatar.style.height = "28px";
+    avatar.style.fontSize = "13px";
     const name = document.createElement("span");
     name.className = "ssp-shop__wallet-name";
     name.textContent = player?.name ?? `P${playerId + 1}`;
@@ -151,9 +161,20 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
     wallet.append(avatar, name, walletCoin);
     content.appendChild(wallet);
 
-    // ---- item cards ----
+    // ---- restock indicator: the 3 gumballs rotate every round ----
+    const restock = document.createElement("div");
+    restock.className = "ssp-shop__restock";
+    restock.setAttribute("data-shop-restock", `${match.turn}/${match.totalTurns}`);
+    restock.textContent =
+      match.turn >= match.totalTurns
+        ? `Last round's stock · Round ${match.turn}/${match.totalTurns}`
+        : `🔄 New stock next round · Round ${match.turn}/${match.totalTurns}`;
+    content.appendChild(restock);
+
+    // ---- item cards: this shop's 3 gumballs ----
     const grid = document.createElement("div");
     grid.className = "ssp-shop__grid";
+    grid.setAttribute("data-shop-space", String(shopSpace));
     const buyButtons: Array<{ key: string; btn: ReturnType<typeof ui.button>; card: HTMLDivElement; price: number }> = [];
 
     /** Flip a card's BUY button into the OWNED state (or back out of it). */
@@ -204,7 +225,7 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
       }
     };
 
-    for (const key of ITEM_ORDER) {
+    for (const key of shopStockAt(shopSpace)) {
       const def = ITEM_DEFS[key];
       if (!def) continue;
       if (def.lateGame && !starCannonAvailable()) continue;
@@ -212,6 +233,7 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
       const card = document.createElement("div");
       card.className = "ssp-shop__card";
       card.setAttribute("data-item", key);
+      card.setAttribute("data-shop-space", String(shopSpace));
       card.setAttribute("data-price", String(def.price));
 
       const icon = document.createElement("div");
@@ -299,6 +321,7 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
         canPlaceTrap(playerId, s.index, match.starBalloonPos, shopSpaces),
       );
       grid.replaceChildren();
+      grid.classList.add("ssp-shop__grid--picker");
       const title = document.createElement("div");
       title.className = "ssp-shop__name";
       title.textContent = `Throw ${orbName}`;
@@ -360,7 +383,7 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
 
     const pop = ui.popup({
       title: "GUMBALL SHOP",
-      body: "Grab a gumball for your bag!",
+      body: "", // no body row: 3 cards + CLOSE fit a phone without scrolling
       content,
       closeOnEsc: false, // Esc handled here so the promise always resolves
       sound: null, // open sting played explicitly above
