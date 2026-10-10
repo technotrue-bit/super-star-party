@@ -28,6 +28,7 @@ import * as THREE from "three";
 import { world } from "../main";
 import { palette, hex } from "../config/palette";
 import { match } from "../core/game";
+import { playerLabel, labelDoes } from "../ui/labels";
 import { audio } from "../audio/audioEngine";
 import { characterColor } from "../characters/roster";
 import { mulberry32 } from "../core/rng";
@@ -303,7 +304,7 @@ export function startResultsCeremony(opts: {
     z-index: 95; pointer-events: none;
     transition: transform 0.45s cubic-bezier(.34,1.56,.64,1);
   `;
-  bannerEl.textContent = paidIds.length > 1 ? "TEAM WINS!" : `${winnerPlayer?.name ?? "?"} WINS!`;
+  bannerEl.textContent = paidIds.length > 1 ? "TEAM WINS!" : winnerPlayer ? `${labelDoes(winnerPlayer.id, "WIN", "WINS")}!` : "?";
   bannerEl.dataset.sspHeadline = "results";
   document.body.appendChild(bannerEl);
 
@@ -347,7 +348,7 @@ export function startResultsCeremony(opts: {
     row.style.fontWeight = "700";
     row.style.textShadow = `0 1px 0 ${palette.ink}`;
     row.dataset.sspPlayer = String(ordered[i]);
-    let rowText = `${medal} ${p?.name ?? "?"}`;
+    let rowText = `${medal} ${p ? playerLabel(p.id) : "?"}`;
     if (paid.has(ordered[i])) {
       rowText += ` +${coins}c`;
       row.dataset.sspPaid = String(coins);
