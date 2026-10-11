@@ -66,6 +66,7 @@ export const settings = {
   players: 4,
   starCost: 10, // coins per star from the Grand Prize Balloon
   starBundleMax: 5, // most stars one visit to the balloon can ask for
+  starMoveNearHops: 2, // a moving Grand Prize avoids spaces this many hops (either way) from the buyer
   blueCoin: 3, // coins gained on blue space
   redCoin: 3, // coins lost on red space
   minigameWinCoins: 10, // base minigame winner payout, before pack bonus and the host multiplier

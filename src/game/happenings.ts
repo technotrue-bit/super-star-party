@@ -283,7 +283,7 @@ export function resolveGreen(playerId: number, spaceIndex: number): HappeningOut
     }
     case "balloon_breeze": {
       const from = match.starBalloonPos;
-      const to = movePrizeBalloon(playerId);
+      const to = movePrizeBalloon(playerId, "breeze");
       const fromName = activeBoard().spaces[wrap(from)]?.name ?? (place === "carnival" ? "the midway" : `the ${place}`);
       const toName = activeBoard().spaces[wrap(to)]?.name ?? "a new spot";
       audio.sfx.play("happening.magic");

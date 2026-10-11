@@ -518,7 +518,7 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
     const starsP = document.createElement("p");
     starsP.style.margin = "0";
     starsP.innerHTML =
-      "Everyone starts with <b>10 coins</b>. Pass or land on the <b>Grand Prize Balloon</b> to buy up to <b>5 stars</b> at <b>10 coins</b> each. Unpaid stars in a bundle are discarded, then the balloon pops and moves. End your move on a space someone else is standing on and everyone there gets a <b>group hug: +2 coins</b>. Stars decide the winner!";
+      "Everyone starts with <b>10 coins</b>. Pass or land on the <b>Grand Prize Balloon</b> to buy up to <b>5 stars</b> at <b>10 coins</b> each. Unpaid stars in a bundle are discarded. The balloon starts somewhere new every match, and floats away after each purchase. End your move on a space someone else is standing on and everyone there gets a <b>group hug: +2 coins</b>. Stars decide the winner!";
     rules.appendChild(starsP);
 
     const mini = document.createElement("h4");

@@ -33,10 +33,13 @@ export interface BoardDef {
    * loop into the outer one); "graph" walks the stay edges of `next`.
    */
   walk: "index" | "graph";
-  /** Grand Prize Balloon spots in rng.pick order. The order is gameplay data. */
+  /**
+   * Grand Prize Balloon spots (derivePrizeSpots), ascending. The order is
+   * gameplay data: pickPrizeSpot indexes it with the core rng.
+   */
   prizeSpots: number[];
-  /** Space the Grand Prize Balloon starts on. */
-  prizeStart: number;
+  /** Spaces derivePrizeSpots must skip anyway (art conflicts). None yet. */
+  prizeExclude?: number[];
   /** Scenery theme key; boardScene builds the carnival look for "carnival". */
   theme: "carnival" | "downtown";
   /**
@@ -133,14 +136,12 @@ function roundedRectLoop(
 // 28 outer spaces — MP7 + our carnival touches.
 // 9 blue, 6 red, 4 green (happenings), 2 shop, 2 grumpus, 3 stamp
 // (one each of Fizz / Crumb / Taffy), 2 minigame balloons (5 and 10 coins).
-// The Grand Prize Balloon is not a space type. It starts on space 4 and
-// moves (match.starBalloonPos) after a purchase.
+// The Grand Prize Balloon is not a space type. It starts on a seeded random
+// prize spot and moves (match.starBalloonPos) after a purchase.
 //
 // The Funhouse Cut (stepOn) jumps from the space before 20 straight to 26, so
 // indices 20–25 are not on the walked lap. Stamps and minigame balloons live
-// on spaces the dice actually hops: shy at 3 (one hop before the balloon's
-// starting spot, so a jackpot can fund that purchase the same move), goomba
-// at 11, koopa at 27, balloons at 5 (5 coins) and 16 (10 coins).
+// on spaces the dice actually hops: shy at 3, goomba at 11, koopa at 27, balloons at 5 (5 coins) and 16 (10 coins).
 const TYPES: SpaceType[] = [
   "blue", "blue", "green", "stamp", "blue", "minigame_balloon", "red",
   "green", "blue", "red", "shop", "stamp", "green", "red",
@@ -170,8 +171,8 @@ const NAMES: string[] = [
   "Fizzy Fountain", // 0 start, bottom-left corner
   "Gumball Alley",
   "Whimsy Whirl",
-  "Fizz Stamp Stand", // fizz stamp — one hop before the star
-  "Starlight Stage", // Grand Prize Balloon starts here
+  "Fizz Stamp Stand", // fizz stamp
+  "Starlight Stage",
   "Fizzy Five Balloon", // 5-coin minigame balloon
   "Dunk Tank Drop",
   "Fortune Teller's Twist",
@@ -266,20 +267,44 @@ function deriveNext(def: BoardBase): number[][] {
 }
 
 /**
- * Carnival prize spots: every loop space in loop order, minus the tiles the
- * shortcut skips on the main loop ([shortcut.from, shortcut.to)).
+ * Grand Prize Balloon spots, the same rule on every board: reachable from the
+ * start along `next`, not the start, not a shop, not a fork (two edges out)
+ * and not a rejoin (two or more reachable spaces step onto it), minus
+ * prizeExclude. Ascending index order (gameplay data, the pick indexes it).
+ * On the carnival this drops the Funhouse Cut tiles 20-25 (unreachable).
  */
-function derivePrizeSpots(def: BoardBase): number[] {
-  const sc = def.shortcut;
-  const main = def.loops[0];
-  const spots: number[] = [];
-  for (const loop of def.loops) {
-    for (const index of loop) {
-      if (loop === main && sc && index >= sc.from && index < sc.to) continue;
-      spots.push(index);
+export function derivePrizeSpots(
+  def: Pick<BoardDef, "spaces" | "next" | "startIndex" | "prizeExclude">,
+): number[] {
+  const reach = new Set<number>([def.startIndex]);
+  const queue = [def.startIndex];
+  while (queue.length > 0) {
+    const s = queue.shift()!;
+    for (const c of def.next[s] ?? []) {
+      if (!reach.has(c)) {
+        reach.add(c);
+        queue.push(c);
+      }
     }
   }
-  return spots;
+  const preds = new Map<number, Set<number>>();
+  for (const p of reach) {
+    for (const c of def.next[p] ?? []) {
+      if (!preds.has(c)) preds.set(c, new Set());
+      preds.get(c)!.add(p);
+    }
+  }
+  const exclude = new Set(def.prizeExclude ?? []);
+  return [...reach]
+    .filter(
+      (s) =>
+        s !== def.startIndex &&
+        def.spaces[s]?.type !== "shop" &&
+        (def.next[s]?.length ?? 0) <= 1 &&
+        (preds.get(s)?.size ?? 0) < 2 &&
+        !exclude.has(s),
+    )
+    .sort((a, b) => a - b);
 }
 
 const fizzyBase: BoardBase = {
@@ -298,17 +323,16 @@ const fizzyBase: BoardBase = {
   startIndex: 0,
   cam: { center: [0, 0], fit: 1.35 },
   walk: "index",
-  // Grand Prize Balloon starts one hop after the Fizz Stamp Stand, so a
-  // jackpot collected on the way in can fund a purchase the same move.
-  prizeStart: 4,
+  // The Grand Prize Balloon starts on a seeded random prize spot (startMatch).
   theme: "carnival",
 };
 
 /** Fizzy Fairground — the carnival midway. Start = space 0 (Fizzy Fountain). */
+const fizzyNext = deriveNext(fizzyBase);
 export const fizzyFairground: BoardDef = {
   ...fizzyBase,
-  next: deriveNext(fizzyBase),
-  prizeSpots: derivePrizeSpots(fizzyBase),
+  next: fizzyNext,
+  prizeSpots: derivePrizeSpots({ ...fizzyBase, next: fizzyNext }),
 };
 
 // ---- Graph helpers ------------------------------------------------------------

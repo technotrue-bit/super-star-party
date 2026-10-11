@@ -228,7 +228,19 @@ interface StarTravelActive {
   start: THREE.Vector3;
   end: THREE.Vector3;
   sparkleCooldown: number;
+  /** Hero the star hovers over (nearest token to the buyer position). */
+  pid: number;
+  /** Hero height (base to head top) in world units; star scale S = heroH / 1.9. */
+  heroH: number;
 }
+
+/** Tip-to-tip span of starShape5 at scale 1. */
+const STAR_SPAN = 1.9;
+/** Ceremony time at which the hovering star starts shrinking out, and the shrink length. */
+const STAR_HOLD_UNTIL = 3.0;
+const STAR_OUT = 0.25;
+/** Dev/CI-only probe readout gate (same flags as the other debug hooks). */
+const STAR_DEBUG = import.meta.env.DEV || import.meta.env.VITE_SSP_TEST === "1" || import.meta.env.VITE_SSP_TEST === "true";
 
 /** 5-pointed star shape for the traveling star mesh (replicates boardScenery's starShape5). */
 function starShape5(): THREE.Shape {
@@ -284,6 +296,8 @@ interface BoardScreenState {
   _unfreezeAutoplay?: boolean;
   _finaleShown?: boolean;
   _unsubs: Array<() => void>;
+  /** Where the 3D balloon is drawn while a bought balloon waits for star:reveal. */
+  _prizeHold?: number | null;
   _updateHudExtras: () => void;
   _readHudView: () => HudView;
   _openPause: () => void;
@@ -703,14 +717,29 @@ const boardScreenImpl: BoardScreenState & Screen = {
         if (sc) ui.showFloatingNumber(sc.x, sc.y - 30, -spent);
       })
     );
+    const balloonBurst = (from: number, to: number): void => {
+      const burst = (index: number, count: number): void => {
+        const sc = projectToScreen(board.spaceWorldPos(index));
+        if (sc) ui.confettiBurst(sc.x, sc.y, { count, sound: null });
+      };
+      burst(from, 46);
+      burst(to, 32);
+    };
+    this._prizeHold = null;
     this._unsubs.push(
-      bus.on("star:balloon_moved", ({ from, to }) => {
-        const burst = (index: number, count: number): void => {
-          const sc = projectToScreen(board.spaceWorldPos(index));
-          if (sc) ui.confettiBurst(sc.x, sc.y, { count, sound: null });
-        };
-        burst(from, 46);
-        burst(to, 32);
+      bus.on("star:balloon_moved", ({ from, to, cause }) => {
+        // A bought balloon stays put through the ceremony; star:reveal moves it.
+        if (cause === "buy") {
+          this._prizeHold = from;
+          return;
+        }
+        balloonBurst(from, to);
+      })
+    );
+    this._unsubs.push(
+      bus.on("star:reveal", ({ from, to }) => {
+        this._prizeHold = null;
+        balloonBurst(from, to);
       })
     );
 
@@ -799,24 +828,32 @@ const boardScreenImpl: BoardScreenState & Screen = {
           const mat = new THREE.MeshBasicMaterial({
             color: palette.sun, transparent: true, opacity: 1,
             depthWrite: false, side: THREE.DoubleSide,
-            blending: THREE.AdditiveBlending,
           });
           const star = new THREE.Mesh(geo, mat);
           star.rotation.x = -Math.PI / 2;
-          star.scale.setScalar(2.5);
           // Ink outline shell (BackSide = silhouette border)
           const shell = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
             color: palette.ink, side: THREE.BackSide, depthWrite: false,
             transparent: true, opacity: 0.85,
           }));
-          shell.scale.setScalar(2.95);
+          // The hero being celebrated = the token nearest the buyer position.
+          let pid = -1;
+          let bestD = Infinity;
+          boardScreenImpl._chars?.forEach((ch, id) => {
+            const d = ch.group.position.distanceToSquared(endPos);
+            if (d < bestD) { bestD = d; pid = id; }
+          });
+          const heroH = boardScreenImpl._headY?.get(pid) ?? 1.1;
+          const S = heroH / STAR_SPAN;
+          star.scale.setScalar(S);
+          shell.scale.setScalar(1.15 * S);
           const group = new THREE.Group();
           group.add(star, shell);
           group.position.copy(startPos);
-          group.position.y = 0.9; // lifted off the space
+          group.position.y = 0.3; // rises from the space
           world.scene?.add(group);
           (boardScreenImpl._starTravels = boardScreenImpl._starTravels ?? []).push({
-            group, geo, mat, elapsed: 0, duration,
+            group, geo, mat, elapsed: 0, duration, pid, heroH,
             start: startPos.clone(), end: endPos.clone(), sparkleCooldown: 0,
           });
         },
@@ -910,6 +947,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     document.body.classList.remove("ssp-board-on");
     for (const off of this._unsubs ?? []) off();
     this._unsubs = [];
+    this._prizeHold = null;
     ui.clearFeedback();
     this._loop?.dispose();
     this._loop = undefined;
@@ -996,7 +1034,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     if (this._mapLook?.isOpen()) {
       this._countdown?.update(null);
       this._hint?.update(null);
-      this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
+      this._board?.setPrizeBalloon(match.players.length > 0 ? this._prizeHold ?? match.starBalloonPos : null);
       this._board?.update(dt);
       return;
     }
@@ -1004,7 +1042,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._t = (this._t ?? 0) + dt;
     const t = this._t;
 
-    this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
+    this._board?.setPrizeBalloon(match.players.length > 0 ? this._prizeHold ?? match.starBalloonPos : null);
     this._board?.update(dt);
     for (const ch of this._chars ?? []) ch.update(dt);
 
@@ -1079,23 +1117,50 @@ const boardScreenImpl: BoardScreenState & Screen = {
         s.sparkleCooldown -= dt;
         const p = Math.min(1, s.elapsed / s.duration);
         const e = ease.outCubic(p);
-        // Parabolic arc: rise then fall.
-        const height = Math.sin(p * Math.PI) * 2.6;
-        const pos = new THREE.Vector3().lerpVectors(s.start, s.end, e);
-        pos.y = height + 0.5;
+        const S = s.heroH / STAR_SPAN;
+        const hero = this._chars?.[s.pid]?.group.position ?? s.end;
+        const hover = new THREE.Vector3(hero.x, hero.y + s.heroH + 0.35 + S * 0.95, hero.z);
+        const outStart = Math.max(STAR_HOLD_UNTIL, s.duration);
+        const phase: "rise" | "hover" | "out" =
+          s.elapsed < s.duration ? "rise" : s.elapsed < outStart ? "hover" : "out";
+        // Rise from the space on a 0.9-high arc to the hover point, then hold.
+        const pos = new THREE.Vector3().lerpVectors(s.start, hover, e);
+        pos.y = 0.3 + (hover.y - 0.3) * e + Math.sin(p * Math.PI) * 0.9;
         s.group.position.copy(pos);
         s.group.rotation.y = s.elapsed * 4;
-        // Scale pulse: the star gently grows/shrinks during flight for life.
-        const pulse = 1 + Math.sin(s.elapsed * 6) * 0.15;
-        (s.group.children[0] as THREE.Mesh).scale.setScalar(5 * pulse);
-        (s.group.children[1] as THREE.Mesh).scale.setScalar(6.0 * (0.95 + Math.sin(s.elapsed * 4) * 0.05));
+        // Scale pulse (+-6%), shrinking out over STAR_OUT at the end of the hold.
+        const out = phase === "out" ? Math.max(0, 1 - (s.elapsed - outStart) / STAR_OUT) : 1;
+        const scale = S * (1 + 0.06 * Math.sin(s.elapsed * 6)) * out;
+        (s.group.children[0] as THREE.Mesh).scale.setScalar(scale);
+        (s.group.children[1] as THREE.Mesh).scale.setScalar(1.15 * scale);
+        if (STAR_DEBUG) {
+          let screenH = 0;
+          const cam = world.camera;
+          if (cam) {
+            cam.updateMatrixWorld();
+            cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
+            const b = new THREE.Box3().setFromObject(s.group.children[0]);
+            let lo = Infinity, hi = -Infinity;
+            for (let k = 0; k < 8; k++) {
+              const c = new THREE.Vector3(k & 1 ? b.max.x : b.min.x, k & 2 ? b.max.y : b.min.y, k & 4 ? b.max.z : b.min.z).project(cam);
+              const py = (-c.y * 0.5 + 0.5) * viewportSize().h;
+              lo = Math.min(lo, py); hi = Math.max(hi, py);
+            }
+            screenH = hi - lo;
+          }
+          (globalThis as any).__SSP_STAR_TRAVEL = {
+            active: true, span: STAR_SPAN * scale, heroH: s.heroH, y: pos.y,
+            headTop: hero.y + s.heroH, dx: Math.hypot(pos.x - hero.x, pos.z - hero.z),
+            screenH, phase,
+          };
+        }
         // Sparkle trail at the star's projected screen position.
-        if (s.sparkleCooldown <= 0 && p < 0.98) {
+        if (s.sparkleCooldown <= 0 && phase === "rise") {
           s.sparkleCooldown = 0.08;
           const sc = projectToScreen(s.group.position);
           if (sc) emitSparkle(sc.x, sc.y, 4, palette.sun);
         }
-        if (p >= 1) {
+        if (s.elapsed >= outStart + STAR_OUT) {
           // Arrival: big sparkle burst.
           const sc = projectToScreen(s.group.position);
           if (sc) emitSparkle(sc.x, sc.y, 20, palette.sun);
@@ -1104,6 +1169,9 @@ const boardScreenImpl: BoardScreenState & Screen = {
           s.mat.dispose();
           ((s.group.children[1] as THREE.Mesh).material as THREE.Material).dispose();
           this._starTravels.splice(i, 1);
+          if (this._starTravels.length === 0 && STAR_DEBUG) {
+            (globalThis as any).__SSP_STAR_TRAVEL = { active: false };
+          }
         }
       }
     }

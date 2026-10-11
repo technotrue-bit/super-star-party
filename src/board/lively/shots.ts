@@ -61,7 +61,7 @@ const STYLES: Record<ShotKind, ShotStyle> = {
   // Star buy: the ceremony holds the camera, so this plays right after it, on the buyer.
   star: { dur: 1.6, swing: 0.55, close: 0.55, rise: 0.75, lookY: 1.2 },
   // Balloon: sweep over to where the Grand Prize Balloon re-inflated.
-  balloon: { dur: 1.8, swing: -0.7, close: 0.6, rise: 0.85, lookY: 1.6 },
+  balloon: { dur: 1.5, swing: -0.7, close: 0.6, rise: 0.85, lookY: 1.6 },
   // Happening: inside the ~2.8 s happening stinger.
   happening: { dur: 2.2, swing: 0.8, close: 0.5, rise: 0.7, lookY: 1.0 },
   jackpot: { dur: 1.6, swing: -0.5, close: 0.55, rise: 0.75, lookY: 1.2 },
@@ -157,6 +157,13 @@ function request(kind: ShotKind, space: number): void {
   q.wait = 0;
 }
 
+/** Remove every waiting shot of `kind` (the active shot is left alone). */
+function dropKind(kind: ShotKind): void {
+  for (let k = qLen - 1; k >= 0; k--) {
+    if (queue[k].kind === kind) removeAt(k);
+  }
+}
+
 function clearShots(): void {
   qLen = 0;
   active = false;
@@ -166,7 +173,15 @@ function wire(): void {
   if (wired) return;
   wired = true;
   bus.on("star:buy", ({ player }) => request("star", playerSpace(player)));
-  bus.on("star:balloon_moved", ({ to }) => request("balloon", to));
+  // A bought balloon is revealed after the ceremony (star:reveal); the pan
+  // replaces the pending buyer shot so it starts when the hold releases.
+  bus.on("star:balloon_moved", ({ to, cause }) => {
+    if (cause !== "buy") request("balloon", to);
+  });
+  bus.on("star:reveal", ({ to }) => {
+    dropKind("star");
+    request("balloon", to);
+  });
   bus.on("happening:event", ({ player }) => request("happening", playerSpace(player)));
   bus.on("stamp:jackpot", ({ player }) => request("jackpot", playerSpace(player)));
   bus.on("squeeze:hug", ({ space }) => request("hug", space));

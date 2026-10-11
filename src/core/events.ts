@@ -14,7 +14,9 @@ export interface SSPEventMap {
   "player:land": { player: number; space: number; type: string };
   "coins:change": { player: number; delta: number; total: number };
   "star:buy": { player: number; star: number; total: number; bought: number; spent: number };
-  "star:balloon_moved": { from: number; to: number; by: number };
+  "star:balloon_moved": { from: number; to: number; by: number; cause?: "buy" | "breeze" | "trap" };
+  /** Presentation only: the post-ceremony reveal of a bought balloon's new spot. */
+  "star:reveal": { from: number; to: number };
   "happening:event": { player: number; eventId: string; label: string };
   "stamp:collected": { player: number; kind: string; total: number };
   "stamp:jackpot": { player: number; amount: number };

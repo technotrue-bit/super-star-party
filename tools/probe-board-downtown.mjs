@@ -4,20 +4,20 @@
  * Part 1 (carnival parity): runs tools/board-golden.mjs for seed 7 over a full
  * match and compares every turn-boundary snapshot hash (boardId dropped) and
  * every synchronous rng mark against tools/golden/carnival-seed7.json, recorded
- * on main d0b3484. Any gameplay drift on the carnival fails here.
+ * on PR F (feat/moving-star, seeded Grand Prize start). Any gameplay drift on the carnival fails here.
  *
  * Part 2 (Downtown graph, static): loads ?board=downtown and checks the def from
  * __SSP__.board(): 46 spaces, next[] well-formed (1 or 2 edges, in range), every
  * space reachable from start, start reachable from every space, each fork's
  * branch runs back onto the ring, both sides of a fork are within 1 hop, prize
- * spots valid/unique/never start-fork-rejoin-shop, prizeStart is a prize spot,
+ * spots == the derived rule (PR F: reachable, not start/fork/rejoin/shop; 39),
  * carnival-style type mix (2 shops, 2 grumpus, 3 stamps, 2 minigame balloons).
  *
  * Part 3 (Downtown runtime): autoplays seed 7 on Downtown and checks boardId,
  * that tokens only stand on valid spaces, the balloon only sits on prize spots
  * (or on a space a Balloon Tug pulled it to),
  * and that both forks were taken both ways (a branch tile and a skipped ring
- * tile seen) across the seeds in SSP_DT_SEEDS (default "7,2"), zero page errors.
+ * tile seen) across the seeds in SSP_DT_SEEDS (default "7,5"), zero page errors.
  *
  *   SSP_URL=http://127.0.0.1:5197 node tools/probe-board-downtown.mjs
  *   SSP_SKIP_GOLDEN=1 skips part 1.
@@ -28,7 +28,9 @@ import { dirname, resolve } from "node:path";
 
 const BASE = (process.env.SSP_URL ?? "http://127.0.0.1:5177").replace(/\/$/, "");
 const ROOT = resolve(dirname(new URL(import.meta.url).pathname), "..");
-const SEEDS = (process.env.SSP_DT_SEEDS ?? "7,2").split(",").map(Number);
+// PR F: seed 5 starts the balloon on Market Street (36), so a CPU takes the Market Gate branch;
+// with the seeded start, seed 2 never did.
+const SEEDS = (process.env.SSP_DT_SEEDS ?? "7,5").split(",").map(Number);
 const RUN_TURNS = Number(process.env.SSP_DT_TURNS ?? 10);
 const CAP_MS = 420000;
 const fails = [];
@@ -106,7 +108,13 @@ try {
   check(ring.length + branchTiles.size === n, `ring (${ring.length}) + branch tiles (${branchTiles.size}) cover the board`);
   const ps = d.prizeSpots;
   const rejoins = new Set(forkInfo.map((f) => f.rejoin));
-  check(ps.length === 8 && new Set(ps).size === ps.length, `8 unique prize spots [${ps.join(",")}]`);
+  // PR F: no hand-picked spots. prizeSpots is derived: reachable from start, not the start,
+  // not a shop, not a fork, not a rejoin (2+ reachable predecessors), ascending.
+  const preds = Array.from({ length: n }, () => 0);
+  fwd.forEach((i) => d.next[i].forEach((j) => preds[j]++));
+  const derived = [...fwd].filter((s) => s !== d.startIndex && d.spaces[s].type !== "shop" && d.next[s].length < 2 && preds[s] < 2).sort((a, b) => a - b);
+  check(JSON.stringify(ps) === JSON.stringify(derived), `prizeSpots == derived rule (${ps.length} spots) [${ps.join(",")}]${JSON.stringify(ps) === JSON.stringify(derived) ? "" : " want [" + derived.join(",") + "]"}`);
+  check(ps.length === 39 && new Set(ps).size === ps.length, `39 unique prize spots`);
   const badSpot = ps.filter((s) => !(s >= 0 && s < n) || s === d.startIndex || forks.includes(s) || rejoins.has(s) || d.spaces[s].type === "shop");
   check(badSpot.length === 0, `no prize spot on start/fork/rejoin/shop${badSpot.length ? " (bad: " + badSpot.join(",") + ")" : ""}`);
   check(ps.some((s) => branchTiles.has(s)) && ps.some((s) => onRing.has(s)), "prize spots on both the ring and the forks");

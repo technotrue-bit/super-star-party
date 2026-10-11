@@ -11,7 +11,13 @@
 import { chromium } from "@playwright/test";
 
 const BASE = process.env.SSP_URL ?? "http://localhost:5177";
-const URL = `${BASE}/?audio=0&speed=8&partyAssist=1&turns=2&seed=7`;
+// SSP_SEED / SSP_TURNS pick the match (default seed 7, 2 turns).
+// SSP_EXPECT_STAR_MOVE=1 also requires a Grand Prize relocation (PR F); pair it with a
+// seed/turn count where someone buys early, e.g. SSP_SEED=7 SSP_TURNS=5.
+const SEED = process.env.SSP_SEED ?? "7";
+const TURNS = process.env.SSP_TURNS ?? "2";
+const EXPECT_STAR_MOVE = process.env.SSP_EXPECT_STAR_MOVE === "1";
+const URL = `${BASE}/?audio=0&speed=8&partyAssist=1&turns=${TURNS}&seed=${SEED}`;
 // SSP_BOARD=downtown|carnival goes on the HOST's URL only: the host picks the
 // board and the guest must follow it through MatchSetup.board.
 const BOARD_ARG = (process.env.SSP_BOARD ?? "").trim();
@@ -72,6 +78,9 @@ async function board(page) {
       spaces: players.map((p) => p.space),
       controllers: players.map((p) => p.controller),
       board: match.boardId ?? null,
+      balloon: match.starBalloonPos ?? null,
+      trail: window.__NP_TRAIL ? [...window.__NP_TRAIL] : null,
+      prizeSpots: window.__SSP__?.board?.()?.prizeSpots ?? null,
     };
   });
 }
@@ -142,9 +151,23 @@ await clickParty(host, "start", "START");
 await host.waitForFunction(() => window.__SSP__?.state?.()?.screen === "board", null, { timeout: 20000 });
 await guest.waitForFunction(() => window.__SSP__?.state?.()?.screen === "board", null, { timeout: 20000 });
 console.log("   both on the board");
+// PR F: record each tab's Grand Prize trail (distinct consecutive positions).
+for (const pg of [host, guest]) {
+  await pg.evaluate(() => {
+    const trail = [];
+    window.__NP_TRAIL = trail;
+    const tick = () => {
+      const m = window.__SSP__?.state?.()?.match;
+      const b = m?.starBalloonPos;
+      if (m?.players?.length && b != null && b >= 0 && trail[trail.length - 1] !== b) trail.push(b);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
 
 console.log("5. play until a few checkpoints agree");
-const deadline = Date.now() + 90000;
+const deadline = Date.now() + (EXPECT_STAR_MOVE ? 300000 : 90000);
 let hostParty = null;
 let guestParty = null;
 let hostBoard = null;
@@ -162,7 +185,8 @@ while (Date.now() < deadline) {
     JSON.stringify(hostBoard?.coins) === JSON.stringify(guestBoard?.coins) &&
     JSON.stringify(hostBoard?.stars) === JSON.stringify(guestBoard?.stars) &&
     JSON.stringify(hostBoard?.spaces) === JSON.stringify(guestBoard?.spaces);
-  if (h >= 4 && h === g && choices > 0 && same) break;
+  const movedOk = !EXPECT_STAR_MOVE || ((hostBoard?.trail?.length ?? 0) >= 2 && JSON.stringify(hostBoard?.trail) === JSON.stringify(guestBoard?.trail));
+  if (h >= 4 && h === g && choices > 0 && same && movedOk) break;
   await new Promise((r) => setTimeout(r, 400));
 }
 
@@ -181,6 +205,12 @@ const sameEconomy =
   JSON.stringify(hostBoard?.spaces) === JSON.stringify(guestBoard?.spaces);
 const choices =
   (hostParty?.sent ?? 0) + (hostParty?.recv ?? 0) + (guestParty?.sent ?? 0) + (guestParty?.recv ?? 0);
+// PR F: both tabs saw the same balloon trail, starting on a prize spot.
+const ht = hostBoard?.trail ?? [];
+const gt = guestBoard?.trail ?? [];
+const trailOk = ht.length >= 1 && JSON.stringify(ht) === JSON.stringify(gt) && (hostBoard?.prizeSpots ?? []).includes(ht[0]) && hostBoard?.balloon === guestBoard?.balloon;
+const moveOk = !EXPECT_STAR_MOVE || ht.length >= 2;
+console.log(`balloon trail host=${JSON.stringify(ht)} guest=${JSON.stringify(gt)} trailOk=${trailOk}${EXPECT_STAR_MOVE ? ` moved=${moveOk}` : ""}`);
 let dropController = null;
 let passed =
   errors.length === 0 &&
@@ -195,6 +225,8 @@ let passed =
   choices > 0 &&
   sameEconomy &&
   oldClientOk &&
+  trailOk &&
+  moveOk &&
   hostBoard?.board === guestBoard?.board &&
   (EXPECT_BOARD === null || hostBoard?.board === EXPECT_BOARD);
 console.log(`board host=${hostBoard?.board} guest=${guestBoard?.board} expected=${EXPECT_BOARD ?? "any"} oldClientOk=${oldClientOk}`);
