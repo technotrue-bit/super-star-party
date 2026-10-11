@@ -17,7 +17,7 @@
  * that tokens only stand on valid spaces, the balloon only sits on prize spots
  * (or on a space a Balloon Tug pulled it to),
  * and that both forks were taken both ways (a branch tile and a skipped ring
- * tile seen) across the seeds in SSP_DT_SEEDS (default "7,2"), zero page errors.
+ * tile seen) across the seeds in SSP_DT_SEEDS (default "7,5"), zero page errors.
  *
  *   SSP_URL=http://127.0.0.1:5197 node tools/probe-board-downtown.mjs
  *   SSP_SKIP_GOLDEN=1 skips part 1.
@@ -28,7 +28,9 @@ import { dirname, resolve } from "node:path";
 
 const BASE = (process.env.SSP_URL ?? "http://127.0.0.1:5177").replace(/\/$/, "");
 const ROOT = resolve(dirname(new URL(import.meta.url).pathname), "..");
-const SEEDS = (process.env.SSP_DT_SEEDS ?? "7,2").split(",").map(Number);
+// PR F: seed 5 starts the balloon on Market Street (36), so a CPU takes the Market Gate branch;
+// with the seeded start, seed 2 never did.
+const SEEDS = (process.env.SSP_DT_SEEDS ?? "7,5").split(",").map(Number);
 const RUN_TURNS = Number(process.env.SSP_DT_TURNS ?? 10);
 const CAP_MS = 420000;
 const fails = [];
