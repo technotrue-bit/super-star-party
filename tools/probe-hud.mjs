@@ -479,6 +479,19 @@ sect(`C2. live tie (${BOARD})`);
     await page.evaluate(() => document.querySelector(".ssp-roll-wrap button")?.click());
     await sleep(200);
   }
+  // When the human moves first (seed 2 since PR F's start draw shifts the turn-order
+  // rolls), its own landing changes coins and breaks the tie before any refresh
+  // shows it. Wait for the landing, then force the tie again; the next mover's
+  // hop landings refresh the cards.
+  await page.waitForFunction(() => { const m = window.__SSP__.state().match; return m.currentPlayer !== 0; }, null, { timeout: 30000, polling: 50 }).catch(() => {});
+  await page.evaluate(() => {
+    const want = [[3, 20], [3, 20], [3, 10], [1, 50]];
+    const m = window.__SSP__.state().match;
+    want.forEach(([st, co], i) => {
+      window.__SSP__.giveStars(i, st - m.players[i].stars);
+      window.__SSP__.fundPlayer(i, co - m.players[i].coins);
+    });
+  });
   const how = "after the game's next HUD refresh";
   await page.waitForFunction(
     () => Array.from(document.querySelectorAll("[data-hud-player]")).map((c) => (c.querySelector(".ssp-hud-chip__rank")?.textContent ?? "").trim()).join() === "1st,1st,3rd,4th",
