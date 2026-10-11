@@ -25,6 +25,7 @@ import { settings } from "../config/settings";
 import { match } from "../core/game";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
+import { onViewportChange, viewportSize } from "../ui/viewport";
 import type { BoardDef } from "../board/boardData";
 import type { BoardScene } from "../board/boardScene";
 import { boardGuide, type GuideStop } from "../board/boardGuide";
@@ -183,10 +184,24 @@ export function createOpening(d: OpeningDeps): Opening {
   };
 
   // ---- DOM: tour card, HIT! button, rank chips -------------------------------------
+  // The layer tracks the VISIBLE viewport (visualViewport), not the layout
+  // viewport: in-app and mobile browsers lay their toolbars over the bottom of
+  // the page, which would hide the bottom of the host card and the HIT! button.
   const layer = document.createElement("div");
   layer.className = "ssp-opening";
-  layer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:65;";
+  layer.style.cssText = "position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:65;";
   document.body.appendChild(layer);
+  const fitLayer = (): void => {
+    const vv = window.visualViewport;
+    const { w, h } = viewportSize();
+    layer.style.left = `${vv?.offsetLeft ?? 0}px`;
+    layer.style.top = `${vv?.offsetTop ?? 0}px`;
+    layer.style.width = `${w}px`;
+    layer.style.height = `${h}px`;
+    // The card may use everything below the top HUD strip; past that it scrolls.
+    card.style.maxHeight = `${Math.max(160, h - 120)}px`;
+  };
+  const offViewport = onViewportChange(fitLayer);
 
   const card = document.createElement("div");
   card.style.cssText = [
@@ -205,12 +220,17 @@ export function createOpening(d: OpeningDeps): Opening {
     "font:500 16px/1.4 Fredoka, sans-serif",
     "pointer-events:auto",
     "display:none",
+    "flex-direction:column",
+    "overflow:hidden",
   ].join(";");
   const cardTitle = document.createElement("div");
-  cardTitle.style.cssText = `font:700 21px Fredoka, sans-serif;color:${palette.candyDeep};margin-bottom:6px;`;
+  cardTitle.style.cssText = `flex:0 0 auto;font:700 21px Fredoka, sans-serif;color:${palette.candyDeep};margin-bottom:6px;`;
+  // The card grows with its text; only if it would outgrow the visible screen
+  // does the text scroll, and the NEXT / SKIP row stays pinned below it.
   const cardBody = document.createElement("div");
+  cardBody.style.cssText = "flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;";
   const cardRow = document.createElement("div");
-  cardRow.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;";
+  cardRow.style.cssText = "flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;";
   const cardCount = document.createElement("div");
   cardCount.style.cssText = `font:600 13px Fredoka, sans-serif;color:${palette.inkSoft};`;
   const cardBtns = document.createElement("div");
@@ -218,6 +238,7 @@ export function createOpening(d: OpeningDeps): Opening {
   cardRow.append(cardCount, cardBtns);
   card.append(cardTitle, cardBody, cardRow);
   layer.appendChild(card);
+  fitLayer();
 
   const hitWrap = document.createElement("div");
   hitWrap.style.cssText = "position:absolute;left:50%;bottom:calc(28px + env(safe-area-inset-bottom, 0px));transform:translateX(-50%);pointer-events:auto;display:none;";
@@ -304,7 +325,8 @@ export function createOpening(d: OpeningDeps): Opening {
     }
     const next = ui.button({ label: last ? "LET'S PLAY!" : "NEXT", kind: last ? "gold" : "primary", size: "sm", onClick: nextStop });
     cardBtns.appendChild(next.el);
-    card.style.display = "block";
+    card.style.display = "flex";
+    cardBody.scrollTop = 0;
     focusPose(s);
     audio.sfx.play("ui.click");
   };
@@ -421,6 +443,7 @@ export function createOpening(d: OpeningDeps): Opening {
   function dispose(): void {
     (globalThis as { __SSP_OPENING?: unknown }).__SSP_OPENING = undefined;
     window.removeEventListener("keydown", onKey);
+    offViewport();
     prompt?.destroy();
     prompt = null;
     layer.remove();
