@@ -1006,6 +1006,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
       def,
       board: this._board,
       chars: this._chars,
+      camera: cam,
       overview: { pos: this._cam.base.clone(), look: this._cam.look.clone() },
       from: { pos: cam.position.clone(), look: cam.position.clone().addScaledVector(fwd, 20) },
       scene: world.scene,

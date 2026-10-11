@@ -35,6 +35,8 @@ export interface OpeningDeps {
   def: BoardDef;
   board: BoardScene;
   chars: Character[];
+  /** The live camera: its fov and aspect size the line-up shot. */
+  camera: THREE.PerspectiveCamera;
   /** Overview camera the party camera rests on (the opening ends there). */
   overview: { pos: THREE.Vector3; look: THREE.Vector3 };
   /** Where the camera is right now (the flyover's last pose). */
@@ -105,12 +107,32 @@ export function createOpening(d: OpeningDeps): Opening {
   toCam.normalize();
   const right = new THREE.Vector3(toCam.z, 0, -toCam.x);
   const lineCentre = startPos.clone().addScaledVector(toCam, 1.4);
-  const spots = d.chars.map((_, i) => lineCentre.clone().addScaledVector(right, (i - (n - 1) / 2) * 1.9));
+  // Portrait screens see a narrow slice of the world: stand closer together
+  // so the camera does not have to back off as far to fit the row.
+  const gap = d.camera.aspect < 1 ? 1.35 : 1.9;
+  const spots = d.chars.map((_, i) => lineCentre.clone().addScaledVector(right, (i - (n - 1) / 2) * gap));
   const faceCam = Math.atan2(toCam.x, toCam.z);
   // Tour shots look along the party camera's own heading.
   const viewDir = d.overview.pos.clone().sub(d.overview.look).setY(0).normalize();
-  const lineLook = lineCentre.clone().add(new THREE.Vector3(0, 1.6, 0));
-  const linePos = lineLook.clone().addScaledVector(toCam, 9).add(new THREE.Vector3(0, 3.4, 0));
+  const lineLook = lineCentre.clone().add(new THREE.Vector3(0, 1.9, 0));
+  const linePos = new THREE.Vector3();
+  /**
+   * Back the line-up camera off until the whole row (plus a margin for the
+   * dice blocks) fits the screen's width AND the blocks fit its height. A
+   * portrait phone's narrow horizontal view needs a much longer pull-back
+   * than a landscape screen.
+   */
+  const fitLinePose = (): void => {
+    const vHalf = THREE.MathUtils.degToRad(d.camera.fov / 2);
+    const hHalf = Math.atan(Math.tan(vHalf) * Math.max(0.2, d.camera.aspect));
+    const halfRow = ((n - 1) / 2) * gap + (gap < 1.9 ? 1.0 : 1.4); // outer characters + their blocks
+    const halfTall = 2.6; // feet to the top of a dice block, about the look point
+    const dist = Math.max(9, halfRow / Math.tan(hHalf), halfTall / Math.tan(vHalf)) * 1.12;
+    // The further back, the higher: a long pull-back looks down over whatever
+    // stands between the camera and the row (the hill and its fountain).
+    linePos.copy(lineLook).addScaledVector(toCam, dist).add(new THREE.Vector3(0, 2.2 + dist * (dist > 12 ? 0.42 : 0.18), 0));
+  };
+  fitLinePose();
 
   // Home spots (the start space's 2x2 stand-off grid), where the turn loop expects them.
   const home = d.chars.map((_, i) => {
@@ -426,6 +448,12 @@ export function createOpening(d: OpeningDeps): Opening {
       lastNow = now;
       t += dt;
       phaseT += dt;
+      // Re-fit the line-up shot every frame: the phone may rotate mid-opening.
+      if (phase !== "tour") {
+        const wasLine = tgtPos.distanceToSquared(linePos) < 1e-6;
+        fitLinePose();
+        if (wasLine) tgtPos.copy(linePos);
+      }
       const k = 1 - Math.exp(-dt * 3.2);
       camPos.lerp(tgtPos, k);
       camLook.lerp(tgtLook, k);
