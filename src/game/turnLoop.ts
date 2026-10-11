@@ -2378,7 +2378,33 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       else beginTurn();
       return;
     }
+    if (!match.startCoinsDealt) {
+      dealStartCoins();
+      return;
+    }
     beginTurn();
+  };
+
+  /**
+   * MP-style starting purse: once the turn order is set, everyone gets
+   * settings.startCoins, then the first turn begins. Runs on every peer at the
+   * same point (first start()), no rng.
+   */
+  const dealStartCoins = (): void => {
+    match.startCoinsDealt = true;
+    const amount = settings.startCoins;
+    for (const p of match.players) {
+      p.coins += amount;
+      bus.emit("coins:change", { player: p.id, delta: amount, total: p.coins });
+    }
+    audio.sfx.play("coin.gain");
+    hud.showBanner(`EVERYONE GETS ${amount} COINS!`, { durationMs: 1500 });
+    for (const ch of chars) ch?.anim.cheer();
+    refreshHud();
+    pause(1.7, () => {
+      for (const ch of chars) ch?.anim.idle();
+      beginTurn();
+    });
   };
 
   const dispose = (): void => {

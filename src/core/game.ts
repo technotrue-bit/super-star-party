@@ -4,6 +4,7 @@
  * data model every system reads/writes. Keep fields stable.
  */
 import { rng } from "./rng";
+import { settings } from "../config/settings";
 import { defaultSeatController, type SeatController } from "./seat";
 import { resetMinigameTracking } from "../minigames/registry";
 import { assignPlayerPacks, blankPlayedByPack, readPersistedRules, syncPersistedRules } from "../minigames/packRules";
@@ -204,6 +205,11 @@ export interface MatchState {
    * round rollover. Unused (always true) on boards without a gate.
    */
   gateOpen: boolean;
+  /**
+   * The starting purse (settings.startCoins each) has been dealt. Dealt by the
+   * turn loop's first start(), after the turn order, MP-style.
+   */
+  startCoinsDealt: boolean;
 }
 
 function makePlayer(id: number, kind: string, name: string, controller: SeatController, startSpace: number): PlayerState {
@@ -211,7 +217,7 @@ function makePlayer(id: number, kind: string, name: string, controller: SeatCont
     id,
     kind,
     name,
-    coins: 10, // everyone starts with 10 coins, MP-style
+    coins: 0, // the starting purse is dealt when play begins (match.startCoinsDealt)
     stars: 0,
     space: startSpace,
     minigameWins: 0,
@@ -261,6 +267,7 @@ export const match: MatchState = {
   itemUsedThisTurn: false,
   boardId: DEFAULT_BOARD,
   gateOpen: true,
+  startCoinsDealt: false,
 };
 
 bindLiveRules(match);
@@ -313,6 +320,7 @@ export function startMatch(
   match.shopStockRound = 0;
   match.itemUsedThisTurn = false;
   match.gateOpen = true;
+  match.startCoinsDealt = false;
 
   // Pull the host's saved rotation onto this match, then deal packs.
   // Local seats keep the human pack; CPU and remote seats draw.
@@ -343,42 +351,31 @@ export function ranking(): number[] {
 }
 
 /**
- * Mario Party style: All players roll one die at the start of the match.
- * Highest roll goes first. Ties trigger rerolls among the tied players only.
- * This is fully deterministic via the match rng.
+ * Mario Party style: every player hits an order block at the start of the
+ * match. Numbers never repeat; highest goes first, then down the line.
+ * Fully deterministic via the match rng (the board's dice blocks only show
+ * these numbers, outcome-first).
  * Sets match.turnOrder and match.currentPlayer.
  */
 export function rollForTurnOrder(): void {
   const n = match.players.length;
   if (n === 0) return;
-
+  // Mario Party order blocks: every player hits a block numbered 1..max and
+  // no two players can land the same number, so the order is never a tie.
+  // Drawn in seat order; a repeat number is redrawn.
+  const max = Math.max(n, settings.orderBlockMax);
   const rolls: number[] = new Array(n).fill(0);
-  let order = Array.from({ length: n }, (_, i) => i);
-
-  // Initial rolls
+  const taken = new Set<number>();
   for (let i = 0; i < n; i++) {
-    rolls[i] = rng.int(1, 6);
+    let r = rng.int(1, max);
+    while (taken.has(r)) r = rng.int(1, max);
+    taken.add(r);
+    rolls[i] = r;
   }
-
-  // Resolve ties by rerolling only the tied group (repeat until unique max)
-  let maxRoll = Math.max(...rolls);
-  let leaders = order.filter((i) => rolls[i] === maxRoll);
-
-  while (leaders.length > 1) {
-    // Reroll only the leaders
-    for (const i of leaders) {
-      rolls[i] = rng.int(1, 6);
-    }
-    maxRoll = Math.max(...rolls);
-    leaders = order.filter((i) => rolls[i] === maxRoll);
-  }
-
-  // Sort the order so the winner is first, then the rest in their original relative order
-  // (or we can just put winner first and keep the others stable)
-  const winner = leaders[0];
-  order = [winner, ...order.filter((i) => i !== winner)];
+  // Highest number goes first, then down the line.
+  const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => rolls[b] - rolls[a]);
 
   match.orderRolls = rolls;
   match.turnOrder = order;
-  match.currentPlayer = winner;
+  match.currentPlayer = order[0];
 }

@@ -5,7 +5,9 @@
 ### Setup
 - 4 players, CPUs fill — **Already**: HUMAN=0, 3 CPUs. Good.
 - Turn count 10–50 step 5 — **Already supported** via startMatch(..., totalTurns). UI hook needed in title or select.
-- Everyone starts with 10 coins — **Already**.
+- Everyone starts with 10 coins — **Done, MP-style**: purses start at 0 and the turn loop deals `settings.startCoins` (10) to everyone once, after the turn order is set (`match.startCoinsDealt`), then turn 1 begins.
+- Match opening — **Done**: a menu-started match plays the island flyover, lines everyone up by the start space, asks "How does this board work?" (YES runs a camera tour built from the board in `src/board/boardGuide.ts`), then everyone hits an order block (`src/screens/boardOpening.ts`). Skipped under autoplay, `?speed`, reduced motion, online play and URL-direct boards; `?intro=1|0` forces it on or off. CI: `tools/probe-opening.mjs`.
+- Turn order — **Done, MP-style**: order blocks show 1–10 and no two players get the same number (`rollForTurnOrder`, match rng, drawn before the blocks are shown). Highest goes first, then down the line.
 - Each player picks a minigame pack — **Done**: Character select, title settings, and the pause settings share one picker (`ssp.minigamePacks`, `ssp.humanPack`, `ssp.minigameCoinMultiplier`). The host toggles which packs stay in the roulette (at least one). The human's pack is saved; CPUs draw from the packs left on, with a seed-derived stream so dice rolls do not shift. Those picks weight the roulette.
 - Goal: most Stars, coins tiebreaker — **Already** in ranking().
 

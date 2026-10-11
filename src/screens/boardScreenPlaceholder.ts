@@ -27,6 +27,7 @@ import { buildBoardScene, boardBounds, type BoardScene } from "../board/boardSce
 import { activeBoard } from "../board/registry";
 import { liveNext, type BoardDef } from "../board/boardData";
 import { createIntroFlyover, type IntroFlyover } from "../board/introFlyover";
+import { createOpening, type Opening } from "./boardOpening";
 import { playSpeed, prefersReducedMotion } from "../config/settings";
 import { onlineMatch } from "../net/mode";
 import { distanceTo } from "../board/boardGraph";
@@ -289,6 +290,9 @@ interface BoardScreenState {
   /** Match-start flyover while it plays (camera override + skip listener). */
   _intro?: { fly: IntroFlyover; start: number; shown: number; hud: IntroHud; done: () => void; off: () => void };
   _startIntro: (def: BoardDef, hud: IntroHud, done: () => void) => void;
+  /** Line-up, board tour, and order-block roll (boardOpening.ts) while it plays. */
+  _opening?: Opening;
+  _startOpening: (def: BoardDef, hud: IntroHud) => void;
 
   _finaleShown?: boolean;
   _unsubs: Array<() => void>;
@@ -924,7 +928,10 @@ const boardScreenImpl: BoardScreenState & Screen = {
           !prefersReducedMotion() &&
           !onlineMatch());
       if (wantIntro && this._cam) {
-        this._startIntro(boardDef, queuedHud, orderCeremony);
+        // Flyover, then the Mario Party opening: line up, optional board
+        // tour, everyone hits an order block, then the loop deals coins.
+        rollBtn.setVisible(false);
+        this._startIntro(boardDef, queuedHud, () => this._startOpening(boardDef, queuedHud));
       } else {
         orderCeremony();
       }
@@ -987,9 +994,37 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._intro = { fly, start, shown: 0, hud, done, off };
   },
 
+  _startOpening(def: BoardDef, hud: IntroHud) {
+    const cam = world.camera;
+    if (!this._cam || !cam || !this._board || !this._chars || !world.scene) {
+      this._loop?.start();
+      return;
+    }
+    const fwd = new THREE.Vector3();
+    cam.getWorldDirection(fwd);
+    this._opening = createOpening({
+      def,
+      board: this._board,
+      chars: this._chars,
+      overview: { pos: this._cam.base.clone(), look: this._cam.look.clone() },
+      from: { pos: cam.position.clone(), look: cam.position.clone().addScaledVector(fwd, 20) },
+      scene: world.scene,
+      banner: (text, opts) => hud.showBanner(text, { durationMs: opts?.durationMs, style: "default" }),
+      project: projectToScreen,
+      isLocal: (pid) => playerController(pid) === "local",
+      label: (pid) => playerLabel(pid),
+      onDone: () => {
+        this._opening = undefined;
+        this._loop?.start();
+      },
+    });
+  },
+
   exit() {
     this._intro?.off();
     this._intro = undefined;
+    this._opening?.dispose();
+    this._opening = undefined;
     document.body.classList.remove("ssp-board-on");
     for (const off of this._unsubs ?? []) off();
     this._unsubs = [];
@@ -1110,6 +1145,9 @@ const boardScreenImpl: BoardScreenState & Screen = {
         this._intro = undefined;
         intro.done();
       }
+    }
+    if (cam && !introPose && this._opening) {
+      introPose = this._opening.update();
     }
     if (cam && introPose) {
       cam.position.copy(introPose.pos);

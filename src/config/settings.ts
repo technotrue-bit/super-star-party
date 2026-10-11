@@ -66,6 +66,8 @@ export const settings = {
   players: 4,
   starCost: 10, // coins per star from the Grand Prize Balloon
   starBundleMax: 5, // most stars one visit to the balloon can ask for
+  startCoins: 10, // dealt to everyone once the turn order is set (MP-style)
+  orderBlockMax: 10, // turn-order dice blocks show 1..this, every number different
   blueCoin: 3, // coins gained on blue space
   redCoin: 3, // coins lost on red space
   minigameWinCoins: 10, // base minigame winner payout, before pack bonus and the host multiplier

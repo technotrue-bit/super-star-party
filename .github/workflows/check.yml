@@ -57,6 +57,9 @@ jobs:
       - name: Fork walk-through and item-then-roll (both boards)
         run: node tools/probe-fork-walk.mjs --ci
 
+      - name: Match opening (line-up, board tour, order blocks, starting coins)
+        run: node tools/probe-opening.mjs
+
       - name: Playtest
         run: node tools/smoke-play.mjs
 
