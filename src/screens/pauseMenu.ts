@@ -265,7 +265,7 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
 
   // ---- panel ----
   const panel = document.createElement("div");
-  panel.className = "ssp-pause-panel";
+  panel.className = "ssp-pause-panel ssp-on-light";
   scrim.appendChild(panel);
 
   document.body.appendChild(scrim);

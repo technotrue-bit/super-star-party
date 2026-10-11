@@ -204,6 +204,7 @@ export function createOpening(d: OpeningDeps): Opening {
   const offViewport = onViewportChange(fitLayer);
 
   const card = document.createElement("div");
+  card.className = "ssp-on-light";
   card.style.cssText = [
     "position:absolute",
     "left:50%",
@@ -395,7 +396,13 @@ export function createOpening(d: OpeningDeps): Opening {
   const localToHit = (): number => d.chars.findIndex((_, i) => d.isLocal(i) && !blocks[i].hit);
   const onKey = (e: KeyboardEvent): void => {
     if (phase !== "roll") return;
+    // The pause menu owns the keyboard while it is up: no hitting a block
+    // behind it.
+    if (document.querySelector(".ssp-pause-overlay--open")) return;
     if (e.key === " " || e.key === "Enter") {
+      // Keep the focused HIT! button from firing a second hit on the same press.
+      e.preventDefault();
+      if (e.repeat) return;
       const i = localToHit();
       if (i >= 0) hit(i);
     }

@@ -182,6 +182,8 @@ export interface TurnLoop {
   rollPressed(): void;
   /** True when the human is expected to press ROLL right now. */
   isWaitingForRoll(): boolean;
+  /** True while the star-purchase ceremony plays (the balloon waits it out). */
+  readonly starCeremonyActive: boolean;
   readonly phase: LoopPhase;
   /** Display only: hops still to walk in the current rolled walk, or null (teleports, landed, ceremonies). */
   readonly moveCountdown: { pid: number; left: number } | null;
@@ -2430,6 +2432,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   const dispose = (): void => {
     S.disposed = true;
+    // A ceremony cut short (quit mid-purchase) must not leave the debug flag on.
+    S.starCeremony = false;
+    (globalThis as any).__SSP_STAR_CEREMONY = { active: false, pid: 0, t: 0 };
     if (stingerTO !== null) {
       window.clearTimeout(stingerTO);
       stingerTO = null;
@@ -2464,6 +2469,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       !S.poisonPopup,
     get phase(): LoopPhase {
       return S.phase;
+    },
+    get starCeremonyActive(): boolean {
+      return S.starCeremony && !S.disposed;
     },
     get moveCountdown() {
       if (S.phase !== "moving" || !countedWalk || S.shopOpen || S.starCeremony || S.starPopup) return null;

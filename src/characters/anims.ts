@@ -324,7 +324,12 @@ export function createAnimController(
         break;
       case 'glimmer':
         pose.parts.antenna[2] = Math.sin(t * 16) * 0.5;
-        pose.yaw = t * 6; // spins on the spot
+        {
+          // A quick pirouette every 1.8 s, facing front in between, so the
+          // winner on a podium still shows its face.
+          const c = (t % 1.8) / 0.55;
+          if (c < 1) pose.yaw = smoothstep(c) * TAU;
+        }
         break;
       case 'tusk':
         pose.parts.trunk[0] = -0.9 + Math.sin(t * 9) * 0.25; // trunk raised, trumpeting

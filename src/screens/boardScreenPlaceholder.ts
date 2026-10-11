@@ -1126,7 +1126,9 @@ const boardScreenImpl: BoardScreenState & Screen = {
     const t = this._t;
 
     // The balloon waits out the star ceremony, then flies to its new space.
-    const starCeremonyOn = (globalThis as { __SSP_STAR_CEREMONY?: { active?: boolean } }).__SSP_STAR_CEREMONY?.active === true;
+    // Read from the live loop, not a page global: a ceremony cut short by
+    // leaving the board must never freeze the next match's balloon.
+    const starCeremonyOn = this._loop?.starCeremonyActive === true;
     if (!starCeremonyOn) this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
     this._board?.update(dt);
     for (const ch of this._chars ?? []) ch.update(dt);
