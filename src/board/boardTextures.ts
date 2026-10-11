@@ -1,7 +1,9 @@
 /**
  * SUPER STAR PARTY — procedural canvas textures for the board.
- * All textures are drawn with Canvas 2D at 64x64 and sampled with
- * NearestFilter for the crisp retro-cartoon look. Palette-only colors.
+ * Scenery textures are drawn with Canvas 2D at 64x64 and sampled with
+ * NearestFilter for the crisp retro-cartoon look; space disks are drawn in the
+ * same 64-unit coordinates at a higher resolution (see DISK_RES) and sampled
+ * smoothly so their icons read from the party camera. Palette-only colors.
  */
 import * as THREE from "three";
 import { palette, hex } from "../config/palette";
@@ -17,11 +19,19 @@ function makeCanvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingCo
   return [c, ctx];
 }
 
-function toTexture(c: HTMLCanvasElement, opts?: { repeat?: boolean }): THREE.CanvasTexture {
+function toTexture(c: HTMLCanvasElement, opts?: { repeat?: boolean; smooth?: boolean }): THREE.CanvasTexture {
   const t = new THREE.CanvasTexture(c);
-  t.magFilter = THREE.NearestFilter;
-  t.minFilter = THREE.NearestFilter;
-  t.generateMipmaps = false;
+  if (opts?.smooth) {
+    // Hi-res disk faces: mipmapped so the bold icons stay clean when small.
+    t.magFilter = THREE.LinearFilter;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.generateMipmaps = true;
+    t.anisotropy = 4;
+  } else {
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+  }
   t.colorSpace = THREE.SRGBColorSpace;
   if (opts?.repeat) {
     t.wrapS = THREE.RepeatWrapping;
@@ -64,97 +74,156 @@ function starPath(ctx: CanvasRenderingContext2D, cx: number, cy: number, outer: 
   ctx.closePath();
 }
 
-// ---- shared base pattern for space disks --------------------------------------
-function drawDiskBase(ctx: CanvasRenderingContext2D, base: string): void {
+// ---- space disks ----------------------------------------------------------------
+// Disks are drawn in the same 64-unit coordinate space as everything else but
+// rasterized at DISK_RES and sampled smoothly, so icons stay crisp from the
+// high party camera. Each type gets its own base color, its own background
+// pattern and a bold, ink-outlined icon so it reads at a glance (and for
+// color-blind players, by shape alone).
+const DISK_RES = 256;
+
+/** Fill-then-ink-outline helper: thick ink under, colored fill on top. */
+function inked(ctx: CanvasRenderingContext2D, path: () => void, fill: string, ink = 3.2): void {
+  path();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.strokeStyle = palette.ink;
+  ctx.lineWidth = ink;
+  ctx.stroke();
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+
+type DiskPattern = "plain" | "rays" | "dots" | "stripes" | "checks";
+
+function drawDiskBase(ctx: CanvasRenderingContext2D, base: string, deep: string, pattern: DiskPattern): void {
   ctx.fillStyle = base;
   ctx.fillRect(0, 0, SIZE, SIZE);
-  // subtle radial rings (white + black so they read on light and dark bases)
-  ctx.strokeStyle = "rgba(255,255,255,0.16)";
-  ctx.lineWidth = 2;
-  for (const r of [12, 21]) {
-    circle(ctx, 32, 32, r);
-    ctx.stroke();
+  // Background pattern, clipped to the face so the bevel ring stays clean.
+  ctx.save();
+  circle(ctx, 32, 32, 27);
+  ctx.clip();
+  ctx.fillStyle = "rgba(255,255,255,0.18)";
+  switch (pattern) {
+    case "rays":
+      for (let i = 0; i < 12; i += 2) {
+        const a0 = (i * Math.PI) / 6;
+        const a1 = ((i + 1) * Math.PI) / 6;
+        ctx.beginPath();
+        ctx.moveTo(32, 32);
+        ctx.arc(32, 32, 40, a0, a1);
+        ctx.closePath();
+        ctx.fill();
+      }
+      break;
+    case "dots":
+      for (let y = 6; y < SIZE; y += 10) {
+        for (let x = (y / 10) % 2 < 1 ? 6 : 11; x < SIZE; x += 10) {
+          circle(ctx, x, y, 2.2);
+          ctx.fill();
+        }
+      }
+      break;
+    case "stripes":
+      ctx.save();
+      ctx.translate(32, 32);
+      ctx.rotate(-Math.PI / 4);
+      for (let x = -48; x < 48; x += 12) ctx.fillRect(x, -48, 6, 96);
+      ctx.restore();
+      break;
+    case "checks":
+      for (let y = 0; y < SIZE; y += 8) {
+        for (let x = (y / 8) % 2 === 0 ? 0 : 8; x < SIZE; x += 16) ctx.fillRect(x, y, 8, 8);
+      }
+      break;
+    case "plain":
+      // soft top-left sheen so plain disks don't look flat
+      ctx.beginPath();
+      ctx.arc(32, 32, 24, Math.PI * 0.95, Math.PI * 1.55);
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      ctx.stroke();
+      break;
   }
-  ctx.strokeStyle = "rgba(0,0,0,0.10)";
-  circle(ctx, 32, 32, 9);
-  ctx.stroke();
-  // printed rim ring
-  ctx.strokeStyle = "rgba(0,0,0,0.18)";
-  ctx.lineWidth = 3;
+  ctx.restore();
+  // Deep-tone bevel band + ink keyline: separates the face from the rim and
+  // from the grass/path around it.
+  ctx.strokeStyle = deep;
+  ctx.lineWidth = 5;
   circle(ctx, 32, 32, 29.5);
+  ctx.stroke();
+  ctx.strokeStyle = palette.ink;
+  ctx.lineWidth = 1.6;
+  circle(ctx, 32, 32, 27);
   ctx.stroke();
 }
 
 // ---- icons (drawn upright in the canvas; see orientation note in boardScene) --
-function drawCoin(ctx: CanvasRenderingContext2D): void {
-  ctx.fillStyle = palette.sun;
-  circle(ctx, 32, 32, 12);
-  ctx.fill();
-  ctx.strokeStyle = palette.sunDeep;
-  ctx.lineWidth = 2.5;
-  circle(ctx, 32, 32, 12);
-  ctx.stroke();
-  circle(ctx, 32, 32, 7);
-  ctx.stroke();
-  ctx.fillStyle = palette.white;
-  circle(ctx, 28, 28, 2.6);
-  ctx.fill();
+/** Big chunky plus: "you gain coins" (the twin of red's minus). */
+function drawPlus(ctx: CanvasRenderingContext2D): void {
+  inked(ctx, () => plusPath(ctx, 32, 32, 16, 5.5), palette.cream, 3.6);
 }
 
+function plusPath(ctx: CanvasRenderingContext2D, cx: number, cy: number, arm: number, half: number): void {
+  ctx.beginPath();
+  ctx.moveTo(cx - half, cy - arm);
+  ctx.lineTo(cx + half, cy - arm);
+  ctx.lineTo(cx + half, cy - half);
+  ctx.lineTo(cx + arm, cy - half);
+  ctx.lineTo(cx + arm, cy + half);
+  ctx.lineTo(cx + half, cy + half);
+  ctx.lineTo(cx + half, cy + arm);
+  ctx.lineTo(cx - half, cy + arm);
+  ctx.lineTo(cx - half, cy + half);
+  ctx.lineTo(cx - arm, cy + half);
+  ctx.lineTo(cx - arm, cy - half);
+  ctx.lineTo(cx - half, cy - half);
+  ctx.closePath();
+}
+
+/** Big chunky minus: "you lose coins". */
 function drawMinus(ctx: CanvasRenderingContext2D): void {
-  ctx.fillStyle = palette.cream;
-  roundRectPath(ctx, 21, 28.5, 22, 7, 3.5);
-  ctx.fill();
-  ctx.strokeStyle = palette.ink;
-  ctx.lineWidth = 1.6;
-  ctx.stroke();
+  inked(ctx, () => roundRectPath(ctx, 15, 26.5, 34, 11, 5.5), palette.cream, 3.6);
 }
 
+/** Bold question mark: "something happens". */
 function drawQuestion(ctx: CanvasRenderingContext2D): void {
-  ctx.strokeStyle = palette.cream;
-  ctx.lineWidth = 5;
+  const hook = (): void => {
+    ctx.beginPath();
+    ctx.moveTo(23.5, 24);
+    ctx.bezierCurveTo(23.5, 15, 40.5, 14, 40.5, 23.5);
+    ctx.bezierCurveTo(40.5, 30, 32, 29.5, 32, 37);
+  };
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  // hook: open at lower-right, closed at upper-left
-  ctx.beginPath();
-  ctx.arc(32, 27, 10, Math.PI * 0.42, Math.PI * 1.58, true);
+  ctx.strokeStyle = palette.ink;
+  ctx.lineWidth = 11;
+  hook();
   ctx.stroke();
-  // tail
-  ctx.beginPath();
-  ctx.moveTo(32.9, 17.2);
-  ctx.quadraticCurveTo(39.5, 18.8, 40.5, 27);
+  ctx.strokeStyle = palette.cream;
+  ctx.lineWidth = 7;
+  hook();
   ctx.stroke();
-  // dot
-  ctx.fillStyle = palette.cream;
-  circle(ctx, 36.5, 40.5, 2.9);
-  ctx.fill();
+  inked(ctx, () => circle(ctx, 32, 45.5, 4), palette.cream, 3);
 }
 
 function drawStarIcon(ctx: CanvasRenderingContext2D): void {
-  starPath(ctx, 32, 32, 13, 5.5, 5);
-  ctx.fillStyle = palette.white;
-  ctx.fill();
-  ctx.strokeStyle = palette.ink;
-  ctx.lineWidth = 1.8;
-  ctx.stroke();
+  inked(ctx, () => starPath(ctx, 32, 33, 17, 7.5, 5), palette.white, 3.4);
 }
 
 function drawBag(ctx: CanvasRenderingContext2D): void {
-  ctx.strokeStyle = palette.ink;
-  ctx.lineWidth = 3.5;
   ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.arc(32, 29, 6.5, Math.PI, 0, false);
-  ctx.stroke();
-  ctx.fillStyle = palette.white;
-  roundRectPath(ctx, 23, 29, 18, 15, 3);
-  ctx.fill();
   ctx.strokeStyle = palette.ink;
-  ctx.lineWidth = 1.8;
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.arc(32, 27, 7.5, Math.PI, 0, false);
   ctx.stroke();
-  ctx.fillStyle = palette.ink;
-  circle(ctx, 32, 36.5, 1.6);
-  ctx.fill();
+  ctx.strokeStyle = palette.cream;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  inked(ctx, () => roundRectPath(ctx, 19, 26, 26, 21, 4), palette.cream, 3.2);
+  inked(ctx, () => circle(ctx, 32, 36.5, 4), palette.sun, 2);
 }
 
 /** Grumpy face, parameterized so it can serve as disk icon and 3D face disc. */
@@ -190,15 +259,27 @@ function drawGrumpyFace(ctx: CanvasRenderingContext2D, cx: number, cy: number, s
 }
 
 // ---- per-type disk textures ----------------------------------------------------
-const DISK_BASE: Record<SpaceType, string> = {
-  blue: palette.spaceBlue,
-  red: palette.lava,
-  green: palette.spaceGreen,
-  star: palette.sun,
-  shop: palette.berry,
-  grumpus: palette.lavaDeep,
-  stamp: palette.heroPip,          // carnival stamp
-  minigame_balloon: palette.candy, // balloon pop
+interface DiskStyle {
+  base: string;
+  /** Bevel band; also the 3D rim color in boardScene. */
+  deep: string;
+  pattern: DiskPattern;
+}
+
+/**
+ * Party-board convention (blue gives, red takes, green is a happening), with
+ * every special space pushed far enough apart in hue AND pattern that no two
+ * types read alike against the lawn or the sandy path.
+ */
+export const DISK_STYLE: Record<SpaceType, DiskStyle> = {
+  blue: { base: palette.spaceBlue, deep: palette.spaceBlueDeep, pattern: "plain" },
+  red: { base: palette.spaceRed, deep: palette.spaceRedDeep, pattern: "plain" },
+  green: { base: palette.spaceGreen, deep: palette.spaceGreenDeep, pattern: "dots" },
+  star: { base: palette.sun, deep: palette.sunDeep, pattern: "rays" },
+  shop: { base: palette.berry, deep: palette.berryDeep, pattern: "stripes" },
+  grumpus: { base: palette.ink, deep: palette.lava, pattern: "checks" },
+  stamp: { base: palette.heroPip, deep: palette.woodDark, pattern: "stripes" },
+  minigame_balloon: { base: palette.candy, deep: palette.candyDeep, pattern: "dots" },
 };
 
 const STAMP_SEAL: Record<StampKind, string> = {
@@ -208,11 +289,13 @@ const STAMP_SEAL: Record<StampKind, string> = {
 };
 
 function diskTexture(type: SpaceType): THREE.CanvasTexture {
-  const [c, ctx] = makeCanvas(SIZE, SIZE);
-  drawDiskBase(ctx, DISK_BASE[type]);
+  const [c, ctx] = makeCanvas(DISK_RES, DISK_RES);
+  ctx.scale(DISK_RES / SIZE, DISK_RES / SIZE);
+  const st = DISK_STYLE[type];
+  drawDiskBase(ctx, st.base, st.deep, st.pattern);
   switch (type) {
     case "blue":
-      drawCoin(ctx);
+      drawPlus(ctx);
       break;
     case "red":
       drawMinus(ctx);
@@ -227,7 +310,7 @@ function diskTexture(type: SpaceType): THREE.CanvasTexture {
       drawBag(ctx);
       break;
     case "grumpus":
-      drawGrumpyFace(ctx, 32, 32, 1, 2);
+      drawGrumpyFace(ctx, 32, 32, 1.15, 3);
       break;
     case "stamp":
       drawStamp(ctx);
@@ -236,47 +319,52 @@ function diskTexture(type: SpaceType): THREE.CanvasTexture {
       drawBalloon(ctx);
       break;
   }
-  return toTexture(c);
+  return toTexture(c, { smooth: true });
 }
 
 /** Ticket punched with a gold seal — reads as a stamp from above. */
 function drawStamp(ctx: CanvasRenderingContext2D): void {
-  ctx.fillStyle = palette.cream;
-  roundRectPath(ctx, 16, 18, 32, 28, 5);
-  ctx.fill();
-  ctx.strokeStyle = palette.ink;
-  ctx.lineWidth = 2.2;
-  ctx.stroke();
-  ctx.fillStyle = palette.sun;
-  circle(ctx, 32, 32, 7);
-  ctx.fill();
-  ctx.strokeStyle = palette.ink;
-  ctx.lineWidth = 1.6;
-  circle(ctx, 32, 32, 7);
-  ctx.stroke();
+  const ticket = (): void => {
+    // ticket with notched sides
+    ctx.beginPath();
+    ctx.moveTo(17, 19);
+    ctx.lineTo(47, 19);
+    ctx.lineTo(47, 28);
+    ctx.arc(47, 32, 4, -Math.PI / 2, Math.PI / 2, true);
+    ctx.lineTo(47, 45);
+    ctx.lineTo(17, 45);
+    ctx.lineTo(17, 36);
+    ctx.arc(17, 32, 4, Math.PI / 2, -Math.PI / 2, true);
+    ctx.closePath();
+  };
+  inked(ctx, ticket, palette.cream, 3.2);
+  inked(ctx, () => circle(ctx, 32, 32, 7.5), palette.sun, 2.4);
 }
 
 /** Cream balloon with a knot and string. The price lives on the 3D prop. */
 function drawBalloon(ctx: CanvasRenderingContext2D): void {
-  ctx.fillStyle = palette.cream;
-  circle(ctx, 32, 26, 12);
-  ctx.fill();
-  ctx.strokeStyle = palette.ink;
-  ctx.lineWidth = 2.2;
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(29, 36.5);
-  ctx.lineTo(32, 42);
-  ctx.lineTo(35, 36.5);
-  ctx.closePath();
-  ctx.fillStyle = palette.cream;
-  ctx.fill();
-  ctx.stroke();
   ctx.lineCap = "round";
+  ctx.strokeStyle = palette.ink;
+  ctx.lineWidth = 2.4;
   ctx.beginPath();
   ctx.moveTo(32, 42);
-  ctx.quadraticCurveTo(38, 50, 30, 56);
+  ctx.quadraticCurveTo(39, 50, 30, 57);
   ctx.stroke();
+  inked(ctx, () => {
+    ctx.beginPath();
+    ctx.moveTo(28.5, 44);
+    ctx.lineTo(32, 38);
+    ctx.lineTo(35.5, 44);
+    ctx.closePath();
+  }, palette.cream, 2.6);
+  inked(ctx, () => {
+    ctx.beginPath();
+    ctx.ellipse(32, 26, 12.5, 14, 0, 0, Math.PI * 2);
+  }, palette.cream, 3.2);
+  ctx.fillStyle = palette.white;
+  ctx.beginPath();
+  ctx.ellipse(27.5, 21, 2.6, 4, -0.5, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 /** Colored seal with the stamp's initial, laid on the space as a 3D disc. */

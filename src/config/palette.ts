@@ -38,10 +38,14 @@ export const palette = {
   metal: "#9FB4C7",
   // Space disks follow the party-board convention: blue gives, red takes,
   // green is a happening. The rim tone is the darker partner of each.
+  // Green leans teal and red leans crimson so neither melts into the lime
+  // lawn or the orange/pink specials (stamp, balloon).
   spaceBlue: "#3D8BFF",
   spaceBlueDeep: "#2361D6",
-  spaceGreen: "#3FCF5A",
-  spaceGreenDeep: "#259A3D",
+  spaceRed: "#F2384A",
+  spaceRedDeep: "#B81E3A",
+  spaceGreen: "#14C28C",
+  spaceGreenDeep: "#0B8564",
   // Diorama: the island the fairground sits on, the sea around it, the sky.
   skyTop: "#4FB8FF", // zenith on a clear day
   skyHorizon: "#D9F4FF", // pale haze where sky meets sea
