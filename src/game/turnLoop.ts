@@ -2403,7 +2403,28 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     refreshHud();
     pause(1.7, () => {
       for (const ch of chars) ch?.anim.idle();
-      beginTurn();
+      revealStar(beginTurn);
+    });
+  };
+
+  /**
+   * MP-style "the Star is over here!": once the purses are dealt, the camera
+   * swings to the Grand Prize Balloon, holds while the banner plays, then
+   * hands back for turn 1. Presentation only (fixed sim pause, no rng).
+   */
+  const revealStar = (then: () => void): void => {
+    const idx = match.starBalloonPos;
+    const pos = board.spaceWorldPos(idx);
+    const look = pos.clone().add(new THREE.Vector3(0, 2.0, 0));
+    ceremony.holdCamera(look.clone().add(new THREE.Vector3(0, 8.5, 10.5)), look, 40);
+    board.highlight(idx);
+    audio.sfx.play("happening.magic");
+    hud.showBanner("THE STAR IS HERE!", { durationMs: 1800 });
+    const name = activeBoard().spaces[idx]?.name;
+    if (name) ui.toast(`The Grand Prize Balloon starts at ${name}. Go get it!`, { durationMs: 2400 });
+    pause(2.4, () => {
+      ceremony.releaseCamera();
+      then();
     });
   };
 
