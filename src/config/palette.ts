@@ -36,14 +36,37 @@ export const palette = {
   wood: "#C98A4B",
   woodDark: "#A96B33",
   metal: "#9FB4C7",
+  // Space disks follow the party-board convention: blue gives, red takes,
+  // green is a happening. The rim tone is the darker partner of each.
+  spaceBlue: "#3D8BFF",
+  spaceBlueDeep: "#2361D6",
+  spaceGreen: "#3FCF5A",
+  spaceGreenDeep: "#259A3D",
+  // Diorama: the island the fairground sits on, the sea around it, the sky.
+  skyTop: "#4FB8FF", // zenith on a clear day
+  skyHorizon: "#D9F4FF", // pale haze where sky meets sea
+  sea: "#2FA8E8",
+  seaDeep: "#1C78C2",
+  foam: "#F4FCFF",
+  cliffDirt: "#C47A45",
+  cliffDirtDark: "#8E5230",
+  cliffStone: "#9A8C9E",
+  leaf: "#4CC24A",
+  leafDeep: "#2E9A3E",
+  leafPine: "#1F8A5A",
+  bark: "#8A5634",
+  rock: "#B9B2C6",
+  sand: "#FFE3A3",
 
   // ---- time of day (lively board: day -> golden dusk -> night) ----
   // Day is the boot look (ink background, white hemi over ink ground, white key).
   duskSky: "#E8734F", // coral sunset background + fog
+  duskSkyTop: "#6E4FC8", // violet zenith over the coral horizon
   duskHemi: "#FF8A2E", // golden-hour sky light (low green: the grass turns olive-gold)
   duskGround: "#7A3A5A", // plum-rose bounce light
   duskKey: "#FF6A12", // low orange sun
   nightSky: "#160F3A", // deep night background + fog
+  nightSkyTop: "#0B0726", // near-black zenith above the night haze
   nightHemi: "#5848E8", // blue-violet sky light (low green: the checker turns teal/indigo)
   nightGround: "#1A0F45", // deep indigo bounce light
   nightKey: "#6E6AF0", // violet moonlight

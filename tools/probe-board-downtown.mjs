@@ -4,7 +4,8 @@
  * Part 1 (carnival parity): runs tools/board-golden.mjs for seed 7 over a full
  * match and compares every turn-boundary snapshot hash (boardId dropped) and
  * every synchronous rng mark against tools/golden/carnival-seed7.json, recorded
- * on main d0b3484. Any gameplay drift on the carnival fails here.
+ * on main d0b3484 and re-recorded when the Funhouse Gate (a per-round gameplay
+ * flip, carnival rev 3) landed. Any unintended gameplay drift fails here.
  *
  * Part 2 (Downtown graph, static): loads ?board=downtown and checks the def from
  * __SSP__.board(): 46 spaces, next[] well-formed (1 or 2 edges, in range), every
@@ -17,7 +18,7 @@
  * that tokens only stand on valid spaces, the balloon only sits on prize spots
  * (or on a space a Balloon Tug pulled it to),
  * and that both forks were taken both ways (a branch tile and a skipped ring
- * tile seen) across the seeds in SSP_DT_SEEDS (default "7,2"), zero page errors.
+ * tile seen) across the seeds in SSP_DT_SEEDS (default "7,4"), zero page errors.
  *
  *   SSP_URL=http://127.0.0.1:5197 node tools/probe-board-downtown.mjs
  *   SSP_SKIP_GOLDEN=1 skips part 1.
@@ -28,7 +29,10 @@ import { dirname, resolve } from "node:path";
 
 const BASE = (process.env.SSP_URL ?? "http://127.0.0.1:5177").replace(/\/$/, "");
 const ROOT = resolve(dirname(new URL(import.meta.url).pathname), "..");
-const SEEDS = (process.env.SSP_DT_SEEDS ?? "7,2").split(",").map(Number);
+// Seed 4 takes both forks both ways under the MP-style opening (distinct
+// order blocks, starting coins dealt after the order). Seed 2 no longer sends
+// anyone down the Riverside Gate branch.
+const SEEDS = (process.env.SSP_DT_SEEDS ?? "7,4").split(",").map(Number);
 const RUN_TURNS = Number(process.env.SSP_DT_TURNS ?? 10);
 const CAP_MS = 420000;
 const fails = [];

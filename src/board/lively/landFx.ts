@@ -68,10 +68,12 @@ function wrapIndex(i: number, n: number): number {
 export function createLandFx(host: LandFxHost): LandFx {
   const n = host.spaceCount;
   const posX = new Float32Array(n);
+  const posY = new Float32Array(n);
   const posZ = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const p = host.spacePos(i);
     posX[i] = p.x;
+    posY[i] = p.y;
     posZ[i] = p.z;
   }
 
@@ -93,6 +95,7 @@ export function createLandFx(host: LandFxHost): LandFx {
   ring.receiveShadow = false;
   host.root.add(ring);
   let ringT = -1;
+  let ringBase = 0;
 
   // ---- particle pool (one instanced draw) -----------------------------------------
   const partGeo = new THREE.IcosahedronGeometry(0.16, 0);
@@ -108,6 +111,7 @@ export function createLandFx(host: LandFxHost): LandFx {
 
   const px = new Float32Array(POOL);
   const py = new Float32Array(POOL);
+  const floorY = new Float32Array(POOL);
   const pz = new Float32Array(POOL);
   const vx = new Float32Array(POOL);
   const vy = new Float32Array(POOL);
@@ -145,7 +149,8 @@ export function createLandFx(host: LandFxHost): LandFx {
       const r = settings.tileRadius * fxRange(0.15, 0.5);
       px[s] = cx + Math.cos(a) * r;
       pz[s] = cz + Math.sin(a) * r;
-      py[s] = 0.2;
+      py[s] = posY[i] + 0.2;
+      floorY[s] = posY[i] + 0.12;
       kind[s] = k;
       spin[s] = fxRange(-9, 9);
       let out: number;
@@ -172,7 +177,8 @@ export function createLandFx(host: LandFxHost): LandFx {
   };
 
   const startRing = (i: number, type: string): void => {
-    ring.position.set(posX[i], 0.16, posZ[i]);
+    ring.position.set(posX[i], posY[i] + 0.16, posZ[i]);
+    ringBase = posY[i];
     ringMat.color.set(host.rimColor(type));
     ringMat.opacity = 0.95;
     ring.scale.setScalar(1);
@@ -261,7 +267,7 @@ export function createLandFx(host: LandFxHost): LandFx {
             busy = true;
           }
         }
-        g.position.y = y;
+        g.position.y = posY[i] + y;
         g.scale.set(sxz, sy, sxz);
         if (!busy) dirty[i] = 0;
       }
@@ -276,7 +282,7 @@ export function createLandFx(host: LandFxHost): LandFx {
         } else {
           const e = 1 - (1 - u) * (1 - u);
           ring.scale.setScalar(1 + L.ringGrow * e);
-          ring.position.y = 0.16 + 0.25 * e;
+          ring.position.y = ringBase + 0.16 + 0.25 * e;
           ringMat.opacity = 0.95 * (1 - u);
         }
       }
@@ -303,8 +309,8 @@ export function createLandFx(host: LandFxHost): LandFx {
           px[s] += vx[s] * dt;
           py[s] += vy[s] * dt;
           pz[s] += vz[s] * dt;
-          if (py[s] < 0.12 && vy[s] < 0) {
-            py[s] = 0.12;
+          if (py[s] < floorY[s] && vy[s] < 0) {
+            py[s] = floorY[s];
             vy[s] *= -0.35;
           }
           const fade = age > 0.7 ? 1 - (age - 0.7) / 0.3 : 1;
@@ -339,7 +345,7 @@ export function createLandFx(host: LandFxHost): LandFx {
       offLand();
       for (let i = 0; i < n; i++) {
         const g = host.spaceGroup(i);
-        g.position.y = 0;
+        g.position.y = posY[i];
         g.scale.set(1, 1, 1);
       }
       host.root.remove(ring, parts);

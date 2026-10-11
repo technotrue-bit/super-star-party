@@ -38,8 +38,10 @@ function disposeGroup(root: THREE.Object3D): void {
 
 export function createCharacter(key: string): Character {
   const kind = characterByKey(key);
-  const { group, parts } = buildModel(kind);
-  const controller: AnimController = createAnimController(group, parts, kind);
+  // `group` is the placement root; the controller only animates the rig inside
+  // it, so screens can position, scale and parent the character freely.
+  const { group, rig, parts, setExpression } = buildModel(kind);
+  const controller: AnimController = createAnimController(rig, parts, kind, setExpression);
 
   const anim: CharacterAnims = {
     idle: (): void => controller.set('idle'),

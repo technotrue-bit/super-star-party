@@ -1,27 +1,28 @@
 /**
  * SUPER STAR PARTY — BALLOON POP (genre: target)
  *
- * MP7-style pop-the-target: four carnival columns on a striped wall, balloons
- * float UP each column at a constant speed. TAP a balloon to pop it — shards,
- * a pop ring and a pitch that drops with balloon size. Balloons popped in the
- * TOP HALF of the column are tall targets worth +2. CPU players pop in their
- * own column with a per-player accuracy model: when a balloon enters their
- * middle-third sweet zone they commit (p ≈ accuracy) after a short reaction
- * delay, so they land ~0.7 pops/sec. Balloons that escape the top float off
- * with a sad puff (no penalty, just a missed opportunity). 30s cap, ranked by
- * score (ties -> smaller playerId first).
+ * Four carnival columns, one per player. Balloons float up every column and
+ * you pop the ones in YOUR column by tapping (clicking) them:
+ *   normal +1, GOLD +3 (smaller, rises faster), BOMB -2 (dark, sparking fuse:
+ *   leave it alone). Escaped balloons cost nothing.
  *
- * Determinism: ALL gameplay — balloon rise/spawn/motion, cpu think + AIM/
- * COMMIT decisions, pops, scoring, sweet-zone logic — runs INSIDE a fixed-
- * step simulation (whole 1/60s steps, identical to the proven bumper_balls and
- * coin_grab patterns). update(dt) only accumulates real dt and runs fixed
- * steps; every ctx.rng() draw is gated on the integer step index, so seeded
- * runs replay byte-identically regardless of frame timing. Per-frame visuals
- * (sprite bobbing, popup rise/fade, camera shake, fx, sparkles) stay OUTSIDE
- * the step loop and never consume gameplay rng.
+ * Fairness: one balloon schedule (when, which type, how big) is drawn once
+ * per round and every column gets exactly the same balloons. The pace ramps
+ * up (spawn gap 1.0s -> 0.55s, rise 1.3 -> 2.2 u/s) over the 28s round.
+ *
+ * CPU model: each CPU draws an accuracy (0.74 +/- 0.12). Per balloon it
+ * commits with p = accuracy (gold: accuracy - 0.22) and pops it at a random
+ * height; it mis-taps a bomb 10% of the time.
+ *
+ * Ranking: points, then fewer bombs popped, then a per-round coin flip.
+ *
+ * Determinism: all gameplay (schedule, rise, CPU choices, human pops,
+ * scoring) runs in fixed 1/60s steps; human taps are queued and resolved in
+ * the next step. ctx.rng only.
  */
 import * as THREE from "three";
-import { isLocalPlayer, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
+import { automatedSeatIds, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
+import { isAutoplay } from "../../core/debug";
 import { registerMinigame } from "../registry";
 import { box as frameBox, frameMinigame } from "../framing";
 import { palette, hex } from "../../config/palette";
@@ -32,20 +33,30 @@ import { celGradient } from "../../characters/cel";
 const BALLOON_Z = -5.5; // balloon plane (in front of the wall at z=-6.4)
 const BOTTOM_Y = 0.7; // spawn height
 const TOP_Y = 6.9; // despawn height (missed)
-const RISE_SPEED = 1.35; // constant rise, u/s — fair & readable
-const TOP_HALF_Y = (BOTTOM_Y + TOP_Y) / 2; // 3.8 — tall-target threshold
-const SWEET_MIN = 2.9; // CPU sweet zone = middle third of the column
-const SWEET_MAX = 4.7;
-const SPAWN_INTERVAL = 1.1; // one balloon per column every ~1.1s
-const SPAWN_JITTER = 0.25; // ± jitter
-const MAX_VISIBLE = 6; // column fill cap
-const TIME_CAP = 29.0; // round cap — framework force-finishes at 30s
+/** Rise speed ramps from RISE_START to RISE_END (u/s) over the round. */
+const RISE_START = 1.3;
+const RISE_END = 2.2;
+/** Gap between balloons ramps from GAP_START to GAP_END (s), +/- jitter. */
+const GAP_START = 1.0;
+const GAP_END = 0.55;
+const GAP_JITTER = 0.15;
+const GOLD_P = 0.08;
+const BOMB_P = 0.12;
+const GOLD_RISE = 1.5; // gold balloons rise this much faster
+const PTS = { normal: 1, gold: 3, bomb: -2 } as const;
+const TIME_CAP = 28.0; // round length — framework force-finishes at 30s
 const TAP_GRACE = 0.38; // extra tap radius beyond the balloon
-const CPU_ACCURACY = 0.75; // per-balloon commit chance (center of the model)
-const CPU_REACT_MIN = 0.1; // reaction delay after committing (s)
-const CPU_REACT_MAX = 0.4;
+const CPU_ACCURACY = 0.74; // per-balloon commit chance (center of the model)
+const CPU_ACCURACY_SPREAD = 0.24; // +/- 0.12
+const CPU_GOLD_MALUS = 0.22;
+const CPU_BOMB_MISTAP = 0.1;
+const CPU_POP_MIN_Y = 1.8; // CPUs pop somewhere in this height band
+const CPU_POP_MAX_Y = 5.8;
 
-const BALLOON_COLORS = [palette.sun, palette.candy, palette.mint, palette.bubble, palette.berry];
+type BalloonKind = "normal" | "gold" | "bomb";
+
+/** Normal balloons skip gold (that's the +3 balloon) and ink (that's the bomb). */
+const BALLOON_COLORS_NORMAL = [palette.candy, palette.mint, palette.bubble, palette.berry];
 const SHARD_WHITES = [palette.white, palette.cream, palette.sunDeep];
 const AWNING_COLORS = [palette.candy, palette.sun, palette.mint, palette.bubble, palette.berry];
 const SPARKLE_COLORS = [palette.sun, palette.mint, palette.bubble, palette.candy];
@@ -69,7 +80,7 @@ const LAYOUTS = {
   },
   portrait: {
     colX: [-3.0, -1.0, 1.0, 3.0],
-    panelW: 2.0,
+    panelW: 1.84,
     wallW: 8.4,
     cam: [0, 5.8, 8.0] as [number, number, number],
     fov: 62,
@@ -111,14 +122,26 @@ interface Popup {
 
 interface Balloon {
   group: THREE.Group;
+  kind: BalloonKind;
+  rise: number; // u/s
   col: number; // player id = column index
   x: number;
   y: number;
   r: number;
   color: number; // balloon color hex
   phase: number;
-  crossedSweet: boolean;
-  cpuPopStep: number; // >= 0: step index at which CPU pops; -1: not committed; -2: decided to pass
+  /** CPU plan: pop once the balloon reaches this height; null = leave it. */
+  cpuPopY: number | null;
+}
+
+/** One entry of the shared schedule: every column gets this balloon. */
+interface Spawn {
+  step: number;
+  kind: BalloonKind;
+  r: number;
+  color: number;
+  phase: number;
+  rise: number;
 }
 
 interface PlayerSt {
@@ -127,7 +150,9 @@ interface PlayerSt {
   color: number; // player color hex
   score: number;
   pops: number;
+  bombs: number;
   missed: number;
+  tieBreak: number;
   accuracy: number; // CPU commit chance (human: unused)
   cheerT: number; // cheer anim timer -> idle
   chip: HTMLDivElement | null;
@@ -144,7 +169,10 @@ interface State {
   shards: Shard[];
   rings: RingFx[];
   popups: Popup[];
-  spawnT: number[]; // FIXED-STEP countdown (integer steps) until next spawn per column
+  schedule: Spawn[];
+  nextSpawn: number;
+  /** Human taps (balloon-plane hit points) waiting for the next fixed step. */
+  taps: { x: number; y: number }[];
   t: number; // fixed-step clock (stepIndex * FIXED_DT)
   shake: number;
   announcedGo: boolean;
@@ -154,12 +182,12 @@ interface State {
   toons: Map<number, THREE.MeshToonMaterial>;
   geos: THREE.BufferGeometry[];
   mats: THREE.Material[];
-  uiRoot: HTMLDivElement | null;
-  timeFill: HTMLDivElement | null;
   sparkles: THREE.Mesh[];
   /* Fixed-step simulation: accumulator + integer step counter. All gameplay
      advances in whole 1/60s steps; stepIndex drives every decision so rng
      draw order is identical across runs regardless of frame timing. */
+  /** Column ids driven by the CPU model (every column under autoplay). */
+  cpu: number[];
   simTime: number; // accumulated fixed-step time (s)
   stepIndex: number; // current simulation step
 }
@@ -171,7 +199,7 @@ let state: State | null = null;
 function toon(st: State, color: number): THREE.MeshToonMaterial {
   let m = st.toons.get(color);
   if (!m) {
-    m = new THREE.MeshToonMaterial({ map: celGradient, color });
+    m = new THREE.MeshToonMaterial({ gradientMap: celGradient, color });
     st.toons.set(color, m);
     st.mats.push(m);
   }
@@ -327,7 +355,8 @@ function makePopupTexture(text: string, fill: string): THREE.CanvasTexture {
 
 /** Bonus (+2 tall target) pops show gold; regular +1 pops use the scoring
  * player's character color. */
-const POPUP_PLUS2 = makePopupTexture("+2", palette.sun);
+const POPUP_GOLD = makePopupTexture("+3", palette.sun);
+const POPUP_BOMB = makePopupTexture("-2", palette.lava);
 const POPUP_PLUS1: { tex: THREE.CanvasTexture }[] = [];
 
 function playerPopupTex(st: State, color: number): THREE.CanvasTexture {
@@ -340,7 +369,7 @@ function playerPopupTex(st: State, color: number): THREE.CanvasTexture {
 
 /** Spawn the floating score popup at the pop position. */
 function spawnPopup(st: State, pos: [number, number, number], pts: number, color: number): void {
-  const tex = pts >= 2 ? POPUP_PLUS2 : playerPopupTex(st, color);
+  const tex = pts >= 3 ? POPUP_GOLD : pts < 0 ? POPUP_BOMB : playerPopupTex(st, color);
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
   const sprite = new THREE.Sprite(mat);
   sprite.scale.set(POPUP_SCALE, POPUP_SCALE * 0.5, 1);
@@ -416,63 +445,8 @@ function updateFx(st: State, dt: number): void {
 
 /* ------------------------------ DOM UI ---------------------------------- */
 
-/** Score chips + time bar. Own root div (not the kit's .ssp-ui), cleaned in
- * teardown. Cream pill / ink border / Fredoka, like the kit. */
-function buildUi(st: State): void {
-  const root = document.createElement("div");
-  root.id = "ssp-bp-ui";
-  root.style.cssText =
-    "position:fixed;top:12px;left:50%;transform:translateX(-50%);width:max-content;max-width:96vw;display:flex;flex-direction:column;align-items:center;gap:8px;z-index:85;pointer-events:none;font-family:Fredoka,system-ui,sans-serif;user-select:none;";
-  const row = document.createElement("div");
-  // Wraps and tightens on a narrow phone so no chip runs off the edge.
-  row.style.cssText = "display:flex;flex-wrap:wrap;justify-content:center;gap:5px;align-items:center;max-width:97vw;";
-  for (const P of st.players) {
-    const chip = document.createElement("div");
-    chip.dataset.pid = String(P.id);
-    chip.style.cssText =
-      "display:flex;align-items:center;gap:5px;background:" +
-      (isLocalPlayer(st.ctx.players, P.id) ? palette.sun : palette.cream) +
-      ";border:3px solid " +
-      palette.ink +
-      ";border-radius:999px;padding:3px 8px;font-weight:700;font-size:13px;color:" +
-      palette.ink +
-      ";box-shadow:0 3px 0 " +
-      palette.ink +
-      ";white-space:nowrap;";
-    const dot = document.createElement("span");
-    dot.style.cssText = "width:10px;height:10px;border-radius:50%;background:" + st.ctx.players[P.id].color + ";border:2px solid " + palette.ink + ";display:inline-block;";
-    const label = document.createElement("span");
-    label.textContent = st.ctx.players[P.id].name + " 0";
-    chip.appendChild(dot);
-    chip.appendChild(label);
-    row.appendChild(chip);
-    P.chip = chip;
-  }
-  const barWrap = document.createElement("div");
-  barWrap.style.cssText =
-    "width:170px;height:12px;background:" + palette.cream + ";border:3px solid " + palette.ink + ";border-radius:999px;overflow:hidden;box-shadow:0 3px 0 " + palette.ink + ";";
-  const fill = document.createElement("div");
-  fill.style.cssText = "height:100%;width:100%;background:" + palette.mint + ";border-radius:999px;transition:none;";
-  barWrap.appendChild(fill);
-  root.appendChild(row);
-  root.appendChild(barWrap);
-  document.body.appendChild(root);
-  st.uiRoot = root;
-  st.timeFill = fill;
-}
-
 function updateChip(st: State, pid: number): void {
-  const P = st.players[pid];
-  const chip = P.chip;
-  if (!chip) return;
-  const label = chip.lastElementChild as HTMLSpanElement | null;
-  if (label) label.textContent = st.ctx.players[pid].name + " " + P.score;
-}
-
-function updateTimeBar(st: State): void {
-  if (!st.timeFill) return;
-  const pct = Math.max(0, Math.min(1, 1 - st.t / TIME_CAP));
-  st.timeFill.style.width = (pct * 100).toFixed(1) + "%";
+  st.ctx.hud.score(pid, st.players[pid].score);
 }
 
 /* ---------------------------- arena build ------------------------------- */
@@ -509,7 +483,9 @@ function buildArena(st: State): void {
   for (let i = 0; i < 4; i++) {
     const P = st.players[i];
     const px = L.colX[i];
-    const panel = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(L.panelW, 7.6, 0.4)), toon(st, cream), [px, 3.9, wallZ + 0.22]);
+    // Each column is washed in its player's colour so "your column" reads at a glance.
+    const tint = new THREE.Color(cream).lerp(new THREE.Color(P.color), 0.28).getHex();
+    const panel = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(L.panelW, 7.6, 0.4)), toon(st, tint), [px, 3.9, wallZ + 0.22]);
     st.root.add(outlineShell(st, panel, 1.05));
     addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(L.panelW, 0.36, 0.44)), toon(st, P.color), [px, 7.8, wallZ + 0.18]);
     // soft inner shading strip at the bottom so balloons read against the panel
@@ -587,11 +563,9 @@ function buildArena(st: State): void {
  * across runs regardless of frame timing. */
 
 /** Spawn a balloon in column col. Runs INSIDE stepFixed only. */
-function spawnBalloon(st: State, col: number): void {
+function spawnBalloon(st: State, col: number, sp: Spawn): void {
   const L = st.layout;
-  const r = L.rMin + st.ctx.rng() * (L.rMax - L.rMin);
-  const color = hex(BALLOON_COLORS[Math.floor(st.ctx.rng() * BALLOON_COLORS.length)]);
-  const phase = st.ctx.rng() * Math.PI * 2;
+  const { r, color, phase, kind } = sp;
   const x = L.colX[col];
   const group = new THREE.Group();
   group.position.set(x, BOTTOM_Y, BALLOON_Z);
@@ -622,9 +596,35 @@ function spawnBalloon(st: State, col: number): void {
   const len = r * 1.5;
   const string = addMesh(st, group, newGeo(st, new THREE.CylinderGeometry(1, 1, 1, 5)), toon(st, hex(palette.ink)), [0, -(r + len / 2), 0]);
   string.scale.set(0.024, len, 0.024);
+  if (kind === "bomb") {
+    // A lit fuse on top and a white skull-ish "X" face: clearly not a target.
+    const fuse = addMesh(st, group, newGeo(st, new THREE.CylinderGeometry(1, 1, 1, 5)), toon(st, hex(palette.creamShadow)), [r * 0.25, r + 0.12, 0], [0, 0, -0.5]);
+    fuse.scale.set(0.035, 0.26, 0.035);
+    const spark = addMesh(st, group, newGeo(st, new THREE.OctahedronGeometry(1)), basic(st, hex(palette.sun)), [r * 0.38, r + 0.26, 0]);
+    spark.scale.setScalar(0.09);
+    spark.name = "spark";
+    for (const sgn of [-1, 1]) {
+      const bar = addMesh(st, group, newGeo(st, new THREE.BoxGeometry(1, 1, 1)), basic(st, hex(palette.white)), [0, 0, r * 0.95], [0, 0, sgn * 0.785]);
+      bar.scale.set(r * 0.9, r * 0.2, 0.02);
+    }
+  } else if (kind === "gold") {
+    const star = addMesh(st, group, newGeo(st, new THREE.OctahedronGeometry(1)), basic(st, hex(palette.white)), [0, 0, r * 0.95]);
+    star.scale.set(r * 0.42, r * 0.42, 0.05);
+    star.rotation.z = 0.785;
+  }
 
   st.root.add(group);
-  st.balloons.push({ group, col, x, y: BOTTOM_Y, r, color, phase, crossedSweet: false, cpuPopStep: -1 });
+  // CPU plan for this balloon (drawn here, in the fixed step, column order).
+  let cpuPopY: number | null = null;
+  const P = st.players[col];
+  if (P && st.cpu.includes(col)) {
+    const rng = st.ctx.rng;
+    const want =
+      kind === "bomb" ? rng() < CPU_BOMB_MISTAP : rng() < (kind === "gold" ? P.accuracy - CPU_GOLD_MALUS : P.accuracy);
+    const y = CPU_POP_MIN_Y + rng() * (CPU_POP_MAX_Y - CPU_POP_MIN_Y);
+    if (want) cpuPopY = y;
+  }
+  st.balloons.push({ group, kind, rise: sp.rise, col, x, y: BOTTOM_Y, r, color, phase, cpuPopY });
 }
 
 /** Pop a balloon: scoring + visuals. Runs INSIDE stepFixed only. */
@@ -637,14 +637,15 @@ function popBalloon(st: State, pid: number, b: Balloon, byHuman: boolean): void 
 
   const L = st.layout;
   const frac = (b.r - L.rMin) / (L.rMax - L.rMin);
-  const pts = b.y >= TOP_HALF_Y ? 2 : 1;
-  P.score += pts;
-  P.pops += 1;
+  const pts = PTS[b.kind];
+  P.score = Math.max(0, P.score + pts);
+  if (b.kind === "bomb") P.bombs += 1;
+  else P.pops += 1;
 
   // pop sfx: pitch drops with size (bigger = lower), louder for the human
   const pitch = 1.5 - 0.8 * frac;
-  st.ctx.playSfx("pop", { volume: byHuman ? 0.9 : 0.5, pitch });
-  if (pts === 2) st.ctx.playSfx("coin.gain", { volume: 0.9, pitch: 1.35 });
+  st.ctx.playSfx(b.kind === "bomb" ? "boing" : "pop", { volume: byHuman ? 0.9 : 0.5, pitch: b.kind === "bomb" ? -3 : pitch });
+  if (b.kind === "gold") st.ctx.playSfx("coin.gain", { volume: 0.9, pitch: 1.35 });
 
   // juice: shards in balloon color + white, pop ring, small shake
   const pos: [number, number, number] = [b.x, b.y, BALLOON_Z];
@@ -652,15 +653,18 @@ function popBalloon(st: State, pid: number, b: Balloon, byHuman: boolean): void 
   spawnShards(st, pos, hex(SHARD_WHITES[Math.floor(st.ctx.rng() * SHARD_WHITES.length)]), 4, 2.6, 0.45, 6, 0.06);
   spawnRing(st, pos, b.r * 1.2);
   spawnPopup(st, pos, pts, P.color);
-  st.shake = Math.min(0.28, st.shake + (pts === 2 ? 0.1 : 0.045));
+  st.shake = Math.min(0.28, st.shake + (b.kind === "normal" ? 0.045 : 0.1));
 
   // character reaction: human always cheer-hops; CPUs cheer sometimes
   const ch = st.ctx.characters[pid] ?? null;
   if (ch) {
-    if (byHuman || st.ctx.rng() < 0.35) {
+    if (b.kind === "bomb") {
+      ch.anim.sad();
+      P.cheerT = 0.8;
+    } else if (byHuman || st.ctx.rng() < 0.35) {
       ch.anim.cheer();
       P.cheerT = byHuman ? 0.95 : 0.7;
-      if (byHuman && pts === 2) st.ctx.playSfx("cheer", { volume: 0.45 });
+      if (byHuman && b.kind === "gold") st.ctx.playSfx("cheer", { volume: 0.45 });
     }
   }
   updateChip(st, pid);
@@ -676,31 +680,18 @@ function missBalloon(st: State, b: Balloon): void {
   P.missed += 1;
   // sad little puff at the top; no penalty, just a missed opportunity
   spawnShards(st, [b.x, TOP_Y - 0.15, BALLOON_Z], hex(palette.creamShadow), 5, 1.3, 0.45, 1.6, 0.05, 0.2);
-  st.ctx.playSfx("crowd.aah", { volume: 0.28, pitch: 0.85 });
 }
 
-/** CPU commit when a balloon enters the sweet zone. Runs INSIDE stepFixed
- * only — draws ctx.rng() for accuracy check and reaction delay, both gated
- * on stepIndex. The reaction delay is stored as a WHOLE STEP COUNT (integer),
- * so the pop fires at a deterministic step index. */
-function cpuThink(st: State, b: Balloon): void {
-  if (b.cpuPopStep >= 0) return;
-  const P = st.players[b.col];
-  if (st.ctx.rng() < P.accuracy) {
-    // Convert float reaction delay to integer step count
-    const reactSteps = Math.round(CPU_REACT_MIN / FIXED_DT + st.ctx.rng() * ((CPU_REACT_MAX - CPU_REACT_MIN) / FIXED_DT));
-    b.cpuPopStep = st.stepIndex + reactSteps;
-  } else {
-    b.cpuPopStep = -2; // decided to pass on this one
-  }
+function rankPlayers(st: State): number[] {
+  return [...st.players]
+    .sort((a, b) => b.score - a.score || a.bombs - b.bombs || a.tieBreak - b.tieBreak)
+    .map((p) => p.id);
 }
 
 function endRound(st: State): void {
   if (st.finished) return;
   st.finished = true;
-  const ranking = [...st.players]
-    .sort((a, b) => b.score - a.score || a.id - b.id)
-    .map((p) => p.id);
+  const ranking = rankPlayers(st);
   const scores = st.players.map((p) => `${p.id}:${p.score}`).join(",");
   const pops = st.players.map((p) => `p${p.id}:${p.pops}/${p.missed}`).join(",");
   console.log(`[balloon_pop] finish ranking=${ranking.join(",")} scores=${scores} pops=${pops}`);
@@ -778,10 +769,7 @@ function publishDebug(st: State): void {
   d.t = +st.t.toFixed(4);
   d.scores = st.players.map((p) => p.score);
   if (st.finished && !d.ranking) {
-    const ranking = [...st.players]
-      .sort((a, b) => b.score - a.score || a.id - b.id)
-      .map((p) => p.id);
-    d.ranking = ranking;
+    d.ranking = rankPlayers(st);
   }
 }
 
@@ -798,40 +786,28 @@ function stepFixed(st: State, dt: number): void {
   st.t = st.stepIndex * FIXED_DT;
   const t = st.t;
 
-  if (!st.announcedGo && t > 0.05) {
-    st.announcedGo = true;
-    ctx.announce("TAP THE BALLOONS!", { durationMs: 1300, sound: null });
+  // ---- shared schedule: the same balloon appears in every column ----
+  while (st.nextSpawn < st.schedule.length && st.schedule[st.nextSpawn].step <= st.stepIndex) {
+    const sp = st.schedule[st.nextSpawn++];
+    for (let col = 0; col < 4; col++) spawnBalloon(st, col, sp);
   }
 
-  // ---- spawning: per-column FIXED-STEP countdown, cap 6 visible ----
-  for (let col = 0; col < 4; col++) {
-    st.spawnT[col] -= 1;
-    if (st.spawnT[col] <= 0) {
-      const visible = st.balloons.filter((b) => b.col === col).length;
-      if (visible < MAX_VISIBLE) {
-        spawnBalloon(st, col);
-        // Convert float jitter to integer step count
-        const intervalSteps = Math.round(SPAWN_INTERVAL / FIXED_DT);
-        const jitterSteps = Math.round((SPAWN_JITTER * 2) / FIXED_DT);
-        st.spawnT[col] = intervalSteps + Math.floor((ctx.rng() - 0.5) * jitterSteps);
-      } else {
-        st.spawnT[col] = Math.round(0.2 / FIXED_DT); // column full: retry shortly
-      }
-    }
+  // ---- human taps queued since the last step ----
+  const humanCol = localPlayerIndex(ctx.players);
+  for (const tap of st.taps) {
+    const b = hitTest(st, humanCol, tap.x, tap.y);
+    if (b) popBalloon(st, humanCol, b, true);
   }
+  st.taps.length = 0;
 
-  // ---- balloons rise; CPU commits in the sweet zone; pop/miss resolve ----
+  // ---- balloons rise; CPUs pop at their planned height; escapes float off ----
   for (let i = st.balloons.length - 1; i >= 0; i--) {
     const b = st.balloons[i];
-    b.y += RISE_SPEED * dt;
+    b.y += b.rise * dt;
     b.group.position.y = b.y;
     // wobble uses fixed t for determinism
     b.group.rotation.z = Math.sin(t * 2.1 + b.phase) * 0.07;
-    if (b.col !== localPlayerIndex(st.ctx.players) && !b.crossedSweet && b.y >= SWEET_MIN) {
-      b.crossedSweet = true;
-      cpuThink(st, b);
-    }
-    if (b.cpuPopStep >= 0 && st.stepIndex >= b.cpuPopStep) {
+    if (b.cpuPopY !== null && b.y >= b.cpuPopY) {
       popBalloon(st, b.col, b, false);
       continue;
     }
@@ -866,11 +842,18 @@ const balloonPop: Minigame = {
   id: "balloon_pop",
   name: "Balloon Pop",
   genre: "target",
-  howTo: "Tap the balloons in your column. Pop the most before they float away to win.",
-  goal: "Pop the most balloons",
-  tap: "POP",
+  howTo: "Tap the balloons in YOUR column (your colour) before they float away. Gold balloons are worth +3. Dark bomb balloons cost 2, so leave them alone! Most points wins.",
+  goal: "Pop your balloons. Skip the bombs!",
+  tap: null,
   steer: false,
   tapSfx: "pop",
+  rules: {
+    format: "ffa",
+    length: "28 seconds",
+    win: "Most points: balloon +1, gold +3, bomb -2",
+    touch: ["Tap a balloon in your column to pop it", "Don't tap the dark bombs!"],
+    keys: ["Click a balloon in your column to pop it", "Don't click the dark bombs!"],
+  },
 
   setup(ctx: MinigameContext): void {
     const portrait = window.innerWidth / window.innerHeight < 1;
@@ -884,12 +867,10 @@ const balloonPop: Minigame = {
       shards: [],
       rings: [],
       popups: [],
-      spawnT: [
-        Math.round(0.4 / FIXED_DT),
-        Math.round(0.7 / FIXED_DT),
-        Math.round(0.5 / FIXED_DT),
-        Math.round(0.9 / FIXED_DT),
-      ], // staggered first arrivals (integer steps)
+      schedule: [],
+      nextSpawn: 0,
+      taps: [],
+      cpu: [],
       t: 0,
       shake: 0,
       announcedGo: false,
@@ -899,8 +880,6 @@ const balloonPop: Minigame = {
       toons: new Map(),
       geos: [],
       mats: [],
-      uiRoot: null,
-      timeFill: null,
       sparkles: [],
       simTime: 0,
       stepIndex: 0,
@@ -910,14 +889,16 @@ const balloonPop: Minigame = {
     // ---- per-player state (id = playerId = column index) ----
     ctx.players.forEach((p, i) => {
       // CPU accuracy drawn once per player at setup (deterministic order)
-      const accuracy = p.controller === "local" ? 0 : CPU_ACCURACY + (ctx.rng() - 0.5) * 0.12;
+      const accuracy = CPU_ACCURACY + (ctx.rng() - 0.5) * CPU_ACCURACY_SPREAD;
       st.players.push({
         id: p.id,
         x: L.colX[i],
         color: hex(p.color),
         score: 0,
         pops: 0,
+        bombs: 0,
         missed: 0,
+        tieBreak: ctx.rng(),
         accuracy,
         cheerT: 0,
         chip: null,
@@ -948,26 +929,45 @@ const balloonPop: Minigame = {
     buildArena(st);
     ctx.scene.add(st.root);
 
-    buildUi(st);
-    ctx.announce("BALLOON POP!", { durationMs: 1500, sound: null });
+    // ---- who the CPU model drives: CPU seats, plus yours under autoplay ----
+    st.cpu = automatedSeatIds(ctx.players, isAutoplay());
 
-    // ---- input: tap a balloon (or confirm pops the highest one) ----
-    const humanCol = localPlayerIndex(ctx.players);
+    // ---- the shared balloon schedule (drawn once, used by every column) ----
+    let at = 0.45;
+    while (at < TIME_CAP - 1.2) {
+      const u = at / TIME_CAP;
+      const roll = ctx.rng();
+      const kind: BalloonKind = roll < GOLD_P ? "gold" : roll < GOLD_P + BOMB_P ? "bomb" : "normal";
+      const baseRise = RISE_START + (RISE_END - RISE_START) * u;
+      const r =
+        kind === "gold" ? L.rMin * 0.95 : L.rMin + ctx.rng() * (L.rMax - L.rMin);
+      const color =
+        kind === "gold"
+          ? hex(palette.sun)
+          : kind === "bomb"
+            ? hex(palette.ink)
+            : hex(BALLOON_COLORS_NORMAL[Math.floor(ctx.rng() * BALLOON_COLORS_NORMAL.length)]);
+      st.schedule.push({
+        step: Math.round(at / FIXED_DT),
+        kind,
+        r,
+        color,
+        phase: ctx.rng() * Math.PI * 2,
+        rise: kind === "gold" ? baseRise * GOLD_RISE : baseRise,
+      });
+      at += GAP_START + (GAP_END - GAP_START) * u + (ctx.rng() - 0.5) * 2 * GAP_JITTER;
+    }
+
+    ctx.hud.unit("pts");
+    for (const P of st.players) ctx.hud.score(P.id, 0);
+    ctx.hud.timer(TIME_CAP, TIME_CAP);
+
+    // ---- input: tap/click a balloon in your column (resolved next step) ----
     ctx.input.pointer = (x: number, y: number, down: boolean): void => {
-      if (!down || st.finished) return;
-      const hit = pickAt(st, x, y);
-      const b = hitTest(st, humanCol, hit.x, hit.y);
-      if (b) popBalloon(st, humanCol, b, true);
+      if (!down || st.finished || isPracticeBeat() || st.cpu.includes(localPlayerIndex(ctx.players))) return;
+      st.taps.push(pickAt(st, x, y));
     };
-    ctx.input.key = (action: string): void => {
-      if (action !== "confirm" || st.finished) return;
-      let top: Balloon | null = null;
-      for (const b of st.balloons) {
-        if (b.col !== humanCol) continue;
-        if (!top || b.y > top.y) top = b;
-      }
-      if (top) popBalloon(st, humanCol, top, true);
-    };
+    ctx.input.key = (): void => {};
 
     // Fresh telemetry mirror per round (critic probes read window.__BP__).
     (window as unknown as { __BP__?: unknown }).__BP__ = undefined;
@@ -1007,7 +1007,13 @@ const balloonPop: Minigame = {
     }
     updateFx(st, dt);
     updatePopups(st, dt);
-    updateTimeBar(st);
+    st.ctx.hud.timer(Math.max(0, TIME_CAP - st.t), TIME_CAP);
+    // Bomb fuses flicker (visual only).
+    for (const b of st.balloons) {
+      if (b.kind !== "bomb") continue;
+      const spark = b.group.getObjectByName("spark");
+      if (spark) spark.scale.setScalar(0.07 + 0.05 * Math.abs(Math.sin(st.t * 22 + b.phase)));
+    }
 
     publishDebug(st);
   },
@@ -1026,7 +1032,6 @@ const balloonPop: Minigame = {
     st.ctx.input.key = (): void => {};
     st.ctx.scene.remove(st.root);
     disposeObj(st.root);
-    st.uiRoot?.remove();
     // popup textures are cached for the round's lifetime; drop the refs
     POPUP_PLUS1.length = 0;
     state = null;

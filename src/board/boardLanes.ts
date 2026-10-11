@@ -26,7 +26,7 @@
 import * as THREE from "three";
 import { settings } from "../config/settings";
 import { palette } from "../config/palette";
-import type { BoardDef } from "./boardData";
+import { groundHeight, type BoardDef } from "./boardData";
 import type { BoardTextures } from "./boardTextures";
 
 type Pt = { x: number; z: number };
@@ -587,15 +587,51 @@ export function buildBoardLanes(def: BoardDef, kit: BoardTextures): THREE.Object
   tex.needsUpdate = true;
 
   // ---- decal quad: texel row j <-> v = (z - minZ) / depth --------------------------
+  // Flat boards: one quad. Boards with terrain: a grid draped over the hills
+  // (a little higher on the slopes, where the ground grid is coarser).
   const geo = new THREE.BufferGeometry();
   const y = B.laneY;
-  geo.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute([minX, y, minZ, maxX, y, minZ, maxX, y, maxZ, minX, y, maxZ], 3)
-  );
-  geo.setAttribute("normal", new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0], 3));
-  geo.setAttribute("uv", new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
-  geo.setIndex([0, 2, 1, 0, 3, 2]);
+  if (!def.terrain) {
+    geo.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute([minX, y, minZ, maxX, y, minZ, maxX, y, maxZ, minX, y, maxZ], 3)
+    );
+    geo.setAttribute("normal", new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0], 3));
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+    geo.setIndex([0, 2, 1, 0, 3, 2]);
+  } else {
+    const CELL = 0.4;
+    const nx = Math.max(1, Math.ceil((maxX - minX) / CELL));
+    const nz = Math.max(1, Math.ceil((maxZ - minZ) / CELL));
+    const pos: number[] = [];
+    const uv: number[] = [];
+    for (let j = 0; j <= nz; j++) {
+      for (let i = 0; i <= nx; i++) {
+        const u = i / nx;
+        const v = j / nz;
+        const x = minX + (maxX - minX) * u;
+        const z = minZ + (maxZ - minZ) * v;
+        const g = groundHeight(def, x, z);
+        // Slope lift: the ground's polar grid and this grid interpolate the
+        // hill differently, so on a slope the decal floats a hair above both.
+        // Flat ground (and the plateau top) gets none: disks must stay on top.
+        const gx = groundHeight(def, x + 0.1, z) - groundHeight(def, x - 0.1, z);
+        const gz = groundHeight(def, x, z + 0.1) - groundHeight(def, x, z - 0.1);
+        const lift = Math.min(0.06, Math.hypot(gx, gz) * 0.4);
+        pos.push(x, g + y + lift, z);
+        uv.push(u, v);
+      }
+    }
+    const idx: number[] = [];
+    const at = (i: number, j: number): number => j * (nx + 1) + i;
+    for (let j = 0; j < nz; j++) {
+      for (let i = 0; i < nx; i++) idx.push(at(i, j), at(i + 1, j + 1), at(i + 1, j), at(i, j), at(i, j + 1), at(i + 1, j + 1));
+    }
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+  }
 
   const mat = new THREE.MeshToonMaterial({
     map: tex,

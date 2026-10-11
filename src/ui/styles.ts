@@ -69,6 +69,14 @@ body {
 }
 .ssp-btn--ghost { background: rgba(255,255,255,.16); }
 .ssp-btn--ghost:hover:not(:disabled) { background: rgba(255,255,255,.30); }
+/* On a cream card (popups, the tour card) a see-through ghost would leave
+   white text on cream: give it ink text and a faint ink wash instead. */
+.ssp-popup__card .ssp-btn--ghost, .ssp-on-light .ssp-btn--ghost {
+  color: ${palette.ink}; text-shadow: none; background: rgba(43,29,78,.07);
+}
+.ssp-popup__card .ssp-btn--ghost:hover:not(:disabled), .ssp-on-light .ssp-btn--ghost:hover:not(:disabled) {
+  background: rgba(43,29,78,.14);
+}
 .ssp-btn--danger {
   background:
     linear-gradient(180deg, rgba(255,255,255,.35) 0%, rgba(255,255,255,0) 42%),

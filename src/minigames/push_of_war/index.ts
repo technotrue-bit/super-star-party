@@ -17,7 +17,6 @@
  */
 import * as THREE from "three";
 import { isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
-import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
 import { box as frameBox, frameMinigame } from "../framing";
 import { palette, hex } from "../../config/palette";
@@ -29,30 +28,32 @@ import { createRailCrate, type RailCrate } from "../../physics/contact";
 const FIXED_DT = 1 / 60;
 const MAX_STEPS_PER_FRAME = 12; // maxDelta 1/20 × speed 4 = 0.2s. Dropping below that lets the 30s screen limit beat the sim.
 
-const MATCH_DURATION = 8;
-const SOLO_PUSH_PER_TAP = 0.705; /* re-centred for the 2.2x surge: at 0.94 the solo's mean ran ahead of the trio's and it won 16/16 */
-// A human tap is worth more than a CPU teammate's mash so that real mashing matters
-// (a keen phone masher lands ~6-9 taps/s; an idle CPU teammate averages 0.185/step).
-const HUMAN_TAP_PUSH = 2.2;
-const TRIO_PUSH_PER_TAP = 0.44;
-const CPU_SOLO_MASH_P = 0.46;
-const CPU_TRIO_MASH_P = 0.42;
-/* TENSION RETUNE
- * The original VELOCITY_GAIN = 0.00035 peaked at ~0.24 offset — a quarter
- * of the ±0.5 goal. That made every match a tiny buzzer-margin photo-finish
- * with no visual drama. Scaling travel up multiplies every match's final
- * offset while preserving the sign distribution (outcome = sign of drift),
- * so the 38/44/19 balance stays intact while the crate actually reaches
- * and crosses the goal line.
+const MATCH_DURATION = 10;
+/*
+ * BALANCE (re-tuned from a Monte-Carlo of these exact rules):
+ * every counted tap is a push; a trio member's tap is worth 1, the solo's
+ * 2.3 (one player against three). Humans and CPUs use the SAME values — a
+ * CPU is just a tapper at 4.6–7.8 taps/s that speeds up and slows down
+ * second to second. A human mashing about 7 taps/s wins roughly half their
+ * solo games and ~70% of trio games; 6/s is hard as the solo.
  */
-const VELOCITY_GAIN = 0.00125; /* ~4× — crate reaches/crosses the goal line */
-const FRICTION = 0.948; /* marginally less damping: surges carry momentum */
+const TRIO_TAP = 1.0;
+const SOLO_TAP = 2.3;
+const CPU_TRIO_RATE: [number, number] = [4.6, 7.4];
+const CPU_SOLO_RATE: [number, number] = [5.0, 7.8];
+/** CPU rate drifts up to ±1.8 taps/s each second; tap gaps jitter ±30%. */
+const CPU_RATE_DRIFT = 3.6;
+const CPU_TAP_JITTER = 0.6;
+/** Fastest a human tap is counted (12/s): an auto-clicker gains nothing. */
+const HUMAN_MIN_TAP_STEPS = 5;
+const VELOCITY_GAIN = 0.0025;
+const FRICTION = 0.92;
 const WIN_THRESHOLD = 0.5;
 const CRANE_RANGE = 1.5;
-/* Surges tuned to feel like real events — more frequent + longer */
-const SURGE_TAPS = 28; /* charges faster → surge bursts arrive ~1.3s apart */
-const SURGE_STEPS = 30; /* ~0.43s — long enough to read "POWER SURGE!" + feel it */
-const SURGE_MULT = 2.6; /* stronger burst → the push-of-war climax */
+/* The solo's POWER SURGE: every 20 solo taps (human or CPU alike), 1 s at x1.5. */
+const SURGE_TAPS = 20;
+const SURGE_STEPS = 60;
+const SURGE_MULT = 1.5;
 const MAX_DUST_PARTICLES = 48;
 const MAX_CONFETTI_PARTICLES = 64;
 
@@ -94,6 +95,10 @@ interface PlayerState {
   side: Side;
   contribution: number;
   mashCount: number;
+  /** CPU tapper: base rate, this second's rate, next tap time (s). */
+  baseRate: number;
+  rate: number;
+  nextTap: number;
   lurchT: number;
   squashT: number;
 }
@@ -118,6 +123,8 @@ interface PushOfWarState {
   shakeMag: number;
   lurchVelocity: number;
   humanTaps: number;
+  lastHumanTapStep: number;
+  coinWinners: number[];
   humanCpu: boolean;
   crate: THREE.Mesh;
   rope: THREE.Mesh;
@@ -390,23 +397,26 @@ function stepFixed(st: PushOfWarState): void {
   const t = st.stepIndex * FIXED_DT;
   const ctx = st.ctx;
 
+  if (st.stepIndex === 0) announceRoles(st);
+
   const soloPlayer = st.players.find((p) => p.side === "solo")!;
   let soloPush = 0;
-  const soloMashed = soloMashPush(st, soloPlayer);
-  if (soloMashed > 0) {
-    st.soloMeter = Math.min(SURGE_TAPS, st.soloMeter + 1);
-    soloPush = soloMashed;
-    soloPlayer.mashCount++;
+  const soloTaps = tapsThisStep(st, soloPlayer, t);
+  if (soloTaps > 0) {
+    st.soloMeter = Math.min(SURGE_TAPS, st.soloMeter + soloTaps);
+    soloPush = soloTaps * SOLO_TAP;
+    soloPlayer.mashCount += soloTaps;
     soloPlayer.lurchT = 0.08;
   }
 
   let trioPush = 0;
   for (const p of st.players) {
     if (p.side !== "trio") continue;
-    const push = trioMashPush(st, p);
-    if (push > 0) {
-      trioPush += push;
-      p.mashCount++;
+    const taps = tapsThisStep(st, p, t);
+    if (taps > 0) {
+      trioPush += taps * TRIO_TAP;
+      p.contribution += taps * TRIO_TAP;
+      p.mashCount += taps;
       p.lurchT = 0.08;
     }
   }
@@ -453,11 +463,6 @@ function stepFixed(st: PushOfWarState): void {
   st.recentPushes += totalPush;
 
   soloPlayer.contribution += soloPush;
-  if (trioPush > 0) {
-    for (const p of st.players) {
-      if (p.side === "trio") p.contribution += TRIO_PUSH_PER_TAP;
-    }
-  }
 
   if (st.cratePos >= WIN_THRESHOLD) { endGame(st, "solo-win"); return; }
   if (st.cratePos <= -WIN_THRESHOLD) { endGame(st, "trio-win"); return; }
@@ -478,23 +483,40 @@ function stepFixed(st: PushOfWarState): void {
   if (st.surgeActive) st.shakeT = Math.max(st.shakeT, 0.04);
 }
 
-/** Push the solo produces this step (0 = no push). Human taps are worth more. */
-function soloMashPush(st: PushOfWarState, p: PlayerState): number {
-  if (st.humanCpu) return st.prng() < CPU_SOLO_MASH_P ? SOLO_PUSH_PER_TAP : 0;
-  if (isLocalPlayer(st.ctx.players, p.id)) {
-    if (st.humanTaps > 0) { st.humanTaps--; return HUMAN_TAP_PUSH; }
+/**
+ * Taps this player lands in this fixed step. The local human's taps were
+ * queued by input (and rate-capped there); every other seat — and the human
+ * seat under autoplay — is a CPU tapper on the deterministic prng.
+ */
+function tapsThisStep(st: PushOfWarState, p: PlayerState, t: number): number {
+  const human = isLocalPlayer(st.ctx.players, p.id) && !st.humanCpu;
+  if (human) {
+    if (st.humanTaps > 0) {
+      st.humanTaps--;
+      return 1;
+    }
     return 0;
   }
-  return st.prng() < CPU_SOLO_MASH_P ? SOLO_PUSH_PER_TAP : 0;
+  if (st.stepIndex % 60 === 0) p.rate = Math.max(2, p.baseRate + (st.prng() - 0.5) * CPU_RATE_DRIFT);
+  let n = 0;
+  while (p.nextTap <= t) {
+    p.nextTap += (1 / p.rate) * (1 + (st.prng() - 0.5) * CPU_TAP_JITTER);
+    n++;
+  }
+  return n;
 }
 
-/** Push one trio member produces this step (0 = no push). Human taps are worth more. */
-function trioMashPush(st: PushOfWarState, p: PlayerState): number {
-  if (isLocalPlayer(st.ctx.players, p.id) && !st.humanCpu) {
-    if (st.humanTaps > 0) { st.humanTaps--; return HUMAN_TAP_PUSH; }
-    return 0;
+/** First step of play: tell the human which side they're on and which way to push. */
+function announceRoles(st: PushOfWarState): void {
+  const me = st.players.find((p) => isLocalPlayer(st.ctx.players, p.id));
+  if (!me || st.humanCpu) {
+    st.ctx.announce("1 VS 3! MASH PUSH!", { durationMs: 1400 });
+    return;
   }
-  return st.prng() < CPU_TRIO_MASH_P ? TRIO_PUSH_PER_TAP : 0;
+  st.ctx.announce(me.side === "solo" ? "YOU'RE SOLO! MASH PUSH! ⬅" : "YOU'RE ON THE TRIO! MASH PUSH! ➡", {
+    durationMs: 1600,
+    sound: "whoosh",
+  });
 }
 
 function endGame(st: PushOfWarState, path: "solo-win" | "trio-win" | "timeout"): void {
@@ -502,23 +524,29 @@ function endGame(st: PushOfWarState, path: "solo-win" | "trio-win" | "timeout"):
   st.endPath = path;
   const ctx = st.ctx;
 
+  // Within a side: most pushing first; an exact tie is settled by the round's
+  // prng, never by seat order.
+  const tie = new Map(st.players.map((p) => [p.id, st.prng()]));
+  const trioSorted = [...st.trioIds].sort(
+    (a, b) => st.players[b].contribution - st.players[a].contribution || (tie.get(a) ?? 0) - (tie.get(b) ?? 0),
+  );
   let ranking: number[];
   if (path === "solo-win") {
-    ranking = [st.soloId, ...st.trioIds.sort((a, b) => st.players[b].contribution - st.players[a].contribution || a - b)];
+    ranking = [st.soloId, ...trioSorted];
   } else if (path === "trio-win") {
-    ranking = [...st.trioIds.sort((a, b) => st.players[b].contribution - st.players[a].contribution || a - b), st.soloId];
+    ranking = [...trioSorted, st.soloId];
   } else {
     // Genuine dead heat (crate within 0.01 of center): the side that pushed hardest
-    // overall takes it — never hand the solo a free win.
+    // overall takes it.
     const soloContrib = st.players[st.soloId].contribution;
     const trioContrib = st.trioIds.reduce((n, id) => n + st.players[id].contribution, 0);
-    const trioSorted = st.trioIds.sort((a, b) => st.players[b].contribution - st.players[a].contribution || a - b);
     ranking = soloContrib > trioContrib ? [st.soloId, ...trioSorted] : [...trioSorted, st.soloId];
   }
   st.ranking = ranking;
   // The whole winning side is paid, not only the top contributor in ranking[0].
   const soloWon = ranking[0] === st.soloId;
   const coinWinners = soloWon ? [st.soloId] : st.trioIds.slice();
+  st.coinWinners = coinWinners;
   /* Don't set finished=true yet — allow the post-game camera push-in to
    * play out in update() before ctx.finish fires (the 900ms setTimeout waits). */
   st.ended = true;
@@ -554,12 +582,10 @@ function endGame(st: PushOfWarState, path: "solo-win" | "trio-win" | "timeout"):
    * goal-line / buzzer-beater is readable without reading the banner text. */
   st.surgeFlashT = SURGE_FLASH_DURATION * 0.6;
   st.ended = true;
-
-  setTimeout(() => { if (st.finished && st.ranking) ctx.finish(st.ranking, coinWinners); }, 2150);
 }
 
 function spawnDust(st: PushOfWarState): void {
-  const crateX = st.cratePos * 8;
+  const crateX = -st.cratePos * 8;
   const sprite = st.dustPool.find((s) => !s.visible);
   if (!sprite) return;
   sprite.visible = true;
@@ -621,7 +647,9 @@ function updateVisuals(st: PushOfWarState, dt: number): void {
   // (|pos|^0.45): a small but real advantage still reads as visible movement, while a
   // blowout (|pos| = 0.5) lands the crate exactly on the goal line (3.2 * 0.5^0.45 = 2.34).
   const eased = Math.sign(st.cratePos) * Math.pow(Math.abs(st.cratePos), 0.45);
-  const crateX = eased * 3.2;
+  // The solo stands at +x and shoves the crate toward the trio's goal at -x,
+  // so a solo lead (cratePos > 0) moves the crate left.
+  const crateX = -eased * 3.2;
   st.crate.position.x = crateX;
 
   const v = Math.abs(st.lurchVelocity);
@@ -641,7 +669,7 @@ function updateVisuals(st: PushOfWarState, dt: number): void {
   ropeMat.color.lerpColors(new THREE.Color(hex(palette.cream)), new THREE.Color(hex(palette.sun)), Math.abs(st.cratePos));
 
   // Tug needle: slides toward whichever side is winning (same eased value as the crate).
-  st.indicator.position.x = eased * 3.2;
+  st.indicator.position.x = crateX;
   st.indicator.scale.x = 0.22;
   const indColor = st.cratePos > 0.1 ? palette.candy : st.cratePos < -0.1 ? palette.bubble : palette.mint;
   (st.indicator.material as THREE.MeshToonMaterial).color.setHex(hex(indColor));
@@ -894,11 +922,18 @@ const pushOfWar: Minigame = {
   id: "push_of_war",
   name: "Push of War",
   genre: "survival",
-  howTo: "Tap PUSH as fast as you can to shove the crate. Push it over the other side's line to win.",
-  goal: "Shove the crate over their line",
+  howTo: "1 vs 3! Tap PUSH as fast as you can to shove the crate into the other team's goal. The solo pushes harder and gets a POWER SURGE. To win, have the crate in their half when time runs out.",
+  goal: "Mash PUSH! Shove the crate into their goal",
   tap: "PUSH",
   steer: false,
   tapSfx: "pop",
+  rules: {
+    format: "1v3",
+    length: "10 seconds",
+    win: "Shove the crate into the other team's goal (or be closer when time's up)",
+    touch: ["Tap PUSH (or anywhere) as fast as you can", "Solo: every 20 pushes = POWER SURGE"],
+    keys: ["Space: push (tap it fast, holding does nothing)", "Or click anywhere"],
+  },
 
   setup(ctx: MinigameContext) {
     const root = new THREE.Group();
@@ -941,6 +976,7 @@ const pushOfWar: Minigame = {
     const players: PlayerState[] = ctx.players.map((p) => ({
       id: p.id, side: p.id === soloId ? "solo" : "trio",
       contribution: 0, mashCount: 0, lurchT: 0, squashT: 0,
+      baseRate: 0, rate: 0, nextTap: 0,
     }));
 
     for (const p of players) {
@@ -1026,7 +1062,7 @@ const pushOfWar: Minigame = {
       ctx, root, cratePos: 0, soloMeter: 0, surgeTimer: 0, surgeActive: false,
       players, soloId, trioIds, stepIndex: 0, simTime: 0, ended: false, finished: false,
       endPath: null, ranking: [], shakeT: 0, shakeMag: 0, lurchVelocity: 0,
-      humanTaps: 0, humanCpu, crate, rope, indicator, dustPool, confettiPool,
+      humanTaps: 0, lastHumanTapStep: -99, coinWinners: [], humanCpu, crate, rope, indicator, dustPool, confettiPool,
       prng, camBase, camLook,
       maxAbsCrate: 0, postGameT: 0, camPushDir: 1, lastIntensity: BASE_INTENSITY,
       recentPushes: 0, lastCrowdT: 0, audioLog: [],
@@ -1040,59 +1076,38 @@ const pushOfWar: Minigame = {
       }),
     };
     round = st;
+    // CPU tappers: each seat gets its own pace for this round.
+    for (const p of players) {
+      const [lo, hi] = p.side === "solo" ? CPU_SOLO_RATE : CPU_TRIO_RATE;
+      p.baseRate = lo + prng() * (hi - lo);
+      p.rate = p.baseRate;
+      p.nextTap = 0.15 + prng() * 0.3;
+    }
+    ctx.hud.unit("pushes");
+    for (const p of players) {
+      ctx.hud.score(p.id, 0);
+      ctx.hud.tag(p.id, p.side === "solo" ? "SOLO" : "TRIO");
+    }
+    ctx.hud.timer(MATCH_DURATION, MATCH_DURATION);
 
     const queuePush = (): void => {
-      if (isPracticeBeat() || st.humanTaps >= 3) return;
+      if (isPracticeBeat() || st.ended || st.humanTaps >= 2) return;
+      if (st.stepIndex - st.lastHumanTapStep < HUMAN_MIN_TAP_STEPS) return;
+      st.lastHumanTapStep = st.stepIndex;
       st.humanTaps++;
       ctx.playSfx("pop", { volume: 0.32, pitch: 1.5 });
     };
-    ctx.input.pointer = (_x, _y, down) => { if (down) queuePush(); };
+    ctx.input.pointer = (_x, _y, down) => {
+      if (down) queuePush();
+    };
     ctx.input.key = (action) => { if (action === "confirm") queuePush(); };
 
-    const soloName = ctx.players[soloIdx].name;
-    ctx.announce(`1 VS 3! ${soloName} vs the Trio!`, { durationMs: 1800, sound: "whoosh" });
     publishDebug(st);
   },
 
   update(dt: number) {
     const st = round;
     if (!st || st.finished || isPracticeBeat()) return;
-
-    /* ORCH DEBUG (write-only, no rng, no gameplay effect): where are the 4 avatars really? */
-    {
-      const dbg: any = { chars: [] as any[] };
-      for (const p of st.players) {
-        const ch = st.ctx.characters[p.id];
-        dbg.chars.push(ch ? {
-          id: p.id, side: p.side,
-          pos: [+ch.group.position.x.toFixed(2), +ch.group.position.y.toFixed(2), +ch.group.position.z.toFixed(2)],
-          vis: ch.group.visible, scale: +ch.group.scale.x.toFixed(2),
-          inScene: !!ch.group.parent, parentType: ch.group.parent?.type ?? null,
-          meshes: (() => { let n = 0, hid = 0, op = 1; ch.group.traverse((o: any) => { if (o.isMesh) { n++; if (!o.visible) hid++; if (o.material && typeof o.material.opacity === "number") op = Math.min(op, o.material.opacity); } }); return `${n}/${hid}${op < 1 ? " op" + op.toFixed(2) : ""}${(ch.group as any).frustumCulled === false ? " noCull" : ""}`; })(),
-          world: (() => { const v = new THREE.Vector3(); ch.group.getWorldPosition(v); return [+v.x.toFixed(2), +v.y.toFixed(2), +v.z.toFixed(2)]; })(),
-          screen: (() => {
-            const cam = st.ctx.camera;
-            cam.updateMatrixWorld();
-            cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
-            const v = new THREE.Vector3();
-            ch.group.getWorldPosition(v);
-            v.project(cam);
-            const w = window.innerWidth || 390, hgt = window.innerHeight || 844;
-            return { x: Math.round((v.x * 0.5 + 0.5) * w), y: Math.round((-v.y * 0.5 + 0.5) * hgt), ndcZ: +v.z.toFixed(2), fov: +cam.fov.toFixed(0) };
-          })(),
-        } : { id: p.id, missing: true });
-      }
-      {
-        const cam = st.ctx.camera;
-        const dir = new THREE.Vector3();
-        cam.getWorldDirection(dir);
-        dbg.cam = { pos: [+cam.position.x.toFixed(2), +cam.position.y.toFixed(2), +cam.position.z.toFixed(2)],
-                    dir: [+dir.x.toFixed(2), +dir.y.toFixed(2), +dir.z.toFixed(2)],
-                    fov: +cam.fov.toFixed(0), aspect: +cam.aspect.toFixed(3),
-                    postT: +st.postGameT.toFixed(2), pushDir: st.camPushDir };
-      }
-      (window as any).__POW_DBG__ = dbg;
-    }
 
     if (!st.ended) {
       st.simTime += dt;
@@ -1108,8 +1123,13 @@ const pushOfWar: Minigame = {
     } else {
       /* Post-game: camera push-in toward the winning side */
       st.postGameT += dt;
-      if (st.postGameT >= POST_GAME_TIME) st.finished = true;
+      if (st.postGameT >= POST_GAME_TIME && !st.finished) {
+        st.finished = true;
+        st.ctx.finish(st.ranking, st.coinWinners);
+      }
     }
+    for (const p of st.players) st.ctx.hud.score(p.id, p.mashCount);
+    st.ctx.hud.timer(st.ended ? 0 : Math.max(0, MATCH_DURATION - st.stepIndex * FIXED_DT), MATCH_DURATION);
 
     updateAudio(st, dt);
     updateVisuals(st, dt);
@@ -1138,9 +1158,6 @@ const pushOfWar: Minigame = {
 };
 
 registerMinigame({ id: pushOfWar.id, name: pushOfWar.name });
-if (!MINIGAME_MODULES.some((l) => false)) {
-  MINIGAME_MODULES.push(loadPushOfWar);
-}
 
 export function loadPushOfWar(): Promise<Minigame> {
   return Promise.resolve(pushOfWar);

@@ -191,11 +191,11 @@ function drawGrumpyFace(ctx: CanvasRenderingContext2D, cx: number, cy: number, s
 
 // ---- per-type disk textures ----------------------------------------------------
 const DISK_BASE: Record<SpaceType, string> = {
-  blue: palette.mint,
+  blue: palette.spaceBlue,
   red: palette.lava,
-  green: palette.berry,
+  green: palette.spaceGreen,
   star: palette.sun,
-  shop: palette.bubble,
+  shop: palette.berry,
   grumpus: palette.lavaDeep,
   stamp: palette.heroPip,          // carnival stamp
   minigame_balloon: palette.candy, // balloon pop

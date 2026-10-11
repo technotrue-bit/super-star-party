@@ -1,48 +1,33 @@
 /**
  * SUPER STAR PARTY — DRUM SOLO (rhythm).
  *
- * MP7 reference: the beat-matching rhythm minigames. Four candy lanes on a
- * bright stage, each player's character at the bottom of their lane facing
- * the camera. A fixed 16-beat song grid at 120bpm (0.5s/beat) drops a ring
- * per lane per beat (deterministic pattern table); each ring travels one
- * beat down its lane while SHRINKING onto a mint target ring, then waits
- * briefly for the strike.
+ * Four candy lanes, one drummer at the foot of each. Everyone plays the SAME
+ * 16-beat chart at 120bpm (quarters, eighth-note pairs and rests — see
+ * patterns.ts). A ring slides down each lane for one second and lands on the
+ * mint target exactly on its note; tap as it lands.
  *
- * INPUT: tap anywhere (pointer down) or 'confirm' — the human plays lane 0
- * only. Windows are generous (fun > harsh):
- *   |err| <= 0.16s -> PERFECT +3 (gold flash, cheer sfx, anim.cheer)
- *   |err| <= 0.30s -> GOOD    +2 (mint flash, pop sfx, anim.jump)
- *   |err| <= 0.42s -> OK      +1 (cream flash, ui.click, anim.squash)
- *   else           -> MISS    +0 (grey shatter, boing, anim.sad)
+ * Judging (same windows for humans and CPUs):
+ *   |err| <= 0.06s PERFECT +3, <= 0.12s GOOD +2, <= 0.18s OK +1, else MISS.
+ * A human tap is judged 30ms earlier than it arrived (touch latency).
  *
- * CPU model (players 1-3, and player 0 under autoplay): every CPU ring
- * rolls its tier ONCE at setup (ctx.rng, fixed order): PERFECT p=0.45,
- * GOOD p=0.35, OK p=0.15, MISS p=0.05. Non-miss strikes land slightly LATE
- * (arriveT + tier error) — credible, never psychic, wins sometimes.
+ * CPU model: each CPU draws a timing spread (sd 0.05–0.12s) and a lapse
+ * rate (2–8%) for the round; each note lands at arrive + 15ms + sd·N(0,1)
+ * (Box-Muller on ctx.rng), or not at all on a lapse.
  *
- * SCORING: rank by score desc, ties by smaller playerId. End: 16th beat
- * resolves -> announce "<name> NAILS DRUM SOLO!" + crowd.cheer + confetti
- * + winner cheer, then ctx.finish(ranking) once at ~10.2s (well inside the
- * 30s safety net).
+ * Ranking: points, then PERFECT count, then lower mean timing error, then a
+ * per-round coin flip (never seat order).
  *
- * Determinism: pattern pick (3 rng draws), CPU rolls and every particle
- * spawn use ctx.rng ONLY — no Math.random / Date.now / performance.now.
- * Ring motion and beat timing are pure functions of ctx.time.
- *
- * Self-registration (framework-documented pattern, same as memory_match):
- * pushes its own loader into MINIGAME_MODULES + registers with the
- * registry, so the game is playable the moment it is loaded; the
- * orchestrator's index.ts wiring (if any) is deduped by id.
+ * Determinism: chart (3 draws), CPU timing, tie-break and particles use
+ * ctx.rng only. Ring motion and judging are pure functions of ctx.time.
  */
 import * as THREE from "three";
 import { automatedSeatIds, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
-import { MINIGAME_MODULES } from "../index";
 import { registerMinigame } from "../registry";
 import { box as frameBox, frameMinigame } from "../framing";
 import { viewportSize } from "../../ui/viewport";
 import { palette, hex } from "../../config/palette";
 import { isAutoplay } from "../../core/debug";
-import { buildSong, type BeatMask } from "./patterns";
+import { buildChart } from "./patterns";
 
 /* ------------------------------------------------------------------ */
 /*  Tunables                                                           */
@@ -50,9 +35,20 @@ import { buildSong, type BeatMask } from "./patterns";
 
 const BEAT = 0.5; // seconds per beat (120bpm)
 const BEATS = 16; // song length
-const PERFECT_WINDOW = 0.16;
-const GOOD_WINDOW = 0.3;
-const OK_WINDOW = 0.42; // absolute miss boundary
+/** The chart starts after two count-in beats, so the first ring is visible for its whole approach. */
+const LEAD_BEATS = 2;
+/** Seconds a ring takes to slide from the top of the lane to the target. */
+const TRAVEL = 1.0;
+const PERFECT_WINDOW = 0.06;
+const GOOD_WINDOW = 0.12;
+const OK_WINDOW = 0.18; // absolute miss boundary
+/** Touch/click latency: a human tap is judged this much earlier than it arrived. */
+const INPUT_LATENCY = 0.03;
+/** Two human taps closer than this are one tap (no double strikes). */
+const TAP_DEBOUNCE = 0.09;
+const CPU_SD: [number, number] = [0.05, 0.12];
+const CPU_LAPSE: [number, number] = [0.02, 0.08];
+const CPU_BIAS = 0.015;
 const LANE_X = [-3, -1, 1, 3]; // lane world x (lane 0 = human, leftmost)
 const SPAWN_Z = -1.8; // rings spawn here (top of lane)
 const TARGET_Z = 3.0; // target ring position (bottom of lane)
@@ -62,8 +58,9 @@ const TARGET_Y = STAGE_TOP + 0.085; // target ring mesh y
 const RING_Y = STAGE_TOP + 0.1; // approach ring mesh y (sits just above target)
 const RING_SCALE_SPAWN = 1.35; // ring scale at spawn
 const RING_SCALE_ARRIVE = 1.0; // ring scale exactly on the beat (matches target)
-const END_AT = BEATS * BEAT + 1.0; // 9.0s — final ring long resolved, announce winner
-const FINISH_AT = END_AT + 1.2; // 10.2s — call ctx.finish once
+const SONG_END = (LEAD_BEATS + BEATS) * BEAT; // 9.0s
+const END_AT = SONG_END + 0.6; // final ring long resolved, announce winner
+const FINISH_AT = END_AT + 1.4; // call ctx.finish once
 const MAX_DOT_PARTICLES = 120;
 const MAX_STAR_PARTICLES = 64;
 
@@ -77,6 +74,7 @@ interface RingGhost {
 }
 
 interface Ring {
+  /** Note index in the chart (same for every lane). */
   beat: number;
   lane: number;
   playerId: number;
@@ -123,6 +121,11 @@ interface DrumSoloState {
   dotPool: Particle[];
   starPool: Particle[];
   scores: number[];
+  perfects: number[];
+  errSum: number[];
+  hits: number[];
+  tieBreak: number[];
+  lastHumanTap: number;
   humanCpu: boolean;
   scoreSprites: ScoreEntry[];
   scorePop: number[];
@@ -439,24 +442,37 @@ function spawnPopup(st: DrumSoloState, lane: number, tier: Exclude<Tier, "miss">
 /* ------------------------------------------------------------------ */
 
 function computeRanking(st: DrumSoloState): number[] {
-  return [0, 1, 2, 3].sort((a, b) => (st.scores[b] ?? 0) - (st.scores[a] ?? 0) || a - b);
+  const meanErr = (p: number): number => (st.hits[p] > 0 ? st.errSum[p] / st.hits[p] : 9);
+  return [0, 1, 2, 3].sort(
+    (a, b) =>
+      (st.scores[b] ?? 0) - (st.scores[a] ?? 0) ||
+      (st.perfects[b] ?? 0) - (st.perfects[a] ?? 0) ||
+      meanErr(a) - meanErr(b) ||
+      (st.tieBreak[a] ?? 0) - (st.tieBreak[b] ?? 0),
+  );
 }
 
 function refreshScore(st: DrumSoloState, p: number): void {
-  const entry = st.scoreSprites[p];
-  if (!entry) return;
-  entry.tex?.dispose();
-  entry.tex = makeTextTexture(String(st.scores[p] ?? 0), palette.cream, palette.ink, 84);
-  entry.mat.map = entry.tex;
-  entry.mat.needsUpdate = true;
-  st.scorePop[p] = 0.2;
+  st.ctx.hud.score(p, st.scores[p] ?? 0);
+}
+
+function tierFor(err: number): Tier {
+  const e = Math.abs(err);
+  return e <= PERFECT_WINDOW ? "perfect" : e <= GOOD_WINDOW ? "good" : e <= OK_WINDOW ? "ok" : "miss";
+}
+
+/** Standard normal from two ctx.rng draws (Box-Muller). */
+function gauss(rng: () => number): number {
+  const u = Math.max(1e-9, rng());
+  const v = rng();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
 /* ------------------------------------------------------------------ */
 /*  Rings                                                              */
 /* ------------------------------------------------------------------ */
 
-function createRing(st: DrumSoloState, beat: number, lane: number): Ring {
+function createRing(st: DrumSoloState, beat: number, lane: number, arriveT: number): Ring {
   const ctx = st.ctx;
   const color = hex(ctx.players[lane]?.color ?? palette.sun);
   const mat = new THREE.MeshToonMaterial({ color, transparent: true, opacity: 1 });
@@ -464,6 +480,7 @@ function createRing(st: DrumSoloState, beat: number, lane: number): Ring {
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.set(LANE_X[lane] ?? 0, RING_Y, SPAWN_Z);
   mesh.renderOrder = 1;
+  mesh.visible = false; // shown when its approach starts
   st.root.add(mesh);
   const ghosts: RingGhost[] = [];
   for (let g = 1; g <= 2; g++) {
@@ -473,6 +490,7 @@ function createRing(st: DrumSoloState, beat: number, lane: number): Ring {
     gmesh.rotation.x = -Math.PI / 2;
     gmesh.position.set(LANE_X[lane] ?? 0, RING_Y, SPAWN_Z - g * 0.55);
     gmesh.renderOrder = 1;
+    gmesh.visible = false;
     st.root.add(gmesh);
     ghosts.push({ mesh: gmesh, mat: gmat, base });
   }
@@ -480,8 +498,8 @@ function createRing(st: DrumSoloState, beat: number, lane: number): Ring {
     beat,
     lane,
     playerId: lane,
-    spawnT: (beat - 1) * BEAT,
-    arriveT: beat * BEAT,
+    spawnT: arriveT - TRAVEL,
+    arriveT,
     state: "incoming",
     stateT: 0,
     tier: null,
@@ -501,10 +519,17 @@ function removeRing(st: DrumSoloState, ring: Ring): void {
   }
 }
 
-function strikeRing(st: DrumSoloState, ring: Ring, tier: Tier, t: number): void {
+function strikeRing(st: DrumSoloState, ring: Ring, tier: Tier, t: number, err: number): void {
   const ctx = st.ctx;
+  if (tier === "miss") {
+    missRing(st, ring, t);
+    return;
+  }
   const pts = tier === "perfect" ? 3 : tier === "good" ? 2 : 1;
   st.scores[ring.playerId] = (st.scores[ring.playerId] ?? 0) + pts;
+  if (tier === "perfect") st.perfects[ring.playerId] += 1;
+  st.errSum[ring.playerId] += Math.abs(err);
+  st.hits[ring.playerId] += 1;
   refreshScore(st, ring.playerId);
   ring.state = "flash";
   ring.stateT = t;
@@ -545,29 +570,31 @@ function missRing(st: DrumSoloState, ring: Ring, t: number): void {
   st.ctx.characters[ring.playerId]?.anim.sad();
 }
 
-/** Human: strike the lane-0 ring closest to its target within the window. */
+/** Human: strike your lane's ring closest to its target within the window. */
 function humanStrike(st: DrumSoloState): void {
   const ctx = st.ctx;
   const t = ctx.time;
+  if (st.ended || t - st.lastHumanTap < TAP_DEBOUNCE) return;
+  st.lastHumanTap = t;
+  const judged = t - INPUT_LATENCY;
   let best: Ring | null = null;
-  let bestDiff = Infinity;
+  let bestErr = Infinity;
   const lane = localPlayerIndex(st.ctx.players);
   for (const ring of st.rings) {
     if (ring.lane !== lane) continue;
     if (ring.state !== "incoming" && ring.state !== "wait") continue;
-    const diff = Math.abs(t - ring.arriveT);
-    if (diff <= OK_WINDOW && diff < bestDiff) {
-      bestDiff = diff;
+    const err = judged - ring.arriveT;
+    if (Math.abs(err) <= OK_WINDOW && Math.abs(err) < Math.abs(bestErr)) {
+      bestErr = err;
       best = ring;
     }
   }
   if (!best) {
+    // A stray tap with no ring near: a dull thud, no penalty.
     ctx.playSfx("ui.click", { volume: 0.3, pitch: -5 });
     return;
   }
-  const tier: Tier =
-    bestDiff <= PERFECT_WINDOW ? "perfect" : bestDiff <= GOOD_WINDOW ? "good" : "ok";
-  strikeRing(st, best, tier, t);
+  strikeRing(st, best, tierFor(bestErr), t, bestErr);
 }
 
 /* ------------------------------------------------------------------ */
@@ -609,11 +636,18 @@ const drumSolo: Minigame = {
   id: "drum_solo",
   name: "Drum Solo",
   genre: "rhythm",
-  howTo: "Tap when the shrinking ring lands on the target. The best timing wins.",
-  goal: "Hit the ring on time",
+  howTo: "You drum in the lane marked YOU. Tap the moment each ring lands on your target. Everyone plays the same song, and the best timing wins.",
+  goal: "Tap as your ring hits the target!",
   tap: "HIT",
   steer: false,
   tapSfx: "pop",
+  rules: {
+    format: "ffa",
+    length: "One song",
+    win: "Most points: PERFECT +3, GOOD +2, OK +1",
+    touch: ["Tap HIT (or anywhere) as a ring lands on your target", "Rings come in pairs sometimes, so tap twice"],
+    keys: ["Space: hit", "Or click anywhere"],
+  },
 
   setup(ctx: MinigameContext) {
     const st: DrumSoloState = {
@@ -623,6 +657,11 @@ const drumSolo: Minigame = {
       dotPool: [],
       starPool: [],
       scores: [0, 0, 0, 0],
+      perfects: [0, 0, 0, 0],
+      errSum: [0, 0, 0, 0],
+      hits: [0, 0, 0, 0],
+      tieBreak: [0, 0, 0, 0],
+      lastHumanTap: -1,
       humanCpu: isAutoplay(),
       scoreSprites: [],
       scorePop: [0, 0, 0, 0],
@@ -640,32 +679,29 @@ const drumSolo: Minigame = {
 
     buildStage(st);
 
-    /* ---- deterministic 16-beat song (3 rng draws) ---- */
-    const masks: BeatMask[] = buildSong(ctx.rng);
+    /* ---- one chart for everyone (3 rng draws), a ring per lane per note ---- */
+    const chart = buildChart(ctx.rng);
+    chart.forEach((beat, n) => {
+      const arriveT = (LEAD_BEATS + beat) * BEAT;
+      for (let lane = 0; lane < 4; lane++) st.rings.push(createRing(st, n, lane, arriveT));
+    });
 
-    /* ---- rings: fixed (beat, lane) grid from the masks ---- */
-    for (let b = 1; b <= BEATS; b++) {
-      const m = masks[b - 1] ?? 0;
-      for (let lane = 0; lane < 4; lane++) {
-        if (m & (1 << lane)) st.rings.push(createRing(st, b, lane));
-      }
-    }
-
-    /* ---- CPU rolls (fixed order: beats asc, lanes asc) ---- */
+    /* ---- CPU drummers: a timing spread and lapse rate per CPU, then one
+       strike time per note (fixed order: lanes asc, notes asc) ---- */
     const cpuLanes = automatedSeatIds(ctx.players, st.humanCpu);
-    for (const ring of st.rings) {
-      if (!cpuLanes.includes(ring.lane)) continue;
-      const r = ctx.rng();
-      const tier: Tier = r < 0.45 ? "perfect" : r < 0.8 ? "good" : r < 0.95 ? "ok" : "miss";
-      ring.tier = tier;
-      if (tier !== "miss") {
-        let err: number;
-        if (tier === "perfect") err = 0.02 + ctx.rng() * 0.06;
-        else if (tier === "good") err = 0.1 + ctx.rng() * 0.16;
-        else err = 0.28 + ctx.rng() * 0.12;
+    for (const lane of cpuLanes) {
+      const sd = CPU_SD[0] + ctx.rng() * (CPU_SD[1] - CPU_SD[0]);
+      const lapse = CPU_LAPSE[0] + ctx.rng() * (CPU_LAPSE[1] - CPU_LAPSE[0]);
+      for (const ring of st.rings) {
+        if (ring.lane !== lane) continue;
+        if (ctx.rng() < lapse) continue; // zones out: no strike, a miss
+        const err = CPU_BIAS + sd * gauss(ctx.rng);
+        if (Math.abs(err) > OK_WINDOW) continue; // too far off to count: a miss
         ring.cpuStrikeT = ring.arriveT + err;
+        ring.tier = tierFor(err);
       }
     }
+    for (let p = 0; p < 4; p++) st.tieBreak[p] = ctx.rng();
 
     /* ---- characters at the bottom of their lanes, facing the camera ---- */
     for (let i = 0; i < 4; i++) {
@@ -676,21 +712,10 @@ const drumSolo: Minigame = {
       ch.anim.idle();
     }
 
-    /* ---- floating score ticker above each character ---- */
-    for (let p = 0; p < 4; p++) {
-      const tex = makeTextTexture("0", palette.cream, palette.ink, 84);
-      const mat = new THREE.SpriteMaterial({
-        map: tex,
-        transparent: true,
-        depthWrite: false,
-      });
-      const sprite = new THREE.Sprite(mat);
-      sprite.scale.set(0.7, 0.35, 1);
-      sprite.position.set(LANE_X[p] ?? 0, 2.35, CHAR_Z);
-      sprite.renderOrder = 3;
-      st.root.add(sprite);
-      st.scoreSprites.push({ sprite, mat, tex });
-    }
+    /* ---- shared scoreboard ---- */
+    ctx.hud.unit("pts");
+    for (let p = 0; p < 4; p++) ctx.hud.score(p, 0);
+    ctx.hud.timer(SONG_END, SONG_END);
 
     /* ---- particle pools ---- */
     st.dotPool = makeParticlePool(st, MAX_DOT_PARTICLES, dotTex);
@@ -718,7 +743,6 @@ const drumSolo: Minigame = {
       humanStrike(st);
     };
 
-    ctx.announce("DRUM SOLO!");
   },
 
   update(dt: number) {
@@ -728,16 +752,19 @@ const drumSolo: Minigame = {
     const t = ctx.time;
 
     /* ---- beat metronome: one click per beat, accented downbeats ---- */
-    while (st.lastMetro < BEATS && (st.lastMetro + 1) * BEAT <= t) {
+    while (st.lastMetro < LEAD_BEATS + BEATS && st.lastMetro * BEAT <= t) {
       st.lastMetro += 1;
-      const down = st.lastMetro % 4 === 1;
+      const down = (st.lastMetro - 1 - LEAD_BEATS) % 4 === 0;
       ctx.playSfx("minigame.count", down ? { volume: 0.3, pitch: 5 } : { volume: 0.2, pitch: 0 });
     }
 
     /* ---- rings ---- */
     for (const ring of st.rings) {
       if (ring.state === "incoming") {
-        const p = Math.min(1, (t - ring.spawnT) / BEAT);
+        const visible = t >= ring.spawnT;
+        ring.mesh.visible = visible;
+        for (const gh of ring.ghosts) gh.mesh.visible = visible;
+        const p = Math.max(0, Math.min(1, (t - ring.spawnT) / TRAVEL));
         const z = SPAWN_Z + (TARGET_Z - SPAWN_Z) * p;
         const s =
           (RING_SCALE_SPAWN + (RING_SCALE_ARRIVE - RING_SCALE_SPAWN) * p) *
@@ -751,7 +778,7 @@ const drumSolo: Minigame = {
           gh.mat.opacity = gh.base * (1 - 0.5 * p);
         }
         if (ring.cpuStrikeT !== null && t >= ring.cpuStrikeT) {
-          strikeRing(st, ring, ring.tier ?? "ok", t);
+          strikeRing(st, ring, ring.tier ?? "ok", t, ring.cpuStrikeT - ring.arriveT);
         } else if (t >= ring.arriveT) {
           ring.state = "wait";
           ring.stateT = t;
@@ -760,7 +787,7 @@ const drumSolo: Minigame = {
       } else if (ring.state === "wait") {
         ring.mesh.scale.setScalar(RING_SCALE_ARRIVE * (1 + 0.05 * Math.sin(t * 10)));
         if (ring.cpuStrikeT !== null && t >= ring.cpuStrikeT) {
-          strikeRing(st, ring, ring.tier ?? "ok", t);
+          strikeRing(st, ring, ring.tier ?? "ok", t, ring.cpuStrikeT - ring.arriveT);
         } else if (t >= ring.arriveT + OK_WINDOW) {
           missRing(st, ring, t);
         }
@@ -808,15 +835,7 @@ const drumSolo: Minigame = {
       (sp.material as THREE.SpriteMaterial).rotation = t * 0.5 + i;
     }
 
-    /* ---- score ticker pop decay ---- */
-    for (let p = 0; p < 4; p++) {
-      if (st.scorePop[p] > 0) {
-        st.scorePop[p] = Math.max(0, st.scorePop[p] - dt);
-        const k = 1 + 0.4 * (st.scorePop[p] / 0.2);
-        const entry = st.scoreSprites[p];
-        if (entry) entry.sprite.scale.set(0.7 * k, 0.35 * k, 1);
-      }
-    }
+    ctx.hud.timer(Math.max(0, SONG_END - t), SONG_END);
 
     /* ---- end: announce winner, then finish exactly once ---- */
     if (!st.ended && t >= END_AT) endGame(st, t);
@@ -866,6 +885,3 @@ export default drumSolo;
 // Self-registration (framework-documented pattern): playable the moment it
 // is loaded, independent of index.ts wiring (deduped by id).
 registerMinigame({ id: drumSolo.id, name: drumSolo.name });
-if (!MINIGAME_MODULES.some((l) => l === loadDrumSolo)) {
-  MINIGAME_MODULES.push(loadDrumSolo);
-}

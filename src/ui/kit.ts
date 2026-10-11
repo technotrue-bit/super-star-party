@@ -41,6 +41,7 @@ import { hud, setHudBannerSink } from "./hud";
 import { playerAvatar } from "./avatar";
 import { settingsPanel } from "./settings";
 import { sfx } from "./sound";
+import { onViewportChange } from "./viewport";
 
 /* ------------------------------------------------------------------ */
 /*  Feedback queue — serializes banners/toasts, caps on-screen count   */
@@ -125,14 +126,16 @@ function injectFeedbackStyles(): void {
     .ssp-fb-banner--grumpus { color: ${palette.lava}; }
     .ssp-fb-banner--gold { color: ${palette.sun}; }
     .ssp-fb-toast {
-      position: absolute; left: 50%; bottom: calc(10% + env(safe-area-inset-bottom, 0px));
+      /* Above the bottom player cards and the ROLL button, never under them. */
+      position: absolute; left: 50%; bottom: calc(max(10%, 116px) + env(safe-area-inset-bottom, 0px));
       transform: translateX(-50%) translateY(10px);
       background: ${palette.ink}; color: ${palette.white};
-      border: 3px solid ${palette.cream}; border-radius: 999px;
-      padding: 10px 22px; font-size: 16px; font-weight: 600;
+      border: 3px solid ${palette.cream}; border-radius: 22px;
+      padding: 10px 20px; font-size: 16px; font-weight: 600; line-height: 1.3;
       box-shadow: 0 4px 0 rgba(0,0,0,.35);
-      opacity: 0; white-space: nowrap; max-width: 88vw;
-      overflow: hidden; text-overflow: ellipsis;
+      /* Wrap to as many lines as the message needs: a toast is never cut off. */
+      opacity: 0; white-space: normal; overflow-wrap: anywhere; text-wrap: balance;
+      text-align: center; width: max-content; max-width: min(88vw, 520px); box-sizing: border-box;
       transition: opacity 220ms ease-out, transform 220ms ease-out;
     }
     .ssp-fb-toast--show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -215,6 +218,21 @@ class BannerQueue {
       this.root = document.createElement("div");
       this.root.className = "ssp-feedback-root";
       document.body.appendChild(this.root);
+      // Track the VISIBLE viewport: mobile and in-app browsers draw their
+      // toolbars over the bottom of the layout viewport, which would hide
+      // the lower part of a toast.
+      const root = this.root;
+      const fit = (): void => {
+        const vv = window.visualViewport;
+        if (!vv) return;
+        root.style.inset = "auto";
+        root.style.left = `${vv.offsetLeft}px`;
+        root.style.top = `${vv.offsetTop}px`;
+        root.style.width = `${vv.width}px`;
+        root.style.height = `${vv.height}px`;
+      };
+      fit();
+      onViewportChange(fit);
     }
     return this.root;
   }

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { palette, hex } from '../config/palette';
 import { celGradient } from './cel';
-import { makeFaceTexture, faceSpecs } from './faces';
+import { makeFaceTexture, faceSpecs, EXPRESSIONS, type Expression } from './faces';
 import type { CharacterKind } from './roster';
 
 const OUTLINE_SCALE = 1.06;
@@ -29,20 +29,64 @@ const darken = (color: string, t: number): string => {
   );
 };
 
-export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Record<string, THREE.Object3D>; } {
+// Lighten a palette color toward cream (belly patches): palette-derived only.
+const lighten = (color: string, t: number): string => {
+  const c = hex(color);
+  const cr = hex(palette.cream);
+  const ch = (v: number): string => Math.round(v).toString(16).padStart(2, '0');
+  return (
+    '#' +
+    ch(((c >> 16) & 255) + (((cr >> 16) & 255) - ((c >> 16) & 255)) * t) +
+    ch(((c >> 8) & 255) + (((cr >> 8) & 255) - ((c >> 8) & 255)) * t) +
+    ch((c & 255) + ((cr & 255) - (c & 255)) * t)
+  );
+};
+
+// One set of face textures per character kind, shared by every instance (a
+// character is rebuilt on each screen; its faces never change).
+const faceCache = new Map<string, Record<Expression, THREE.Texture>>();
+function facesFor(key: string): Record<Expression, THREE.Texture> {
+  let set = faceCache.get(key);
+  if (!set) {
+    set = {} as Record<Expression, THREE.Texture>;
+    for (const e of EXPRESSIONS) set[e] = makeFaceTexture(faceSpecs[key], e);
+    faceCache.set(key, set);
+  }
+  return set;
+}
+
+export interface BuiltModel {
+  /** Placement root: screens and the turn loop position, scale and parent this. */
+  group: THREE.Group;
+  /** Animation rig inside the root: only the animation controller moves this. */
+  rig: THREE.Group;
+  parts: Record<string, THREE.Object3D>;
+  /** Swap the face to an expression (shared textures, no allocation). */
+  setExpression(e: Expression): void;
+}
+
+export function buildModel(kind: CharacterKind): BuiltModel {
+  // Everything below hangs off `group` (the rig). The returned placement root
+  // wraps it, so animation (bob, squash, lean, facing) never fights whoever
+  // places the character, e.g. on top of the Starlight Rise hill.
   const group = new THREE.Group();
+  group.name = 'rig';
   const parts: Record<string, THREE.Object3D> = {};
 
-  const bodyMat = new THREE.MeshToonMaterial({ map: celGradient, color: kind.color });
+  // Real cel shading: the ramp is the toon gradientMap (light-driven bands),
+  // not a color map.
+  const bodyMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: kind.color });
   const inkMat = new THREE.MeshBasicMaterial({ color: palette.ink, side: THREE.BackSide });
+  const faces = facesFor(kind.key);
   const faceMat = new THREE.MeshBasicMaterial({
-    map: makeFaceTexture(faceSpecs[kind.key]),
+    map: faces.normal,
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
   });
-  const handMat = new THREE.MeshToonMaterial({ map: celGradient, color: HAND_COLORS[kind.key] ?? palette.cream });
-  const legMat = new THREE.MeshToonMaterial({ map: celGradient, color: darken(kind.color, 0.38) });
+  const handMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: HAND_COLORS[kind.key] ?? palette.cream });
+  const legMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: darken(kind.color, 0.38) });
+  const bellyMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: lighten(kind.color, 0.55) });
 
   // Ink outline group: dark BackSide shells pushed out along the normals.
   const outline = new THREE.Group();
@@ -77,11 +121,18 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
     parent.add(c);
   };
 
-  const buildBody = (radius: number, squashY: number, y: number, tiltZ = 0): THREE.Group => {
+  const buildBody = (radius: number, squashY: number, y: number, tiltZ = 0, belly = false): THREE.Group => {
     const g = new THREE.Group();
-    const geo = new THREE.SphereGeometry(radius, 24, 18);
+    const geo = new THREE.SphereGeometry(radius, 28, 20);
     geo.scale(1, squashY, 1);
     const m = addMesh(g, geo, bodyMat, [0, y, 0], tiltZ !== 0 ? new THREE.Euler(0, 0, tiltZ) : undefined);
+    if (belly) {
+      // A lighter tummy patch: a slice of a sphere a hair bigger than the
+      // body, on the lower front, so it hugs the curve exactly.
+      const patch = new THREE.SphereGeometry(radius * 1.012, 20, 12, Math.PI / 2 - 0.62, 1.24, 1.42, 0.98);
+      patch.scale(1, squashY, 1);
+      addMesh(g, patch, bellyMat, [0, y, 0], tiltZ !== 0 ? new THREE.Euler(0, 0, tiltZ) : undefined).castShadow = false;
+    }
     group.add(g);
     inkClone(m, outline);
     return g;
@@ -141,7 +192,7 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
   switch (kind.key) {
     case 'pip': {
       // Orange star kid: squashed body + 4-point star head.
-      parts.body = buildBody(0.5, 0.8, 0.5);
+      parts.body = buildBody(0.5, 0.8, 0.5, 0, true);
       const star = new THREE.Group();
       star.position.set(0, 1.08, 0);
       const octa = new THREE.OctahedronGeometry(0.42, 0);
@@ -163,7 +214,7 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
     }
     case 'bounce': {
       // Blue spring rabbit: coils under the body, tall floppy ears.
-      parts.body = buildBody(0.5, 0.9, 0.52);
+      parts.body = buildBody(0.5, 0.9, 0.52, 0, true);
       const footGeo = new THREE.TorusGeometry(0.12, 0.055, 8, 14);
       const fl = addMesh(group, footGeo, bodyMat, [-0.2, 0.1, 0]);
       fl.rotation.x = Math.PI / 2;
@@ -224,7 +275,7 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
     }
     case 'tusk': {
       // Pink elephant: sturdy body, big flappy ears, curling trunk.
-      parts.body = buildBody(0.55, 0.95, 0.56);
+      parts.body = buildBody(0.55, 0.95, 0.56, 0, true);
       parts.head = buildHead(0.38, 1.1);
       parts.face = buildFace(0.3, 0.06, 0.4, parts.head);
       const ears = new THREE.Group();
@@ -261,5 +312,20 @@ export function buildModel(kind: CharacterKind): { group: THREE.Group; parts: Re
       throw new Error('buildModel: unknown character kind "' + String(kind.key) + '"');
   }
 
-  return { group, parts };
+  const root = new THREE.Group();
+  root.name = 'character';
+  root.add(group);
+  parts.rig = group;
+  const faceMesh = (parts.face as THREE.Group | undefined)?.children[0] as THREE.Mesh | undefined;
+  let shown: Expression = 'normal';
+  return {
+    group: root,
+    rig: group,
+    parts,
+    setExpression(e: Expression) {
+      if (e === shown || !faceMesh) return;
+      shown = e;
+      faceMat.map = faces[e];
+    },
+  };
 }

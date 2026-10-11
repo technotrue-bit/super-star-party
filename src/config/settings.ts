@@ -66,6 +66,8 @@ export const settings = {
   players: 4,
   starCost: 10, // coins per star from the Grand Prize Balloon
   starBundleMax: 5, // most stars one visit to the balloon can ask for
+  startCoins: 10, // dealt to everyone once the turn order is set (MP-style)
+  orderBlockMax: 10, // turn-order dice blocks show 1..this, every number different
   blueCoin: 3, // coins gained on blue space
   redCoin: 3, // coins lost on red space
   minigameWinCoins: 10, // base minigame winner payout, before pack bonus and the host multiplier
@@ -121,9 +123,9 @@ export const settings = {
       // Red (the landmark the critic counts) sits front-center: it stays
       // on-screen even during the SW dice-camera punch; sun takes the west
       // slot, mint the east.
-      { x: -1.5, z: 14.6 }, // tentRed — south grass, front-center
-      { x: -8.0, z: 13.5 }, // sun — south grass, left
-      { x: 4.0, z: 13.0 }, // mint — south grass, right
+      { x: -2.0, z: 18.4 }, // tentRed — south grass, front-center
+      { x: -9.0, z: 17.6 }, // sun — south grass, left
+      { x: 4.8, z: 17.4 }, // mint — south grass, right
     ],
     tentBalloonInset: 1.8, // balloon cluster offset from each tent back toward the loop
     fountainPulse: 2.0, // rad/s fountain sparkle pulse
@@ -131,6 +133,38 @@ export const settings = {
     highlightRise: 0.5, // highlight ring max rise (world units)
     highlightPulse: 2.2, // highlight ring pulse rate (cycles/s)
     boundsPad: 0.8, // camera-fit padding beyond the space radius
+    // Diorama (carnival): the fairground is an island over open sea, under a
+    // sky dome, like a party-board map rather than a tablecloth in a void.
+    island: {
+      halfX: 24.5, // superellipse half width (world units, x)
+      halfZ: 21, // superellipse half depth (world units, z)
+      centerZ: 1.2, // nudged south so the tent row and carousel stay on the grass
+      power: 4.2, // superellipse exponent: 2 = ellipse, higher = squarer corners
+      wobble: 0.035, // low-frequency coastline wobble (fraction of radius)
+      cliffDepth: 2.6, // cliff height from the grass down past the waterline
+      seaY: -1.35, // water level
+      seaRadius: 230, // sea disc radius (reaches the sky dome horizon)
+      foamPulse: 0.9, // rad/s shoreline foam breathing
+      seaDrift: 0.012, // ripple texture scroll (texture units/s)
+      skyRadius: 300, // sky dome radius (inside the camera far plane)
+    },
+    // Foliage: instanced trees, bushes, flowers, and rocks scattered off the lanes.
+    foliage: {
+      laneClear: 2.25, // keep-out from any lane centreline (world units)
+      propClear: 1.0, // extra keep-out around landmark footprints
+      rimTrees: 46, // trees seeded along the coast ring
+      fieldTrees: 34, // trees seeded across the open grass
+      bushes: 70,
+      flowers: 150,
+      rocks: 18,
+    },
+    // Landmarks on the open grass (world x/z). The Big Top faces the board.
+    landmarks: {
+      bigTop: { x: -20.2, z: -2.4 },
+      helter: { x: 19.6, z: 1.6 },
+      pierAngle: Math.PI / 2 - 0.45, // heading on the coast (0 = east, pi/2 = south)
+    },
+    shadowExtent: 26, // key-light shadow box half-size while the carnival board is up
   },
 
   // ---- lively board (cosmetic only; `?lively=0` turns it off) ----

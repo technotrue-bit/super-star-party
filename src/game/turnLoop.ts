@@ -29,7 +29,7 @@ import { ui } from "../ui/kit";
 import { setAutoplayHook, isAutoplay } from "../core/debug";
 import { characterDice, characterColor } from "../characters/roster";
 import type { BoardScene } from "../board/boardScene";
-import { stayOf, branchOf, forkLabel, ahead } from "../board/boardData";
+import { liveStayOf, branchOf, forkLabel, ahead } from "../board/boardData";
 import { activeBoard } from "../board/registry";
 import { stampLabel, jackpotWord } from "../board/boardText";
 import type { Character } from "../characters/characterFactory";
@@ -79,9 +79,9 @@ import {
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-/** Next space on the same lane (the stay edge, Funhouse Cut applied). */
+/** Next space on the same lane (the stay edge, Funhouse Gate applied). */
 function stepOn(space: number): number {
-  return stayOf(activeBoard(), space);
+  return liveStayOf(activeBoard(), space, match.gateOpen);
 }
 
 /** The branch edge when `space` is a fork, else undefined. */
@@ -182,6 +182,8 @@ export interface TurnLoop {
   rollPressed(): void;
   /** True when the human is expected to press ROLL right now. */
   isWaitingForRoll(): boolean;
+  /** True while the star-purchase ceremony plays (the balloon waits it out). */
+  readonly starCeremonyActive: boolean;
   readonly phase: LoopPhase;
   /** Display only: hops still to walk in the current rolled walk, or null (teleports, landed, ceremonies). */
   readonly moveCountdown: { pid: number; left: number } | null;
@@ -616,7 +618,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     if (!ch) return;
     const off = PLAYER_OFFSETS[pid] ?? [0, 0];
     const v = board.spaceWorldPos(space);
-    ch.group.position.set(v.x + off[0], 0, v.z + off[1]);
+    ch.group.position.set(v.x + off[0], v.y, v.z + off[1]);
   };
 
   /** Snap every character mesh to its match-state space (teleports/swaps). */
@@ -625,6 +627,27 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   };
 
   /* ---------------- phase transitions ---------------- */
+
+  /**
+   * Toast the Funhouse Gate's new state on the first turn of every round after
+   * the first. Read from match state, not loop state: the loop is rebuilt
+   * when the board comes back from a minigame, which is exactly when the
+   * gate has just flipped.
+   */
+  let gateToldTurn = 0;
+  const announceGate = (pid: number): void => {
+    const g = activeBoard().gate;
+    if (!g || match.turn <= 1 || gateToldTurn === match.turn) return;
+    if (pid !== match.turnOrder[0]) return;
+    gateToldTurn = match.turn;
+    audio.sfx.play(match.gateOpen ? "whoosh" : "boing");
+    ui.toast(
+      match.gateOpen
+        ? `The ${g.label} swings OPEN: the Cut skips Funhouse Row this round!`
+        : `The ${g.label} slams SHUT: everyone walks Funhouse Row this round!`,
+      { durationMs: 2600 }
+    );
+  };
 
   const beginTurn = (): void => {
     checkpoint("turn");
@@ -636,6 +659,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     if (player.itemFx.skipTurn) {
       player.itemFx.skipTurn = false;
       bus.emit("turn:start", { turn: match.turn, player: pid });
+      announceGate(pid);
       hud.showBanner(`${labelDoes(pid, "LOSE", "LOSES")} A TURN!`, { durationMs: 1400 });
       ui.toast("The Grumpus Coat ate their turn!", { durationMs: 1800 });
       chars[pid]?.anim.sad();
@@ -650,6 +674,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     board.setHighlight(player.space, true);
     refreshHud();
     hud.showBanner(`TURN ${match.turn}`, { durationMs: 900 });
+    announceGate(pid);
     pause(0.95, () => {
       hud.showBanner(`${labelPossessive(pid)} TURN!`, { durationMs: 1150 });
       pause(0.75, () => offerFizzyPity(pid, beginDice));
@@ -1062,8 +1087,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
           if (owner && victim) {
             const op = board.spaceWorldPos(owner.space);
             const vp = board.spaceWorldPos(victim.space);
-            chars[trap.ownerId]?.group.position.set(op.x, 0, op.z);
-            chars[pid]?.group.position.set(vp.x, 0, vp.z);
+            chars[trap.ownerId]?.group.position.set(op.x, op.y, op.z);
+            chars[pid]?.group.position.set(vp.x, vp.y, vp.z);
           }
         }
         refreshHud();
@@ -2015,10 +2040,17 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   /* ---------------- minigame round ---------------- */
 
-  /** Round rollover: next turn, then fresh gumball stock (fixed rng draws, every peer). */
+  /**
+   * Round rollover: next turn, then fresh gumball stock (fixed rng draws, every
+   * peer), then the board's gate flips. No rng: every peer flips together.
+   */
   const advanceRound = (): void => {
     match.turn += 1;
     restockShops(match);
+    if (activeBoard().gate && match.turn <= match.totalTurns) {
+      match.gateOpen = !match.gateOpen;
+      bus.emit("board:gate", { open: match.gateOpen, turn: match.turn });
+    }
   };
 
   const minigameRound = (): void => {
@@ -2097,9 +2129,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     setPendingMinigame(mg);
 
     const coins = minigameCoinAward(mg.pack);
-    const baseDesc = (mg as { description?: string }).description || getMinigameDescription(mg.id, mg.name);
-    const desc = `${baseDesc} Winner takes ${coins} coins.`;
-    showMinigamePreview(mg.name, desc).then((started) => {
+    const desc = (mg as { description?: string }).description || getMinigameDescription(mg.id, mg.name);
+    showMinigamePreview(mg.name, desc, mg.rules, coins).then((started) => {
       console.log('[turnLoop] pre-screen resolved started=', started);
       if (!started) {
         // User cancelled (click outside / Escape) — clear flags and resume turns.
@@ -2254,9 +2285,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         const a = board.spaceWorldPos(S.hopFrom);
         const b = board.spaceWorldPos(S.hopTo);
         const off = PLAYER_OFFSETS[pid] ?? [0, 0];
+        // Uphill/downhill hops (Starlight Rise) ease the height with the step;
+        // the hop arc itself is the walk animation's.
         ch.group.position.set(
           a.x + (b.x - a.x) * e + off[0],
-          0,
+          a.y + (b.y - a.y) * e,
           a.z + (b.z - a.z) * e + off[1]
         );
         if (p >= 1) {
@@ -2346,11 +2379,61 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       else beginTurn();
       return;
     }
+    if (!match.startCoinsDealt) {
+      dealStartCoins();
+      return;
+    }
     beginTurn();
+  };
+
+  /**
+   * MP-style starting purse: once the turn order is set, everyone gets
+   * settings.startCoins, then the first turn begins. Runs on every peer at the
+   * same point (first start()), no rng.
+   */
+  const dealStartCoins = (): void => {
+    match.startCoinsDealt = true;
+    const amount = settings.startCoins;
+    for (const p of match.players) {
+      p.coins += amount;
+      bus.emit("coins:change", { player: p.id, delta: amount, total: p.coins });
+    }
+    audio.sfx.play("coin.gain");
+    hud.showBanner(`EVERYONE GETS ${amount} COINS!`, { durationMs: 1500 });
+    for (const ch of chars) ch?.anim.cheer();
+    refreshHud();
+    pause(1.7, () => {
+      for (const ch of chars) ch?.anim.idle();
+      revealStar(beginTurn);
+    });
+  };
+
+  /**
+   * MP-style "the Star is over here!": once the purses are dealt, the camera
+   * swings to the Grand Prize Balloon, holds while the banner plays, then
+   * hands back for turn 1. Presentation only (fixed sim pause, no rng).
+   */
+  const revealStar = (then: () => void): void => {
+    const idx = match.starBalloonPos;
+    const pos = board.spaceWorldPos(idx);
+    const look = pos.clone().add(new THREE.Vector3(0, 2.0, 0));
+    ceremony.holdCamera(look.clone().add(new THREE.Vector3(0, 8.5, 10.5)), look, 40);
+    board.highlight(idx);
+    audio.sfx.play("happening.magic");
+    hud.showBanner("THE STAR IS HERE!", { durationMs: 1800 });
+    const name = activeBoard().spaces[idx]?.name;
+    if (name) ui.toast(`The Grand Prize Balloon starts at ${name}. Go get it!`, { durationMs: 2400 });
+    pause(2.4, () => {
+      ceremony.releaseCamera();
+      then();
+    });
   };
 
   const dispose = (): void => {
     S.disposed = true;
+    // A ceremony cut short (quit mid-purchase) must not leave the debug flag on.
+    S.starCeremony = false;
+    (globalThis as any).__SSP_STAR_CEREMONY = { active: false, pid: 0, t: 0 };
     if (stingerTO !== null) {
       window.clearTimeout(stingerTO);
       stingerTO = null;
@@ -2385,6 +2468,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       !S.poisonPopup,
     get phase(): LoopPhase {
       return S.phase;
+    },
+    get starCeremonyActive(): boolean {
+      return S.starCeremony && !S.disposed;
     },
     get moveCountdown() {
       if (S.phase !== "moving" || !countedWalk || S.shopOpen || S.starCeremony || S.starPopup) return null;

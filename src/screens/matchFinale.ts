@@ -21,6 +21,7 @@ import { mulberry32 } from "../core/rng";
 import { characterColor } from "../characters/roster";
 import { finalRanking, computeBonusStars } from "../game/economy";
 import { screens } from "./screenManager";
+import { setOnlineMatch } from "../net/mode";
 import { createCharacter, type Character } from "../characters/characterFactory";
 import type { Screen } from "./screenManager";
 import type { FinalRankEntry, BonusStarAward } from "../game/economy";
@@ -659,7 +660,11 @@ class FinaleScreen implements Screen {
     this._transitioning = true;
     audio.sfx.play("fanfare.win");
     ui.confettiBurst(window.innerWidth / 2, window.innerHeight * 0.4, { sound: null, count: 80 });
-    startMatch(this._kinds, this._names, 10);
+    // Same roster and length as the match just played. A rematch is always a
+    // local match (the friends room has closed by now), so drop the online flag.
+    const turns = match.totalTurns > 0 ? match.totalTurns : 10;
+    setOnlineMatch(false);
+    startMatch(this._kinds, this._names, turns);
     setTimeout(() => screens.goto("board"), 200);
   }
 

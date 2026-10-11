@@ -1,6 +1,13 @@
 /**
  * CAKE DASH — a 4-lane side-view race to a giant cake.
  *
+ * (2026 rework) Every lane gets the SAME obstacles at the same spots, so the
+ * race is decided by jumping, not by which lane rolled fewer cakes. A jump
+ * started from the PERFECT band (about 1.85-2.55u before an obstacle) shows
+ * "PERFECT!" when it clears and gives a short x1.3 speed boost — the same
+ * rule for CPUs (who land half their clean jumps there). CPUs miss 8-16% of
+ * jumps by skill. Ties: more PERFECTs, then fewer bumps, then a coin flip.
+ *
  * Everyone auto-runs rightward at 6 u/s down their lane; the whole course's
  * obstacles are pre-generated at setup (cake towers, puddings, forks — jump
  * them; confetti puddles — jump or slip). Human jumps on pointer press / up
@@ -21,7 +28,8 @@
  * distance (tie → smaller playerId).
  */
 import * as THREE from "three";
-import { isLocalPlayer, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
+import { automatedSeatIds, isLocalPlayer, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
+import { isAutoplay } from "../../core/debug";
 import type { Character } from "../../characters/characterFactory";
 import { palette, hex } from "../../config/palette";
 import { Course, FINISH_X, START_X, LANE_Z, GROUND_HALF } from "./course";
@@ -58,6 +66,11 @@ const ANIM_APEX = 0.9; // the character anim's own arc apex
 const HIT_SLACK = 0.25; // generous hitbox: h >= obs.h - HIT_SLACK clears
 const WIN_BEAT = 0.9; // celebration beat before finish()
 const LAST_SPAWN_X = FINISH_X - 3; // no obstacles in the final stretch
+/** A jump started this far before an obstacle (u) is PERFECT if it clears. */
+const PERFECT_MIN = 1.85;
+const PERFECT_MAX = 2.55;
+const BOOST_TIME = 0.3;
+const BOOST_FACTOR = 1.3;
 
 /* ------------------------------------------------------------------ */
 /*  In-race position indicator (HUD)                                   */
@@ -177,7 +190,12 @@ const _hv2 = new THREE.Vector3();
 
 /** Sort runners into current places with the finish-logic comparator. */
 function computePlaces(): Runner[] {
-  return [...S.runners].sort((a, b) => b.x - a.x || a.id - b.id);
+  return [...S.runners].sort(byPlace);
+}
+
+/** Race order: distance, then PERFECTs, then fewer bumps, then the round's coin flip. */
+function byPlace(a: Runner, b: Runner): number {
+  return b.x - a.x || b.perfects - a.perfects || a.bumps - b.bumps || a.tieBreak - b.tieBreak;
 }
 
 /** Distance a runner has covered, 0 at the start line, 1 at the cake. */
@@ -208,6 +226,9 @@ function ensureHud(): void {
   rail.renderOrder = 17;
   group.add(rail);
   S.hud.rail = rail;
+  // The shared top scoreboard now shows everyone's progress; the 3D rail
+  // covered the runners on a phone, so it stays hidden.
+  rail.visible = false;
 
   // --- per-runner badge + rail segment ---
   const badges: RunnerHud[] = S.runners.map((r) => {
@@ -236,6 +257,7 @@ function ensureHud(): void {
     const seg = new THREE.Mesh(new THREE.BoxGeometry(1, PROGRESS_H, PROGRESS_DEPTH + 0.06), segMat);
     seg.renderOrder = 18;
     group.add(seg);
+    seg.visible = false;
 
     // Place chevron marker on the rail.
     const markMat = new THREE.MeshBasicMaterial({
@@ -248,6 +270,7 @@ function ensureHud(): void {
     mark.rotation.z = -Math.PI / 2; // point right, reads as a position arrow
     mark.renderOrder = 19;
     group.add(mark);
+    mark.visible = false;
 
     return {
       badge: { sprite, tier: 0 as BadgeTier, flashT: 0 },
@@ -301,12 +324,15 @@ function updateHud(): void {
     }
 
     // Flash: scale pop + material opacity blink, decaying to idle.
-    let scale = 1.3;
+    // Badges only over YOU and the leader: four big badges hid the far lanes.
+    const showBadge = place === 0 || (S.ctx ? isLocalPlayer(S.ctx.players, r.id) : false);
+    h.badge.sprite.visible = showBadge;
+    let scale = 0.85;
     let opacity = 1;
     if (h.badge.flashT > 0) {
       h.badge.flashT -= 1 / 60;
       const p = Math.max(0, h.badge.flashT) / BADGE_FLASH_TIME;
-      scale = 1.3 + 0.55 * Math.sin(Math.min(1, 1 - p) * Math.PI); // pop up then settle
+      scale = 0.85 + 0.4 * Math.sin(Math.min(1, 1 - p) * Math.PI); // pop up then settle
       opacity = 0.55 + 0.45 * Math.sin(p * Math.PI * 3); // blink while it lasts
     }
     h.badge.sprite.scale.set(scale, scale, 1);
@@ -363,6 +389,13 @@ interface Runner {
   flailT: number;
   anim: AnimName;
   skill: number; // CPU only
+  cpu: boolean; // driven by the CPU plans (CPU seats, every seat under autoplay)
+  /** Obstacle this jump was started PERFECTLY for (null otherwise). */
+  perfectFor: Obstacle | null;
+  boostT: number;
+  perfects: number;
+  bumps: number;
+  tieBreak: number;
 }
 
 /** One shard of a penalty burst (confetti splash / cake crumbs). */
@@ -439,6 +472,20 @@ function startJump(r: Runner): void {
   r.grounded = false;
   r.jumpT = 0;
   r.landT = 0;
+  // PERFECT check: the next obstacle ahead in this lane, if the take-off
+  // distance is in the band. Paid out only if the jump actually clears it.
+  r.perfectFor = null;
+  let next: Obstacle | null = null;
+  let nd = Infinity;
+  for (const o of S.obstacles) {
+    if (o.lane !== r.lane || o.consumed) continue;
+    const d = o.x - o.w / 2 - (r.x + 0.35);
+    if (d > 0 && d < nd) {
+      nd = d;
+      next = o;
+    }
+  }
+  if (next && nd >= PERFECT_MIN && nd <= PERFECT_MAX) r.perfectFor = next;
   animTo(r, "jump");
   S.ctx?.playSfx("jump", { pitch: 1.05 });
 }
@@ -446,7 +493,7 @@ function startJump(r: Runner): void {
 function pressJump(pid: number): void {
   if (S.phase !== "play") return;
   const r = S.runners[pid];
-  if (!r) return;
+  if (!r || r.stunT > 0) return;
   if (r.grounded) startJump(r);
   else r.buffer = JUMP_BUFFER;
 }
@@ -566,6 +613,12 @@ function setup(ctx: MinigameContext): void {
       flailT: 0,
       anim: "idle",
       skill: 0,
+      cpu: false,
+      perfectFor: null,
+      boostT: 0,
+      perfects: 0,
+      bumps: 0,
+      tieBreak: 0,
     };
     char.group.position.set(START_X, 0, LANE_Z[runner.lane]);
     char.setFacing(Math.PI / 2); // front is +Z → +X faces the cake
@@ -573,14 +626,16 @@ function setup(ctx: MinigameContext): void {
     return runner;
   });
 
-  // CPU skill for every non-local seat, in roster order, then spawn cursors.
-  // Skipping the local seat first keeps the same rng draws as seat 0 local.
-  for (let i = 0; i < S.runners.length; i++) {
-    if (isLocalPlayer(ctx.players, S.runners[i].id)) continue;
-    S.runners[i].skill = 0.84 + ctx.rng() * 0.16;
+  // CPU skill for every automated seat, in roster order, then the course.
+  const auto = automatedSeatIds(ctx.players, isAutoplay());
+  for (const r of S.runners) {
+    r.cpu = auto.includes(r.id);
+    if (r.cpu) r.skill = ctx.rng();
+    r.tieBreak = ctx.rng();
   }
-  for (let l = 0; l < 4; l++) S.nextSpawn[l] = 11 + ctx.rng() * 5;
   pregenerateObstacles();
+  ctx.hud.unit("%");
+  for (const r of S.runners) ctx.hud.score(r.id, 0);
 
   // Camera frames the start line during the countdown: all four lanes and a
   // stretch of course ahead, fitted to the screen (a tall phone backs the
@@ -602,11 +657,12 @@ function setup(ctx: MinigameContext): void {
 
   // Local seat: any press jumps (buffered 0.15s if pressed mid-air).
   const localIndex = localPlayerIndex(ctx.players);
+  const localAuto = S.runners[localIndex]?.cpu === true;
   ctx.input.pointer = (x, y, down) => {
-    if (down) pressJump(localIndex);
+    if (down && !localAuto) pressJump(localIndex);
   };
   ctx.input.key = (action) => {
-    if (action === "up" || action === "confirm") pressJump(localIndex);
+    if (!localAuto && (action === "up" || action === "confirm")) pressJump(localIndex);
   };
 
   // Build the position indicator AFTER runners exist (badge above each head).
@@ -621,29 +677,31 @@ function setup(ctx: MinigameContext): void {
 function pregenerateObstacles(): void {
   const ctx = S.ctx;
   if (!ctx) return;
-  // Everything is drawn here, once, in fixed lane order — the seeded rng
-  // stream position is therefore identical for every frame of the race
-  // (per-frame spawning would make the global draw order frame-dependent).
+  // One course, drawn once: every lane gets the same obstacle at the same x.
+  // Then a CPU plan per obstacle for each automated runner (lane order).
+  const layout: { x: number; kind: ReturnType<typeof rollKind> }[] = [];
+  let x = 11 + ctx.rng() * 3;
+  while (x < LAST_SPAWN_X) {
+    layout.push({ x, kind: rollKind(ctx.rng()) });
+    x += 5.8 + ctx.rng() * 3.6 - Math.min(2.4, x * 0.045);
+  }
   for (let lane = 0; lane < 4; lane++) {
-    while (S.nextSpawn[lane] < LAST_SPAWN_X) {
-      const x = S.nextSpawn[lane];
-      const kind = rollKind(ctx.rng());
-      const group = buildObstacle(kind, S.course!.assets);
-      group.position.set(x, 0, LANE_Z[lane]);
+    const runner = S.runners.find((r) => r.lane === lane);
+    for (const spot of layout) {
+      const group = buildObstacle(spot.kind, S.course!.assets);
+      group.position.set(spot.x, 0, LANE_Z[lane]);
       ctx.scene.add(group);
       S.obstacles.push({
-        kind,
+        kind: spot.kind,
         lane,
-        x,
-        h: OBSTACLE_H[kind],
-        w: OBSTACLE_W[kind],
+        x: spot.x,
+        h: OBSTACLE_H[spot.kind],
+        w: OBSTACLE_W[spot.kind],
         group,
-        plan: cpuPlanFor(lane, S.runners[3 - lane].skill, ctx.rng),
+        plan: runner?.cpu ? cpuPlanFor(runner.skill, ctx.rng) : null,
         planUsed: false,
         consumed: false,
       });
-      const gap = 5.8 + ctx.rng() * 3.6 - Math.min(2.4, x * 0.045);
-      S.nextSpawn[lane] = x + gap;
     }
   }
 }
@@ -673,6 +731,17 @@ function collide(r: Runner): void {
     if (o.lane !== r.lane || o.consumed) continue;
     if (Math.abs(r.x - o.x) > 0.35 + o.w / 2) continue;
     o.consumed = true;
+    const cleared = o.kind === "puddle" ? h >= 0.05 : h >= o.h - HIT_SLACK;
+    if (cleared && r.perfectFor === o) {
+      r.perfectFor = null;
+      r.perfects += 1;
+      r.boostT = BOOST_TIME;
+      if (!r.cpu) {
+        S.ctx?.announce("PERFECT!", { durationMs: 600, sound: null });
+        S.ctx?.playSfx("coin.gain", { volume: 0.6, pitch: 1.4 });
+      }
+      burstAt(o.x, LANE_Z[o.lane], [palette.sun, palette.white], 5, 0.7);
+    }
     if (o.kind === "puddle") {
       if (h < 0.05) {
         // SLIP — read the cause: flail, confetti splash, whoosh+pop, toast.
@@ -687,6 +756,8 @@ function collide(r: Runner): void {
         S.shakeT = 0.25;
       }
     } else if (h < o.h - HIT_SLACK) {
+      r.bumps += 1;
+      r.perfectFor = null;
       r.stunT = STUN_TIME;
       r.buffer = 0;
       r.jumpT = JUMP_TOTAL;
@@ -707,9 +778,9 @@ function enterWin(crossed: Runner[]): void {
   S.phase = "win";
   S.winT = WIN_BEAT;
 
-  crossed.sort((a, b) => b.x - a.x || a.id - b.id);
+  crossed.sort(byPlace);
   const winner = crossed[0];
-  const rest = [...S.runners].filter((r) => r !== winner).sort((a, b) => b.x - a.x || a.id - b.id);
+  const rest = [...S.runners].filter((r) => r !== winner).sort(byPlace);
   S.ranking = [winner.id, ...rest.map((r) => r.id)];
 
   // Stop everyone: winner steps onto the cake plate and cheers.
@@ -729,9 +800,7 @@ function enterWin(crossed: Runner[]): void {
 function finishByDistance(timeUp: boolean): void {
   const ctx = S.ctx;
   if (!ctx) return;
-  S.ranking = [...S.runners]
-    .sort((a, b) => b.x - a.x || a.id - b.id)
-    .map((r) => r.id);
+  S.ranking = [...S.runners].sort(byPlace).map((r) => r.id);
   if (timeUp) ctx.announce("TIME'S UP!");
   ctx.finish(S.ranking);
   S.phase = "idle";
@@ -795,6 +864,8 @@ function stepRace(): void {
   for (const r of S.runners) {
     if (!r.grounded) {
       r.jumpT += dt;
+      // A mid-air press is only remembered for JUMP_BUFFER seconds.
+      if (r.buffer > 0) r.buffer = Math.max(0, r.buffer - dt);
       if (r.jumpT >= JUMP_TOTAL) {
         r.grounded = true;
         r.jumpT = 0;
@@ -818,7 +889,8 @@ function stepRace(): void {
       }
     }
 
-    const spd = r.stunT > 0 ? 0 : SPEED * (r.slowT > 0 ? SLOW_FACTOR : 1);
+    const spd = r.stunT > 0 ? 0 : SPEED * (r.slowT > 0 ? SLOW_FACTOR : 1) * (r.boostT > 0 ? BOOST_FACTOR : 1);
+    if (r.boostT > 0) r.boostT -= dt;
     r.x += spd * dt;
     if (r.stunT > 0) {
       r.stunT -= dt;
@@ -840,10 +912,11 @@ function stepRace(): void {
     r.char.group.position.x = r.x;
     r.holder.position.y = holderLift(r);
 
-    if (S.ctx && !isLocalPlayer(S.ctx.players, r.id)) cpuThink(r);
+    if (r.cpu) cpuThink(r);
     collide(r);
   }
 
+  for (const r of S.runners) ctx.hud.score(r.id, Math.round(courseProgress(r) * 100));
   const crossed = S.runners.filter((r) => r.x >= FINISH_X);
   if (crossed.length > 0) enterWin(crossed);
   else if (S.raceT >= TIME_CAP) finishByDistance(true);
@@ -946,8 +1019,15 @@ export function loadCakeDash(): Promise<Minigame> {
     id: "cake_dash",
     name: "Cake Dash",
     genre: "race",
-    howTo: "Tap to jump the snacks in your lane. First one to the cake wins.",
-    goal: "Jump the snacks and reach the cake",
+    howTo: "Everyone runs on their own, past the same snacks. Tap to jump them; a bump stops you and a confetti puddle slows you. A perfectly timed jump gives a speed boost. First to the cake wins!",
+    goal: "Tap to jump the snacks. First to the cake!",
+    rules: {
+      format: "ffa",
+      length: "Race to the cake",
+      win: "First to reach the cake",
+      touch: ["Tap JUMP (or anywhere) to hop", "Jump just before a snack for a PERFECT boost"],
+      keys: ["Space or Up: jump", "Or click anywhere"],
+    },
     tap: "JUMP",
     steer: false,
     tapSfx: "jump",

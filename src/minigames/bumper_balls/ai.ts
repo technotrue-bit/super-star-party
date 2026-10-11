@@ -20,6 +20,8 @@ export interface CpuBrain {
   speedMul: number;
   /** Flavor roll (0..1) — orbit side / wander angle, fixed per pick. */
   flavor: number;
+  /** Will this CPU dash at a rival during this pick? */
+  dashWill: boolean;
 }
 
 export interface CpuRival {
@@ -34,21 +36,22 @@ const CENTER_P = 0.75;
 
 /** Fresh brain for a CPU player (picks on the first step of play). */
 export function freshBrain(): CpuBrain {
-  return { pickIn: 0, strategy: "chase", speedMul: 0.85, flavor: 0.5 };
+  return { pickIn: 0, strategy: "chase", speedMul: 0.88, flavor: 0.5, dashWill: false };
 }
 
 /**
- * Full strategy re-pick (4 rng draws, fixed order):
- * strategy roll, speed roll, next-pick timer, flavor roll.
+ * Full strategy re-pick (5 rng draws, fixed order):
+ * strategy roll, speed roll, next-pick timer, flavor roll, dash roll.
  * The timer is stored in whole fixed steps (1/60s) so the re-pick fires at
  * a deterministic step index regardless of frame timing.
  */
 export function repick(brain: CpuBrain, ctx: Pick<MinigameContext, "rng">): void {
   const roll = ctx.rng();
   brain.strategy = roll < CHASE_P ? "chase" : roll < CENTER_P ? "center" : "flee";
-  brain.speedMul = 0.65 + ctx.rng() * 0.3;
+  brain.speedMul = 0.78 + ctx.rng() * 0.2;
   brain.pickIn = Math.round((0.6 + ctx.rng() * 0.6) * 60);
   brain.flavor = ctx.rng();
+  brain.dashWill = ctx.rng() < 0.55;
 }
 
 /**

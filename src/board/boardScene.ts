@@ -1,19 +1,23 @@
 /**
  * SUPER STAR PARTY — board scene. Builds the full Fizzy Fairground into
- * world.scene via a group: checkerboard grass, sandy path loop (with the
- * Funhouse Cut shortcut), 28 color-coded space disks with procedural icons,
- * and cel-shaded carnival scenery (tents, ferris wheel, star fountain,
- * gumball machines, lamp posts, balloon clusters).
+ * world.scene via a group: a checkered grass island in the sea under a sky
+ * dome (boardIsland.ts), sandy path loop (with the Funhouse Cut shortcut),
+ * color-coded space disks on printed rims, cel-shaded carnival scenery
+ * (tents, ferris wheel, star fountain, gumball machines, lamp posts, balloon
+ * clusters), the Big Top / helter-skelter / pier landmarks
+ * (boardLandmarks.ts) and instanced foliage (boardFoliage.ts).
  *
  * Owned by the board builder. Consumed by the showcase + board screens.
  */
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { world } from "../main";
+import { bus } from "../core/events";
 import { settings, livelyEnabled } from "../config/settings";
 import { palette } from "../config/palette";
 import { ease } from "../core/rng";
 import type { SpaceType } from "../core/game";
-import type { BoardDef } from "./boardData";
+import { groundHeight, type BoardDef } from "./boardData";
 import { activeBoard } from "./registry";
 import { buildKit, type BoardTextures } from "./boardTextures";
 import { buildBoardLanes } from "./boardLanes";
@@ -43,15 +47,18 @@ import { createLandFx, type LandFx, type LandReaction } from "./lively/landFx";
 import { createCrowd, type Crowd } from "./lively/crowd";
 import { createNight, type Night } from "./lively/night";
 import { attachStaticBoundsIn, releaseStaticBoundsIn } from "../render/meshBvh";
+import { buildIsland, type Island } from "./boardIsland";
+import { buildFoliage, type KeepOut } from "./boardFoliage";
+import { buildBigTop, buildHelterSkelter, buildPier, buildFunhouseGate, LANDMARK_RADIUS, type GateProp } from "./boardLandmarks";
 
 export interface BoardScene {
   /** Root group, added to world.scene by buildBoardScene(). */
   group: THREE.Group;
   /** Type string of the space at index i ("blue" | "red" | ...). */
   spaceType(i: number): string;
-  /** Space center in group-local ground-plane coords (y = 0). */
+  /** Space center in group-local coords (y = ground height under the space). */
   spacePos(i: number): THREE.Vector3;
-  /** Space center in world coords (y = 0). */
+  /** Space center in world coords (y = ground height under the space). */
   spaceWorldPos(i: number): THREE.Vector3;
   /** The space's root Object3D (disk + any per-space prop). */
   spaceMesh(i: number): THREE.Object3D;
@@ -76,9 +83,11 @@ export interface BoardScene {
   update(dt: number): void;
   /**
    * Park the Grand Prize Balloon on a space. The first call snaps into place.
-   * Later calls pop it and reinflate at the new index. Null hides it.
+   * Later calls fly it over the board to the new index. Null hides it.
    */
   setPrizeBalloon(index: number | null): void;
+  /** Show the board's gate (Funhouse Gate) open or shut. No-op without one. */
+  setGate(open: boolean): void;
   /** Remove the group and free all GPU resources. */
   dispose(): void;
 }
@@ -113,11 +122,11 @@ export function boardBounds(): { minX: number; maxX: number; minY: number; maxY:
 const DISK_YAW = Math.PI / 2;
 
 const DISK_RIM: Record<SpaceType, string> = {
-  blue: palette.mintDeep,
+  blue: palette.spaceBlueDeep,
   red: palette.lavaDeep,
-  green: palette.berryDeep,
+  green: palette.spaceGreenDeep,
   star: palette.sunDeep,
-  shop: palette.bubbleDeep,
+  shop: palette.berryDeep,
   grumpus: palette.lavaDeep,
   stamp: palette.sunDeep,
   minigame_balloon: palette.candyDeep,
@@ -188,6 +197,8 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
   builtDef = def;
   const n = def.spaces.length;
   const B = settings.board;
+  // Ground height under every space (Starlight Rise lifts the inner loop).
+  const spaceY = def.spaces.map((sp) => groundHeight(def, sp.x, sp.y));
   const group = new THREE.Group();
   group.name = `board:${def.id}`;
   const kit: BoardTextures = buildKit();
@@ -199,25 +210,25 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
 
   const carnival = def.theme === "carnival";
 
-  // ---- ground: big checkerboard grass (Downtown placeholder: plain asphalt) ------
-  let groundMat: THREE.Material;
+  // ---- ground: the carnival is a grass island in the sea under a sky dome
+  // (boardIsland.ts); the Downtown placeholder keeps its plain asphalt plane.
+  // Diorama pieces (island, landmarks, foliage) are dense and go in `decor`,
+  // which joins the board AFTER the static-bounds pass, like the lanes.
+  const decor = new THREE.Group();
+  decor.name = "decor";
+  let island: Island | null = null;
   if (carnival) {
-    const grassTex = kit.grass;
-    grassTex.repeat.set(
-      settings.board.groundSize / (settings.board.groundTile * 2),
-      settings.board.groundSize / (settings.board.groundTile * 2)
-    );
-    groundMat = toonMat(kit, palette.white, { map: grassTex });
+    island = buildIsland(kit, (x, z) => groundHeight(def, x, z));
+    decor.add(island.root);
   } else {
-    groundMat = toonMat(kit, DOWNTOWN_ASPHALT);
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(settings.board.groundSize, settings.board.groundSize),
+      toonMat(kit, DOWNTOWN_ASPHALT)
+    );
+    ground.geometry.rotateX(-Math.PI / 2);
+    ground.receiveShadow = true;
+    group.add(ground);
   }
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(settings.board.groundSize, settings.board.groundSize),
-    groundMat
-  );
-  ground.geometry.rotateX(-Math.PI / 2);
-  ground.receiveShadow = true;
-  group.add(ground);
 
   // ---- sandy path loop + shortcut -------------------------------------------------
   const pos2 = (i: number): THREE.Vector2 => {
@@ -235,7 +246,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
   for (let i = 0; i < n; i++) {
     const sp = def.spaces[i];
     const g = new THREE.Group();
-    g.position.set(sp.x, 0, sp.y);
+    g.position.set(sp.x, spaceY[i], sp.y);
 
     const disk = new THREE.Mesh(
       diskGeo,
@@ -288,6 +299,40 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
     spaceGroups.push(g);
   }
 
+  // Printed rim under every disk, party-board style: a cream band, then an ink
+  // band, peeking out round the coloured top. One instanced mesh for all
+  // spaces (static: a landing dip presses the disk down into its rim).
+  {
+    const R = settings.tileRadius;
+    const cream = new THREE.CylinderGeometry(R * 1.1, R * 1.13, 0.1, 32);
+    const inkBand = new THREE.CylinderGeometry(R * 1.19, R * 1.21, 0.07, 32).translate(0, -0.015, 0);
+    const paintRim = (g: THREE.BufferGeometry, color: string): THREE.BufferGeometry => {
+      const c = new THREE.Color(color);
+      const count = g.getAttribute("position").count;
+      const arr = new Float32Array(count * 3);
+      for (let k = 0; k < count; k++) arr.set([c.r, c.g, c.b], k * 3);
+      g.setAttribute("color", new THREE.BufferAttribute(arr, 3));
+      return g;
+    };
+    const rimGeo = mergeGeometries([paintRim(cream, palette.cream), paintRim(inkBand, palette.ink)], false);
+    cream.dispose();
+    inkBand.dispose();
+    if (rimGeo) {
+      const rims = new THREE.InstancedMesh(
+        rimGeo,
+        new THREE.MeshToonMaterial({ color: palette.white, vertexColors: true, gradientMap: kit.grad }),
+        n
+      );
+      rims.name = "space-rims";
+      rims.receiveShadow = true;
+      const m = new THREE.Matrix4();
+      for (let i = 0; i < n; i++) rims.setMatrixAt(i, m.makeTranslation(def.spaces[i].x, spaceY[i], def.spaces[i].y));
+      rims.instanceMatrix.needsUpdate = true;
+      rims.computeBoundingSphere();
+      group.add(rims);
+    }
+  }
+
   // One Grand Prize Balloon for the whole board. Hidden until a screen
   // parks it on match.starBalloonPos. Pop/reinflate is presentation only.
   const prize = buildGrandPrizeBalloon(kit);
@@ -296,13 +341,19 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
   props.push(prize);
   let prizeShown: number | null = null;
   let prizeTarget: number | null = null;
-  let prizePop = -1;
-  const POP_SHRINK = 0.16;
-  const POP_INFLATE = 0.42;
+  // Flight to a new space: lift off, sail over the board in an arc, settle.
+  let prizeFly = -1; // seconds into the flight, -1 = parked
+  let prizeFlyDur = 0;
+  let prizeFrom = 0;
+  const FLY_LIFT = 0.55;
+  const FLY_SETTLE = 0.55;
+  const flyA = new THREE.Vector3();
+  const flyB = new THREE.Vector3();
 
   const placePrize = (index: number, scale: number): void => {
-    const sp = def.spaces[wrapIndex(index, n)];
-    prize.root.position.set(sp.x, 0, sp.y);
+    const k = wrapIndex(index, n);
+    const sp = def.spaces[k];
+    prize.root.position.set(sp.x, spaceY[k], sp.y);
     const s = Math.max(0.001, scale);
     prize.root.scale.setScalar(s);
   };
@@ -342,12 +393,52 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
     // ferris wheel at the bottom-right corner
     props.push(buildFerrisWheel(kit, cx + halfW + 3.6, cy - halfH - 4.2));
     // star fountain plaza in the middle
-    props.push(buildFountain(kit, 1.3));
+    const fountain = buildFountain(kit, 1.3);
+    fountain.root.position.y = groundHeight(def, 0, 0);
+    props.push(fountain);
     // gumball machine beside each shop space
     for (const sp of def.spaces) {
       if (sp.type === "shop") {
         const [gx, gz] = outward(sp.x, sp.y, 1.9);
         props.push(buildGumballMachine(kit, gx, gz));
+      }
+    }
+  }
+  // Landmarks on the open grass either side of the loop, plus the pier.
+  const keepOut: KeepOut[] = [];
+  let gate: GateProp | null = null;
+  let gateShown: boolean | null = null;
+  if (carnival && island) {
+    const L = settings.board.landmarks;
+    const bigTop = buildBigTop(kit, L.bigTop.x, L.bigTop.z, Math.atan2(-(cy - L.bigTop.z), cx - L.bigTop.x));
+    const helter = buildHelterSkelter(kit, L.helter.x, L.helter.z);
+    const pier = buildPier(kit, island.shape, L.pierAngle);
+    for (const p of [bigTop, helter, pier]) {
+      decor.add(p.root);
+      props.push(p);
+    }
+    if (def.gate) {
+      const g = def.gate;
+      const at = new THREE.Vector3(def.spaces[g.from].x, spaceY[g.from], def.spaces[g.from].y);
+      const to = new THREE.Vector3(def.spaces[g.open].x, spaceY[g.open], def.spaces[g.open].y);
+      gate = buildFunhouseGate(kit, at, to);
+      decor.add(gate.root);
+      props.push(gate);
+      keepOut.push({ x: gate.root.position.x, z: gate.root.position.z, r: 1.8 });
+    }
+    keepOut.push(
+      { x: L.bigTop.x, z: L.bigTop.z, r: LANDMARK_RADIUS.bigTop },
+      { x: L.helter.x, z: L.helter.z, r: LANDMARK_RADIUS.helter },
+      { x: pier.root.position.x, z: pier.root.position.z, r: LANDMARK_RADIUS.pier },
+      { x: cx, z: cy, r: 2.6 }, // fountain plaza
+      { x: cx + halfW + 3.6, z: cy - halfH - 4.2, r: 3.4 }, // ferris wheel
+      { x: bounds.minX - 2.4, z: bounds.maxY + 1.2, r: 3.0 }, // carousel
+      { x: bounds.maxX - 4.8, z: bounds.maxY + 4.2, r: 1.2 } // searchlight
+    );
+    for (const sp of def.spaces) {
+      if (sp.type === "shop") {
+        const [gx, gz] = outward(sp.x, sp.y, 1.9);
+        keepOut.push({ x: gx, z: gz, r: 0.9 });
       }
     }
   }
@@ -371,6 +462,17 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
     props.push(buildBalloons(kit, bx, bz, (tx + tz) * 0.31));
   }
 
+  if (carnival && island) {
+    for (const [tx, tz] of tentSpots) keepOut.push({ x: tx, z: tz, r: 3.0 });
+    for (const top of lampTops.values()) keepOut.push({ x: top.x, z: top.z, r: 0.6 });
+    // Crowd bleachers sit in the gaps of the tent row (same rule as below).
+    const [mid, west, east] = settings.board.tentSpots;
+    for (const [a, b] of [[west, mid], [mid, east]] as const) {
+      keepOut.push({ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 - 2.4, r: 2.4 });
+    }
+    decor.add(buildFoliage(def, kit, island.shape, keepOut).root);
+  }
+
   // Attach every free-standing prop to the board. (Space-local props like the
   // star props are already parented to their space group and are skipped.)
   for (const p of props) {
@@ -379,6 +481,47 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
 
   if (world.scene) world.scene.add(group);
 
+  // Shadows across the whole island: the boot key light's shadow box is the
+  // three.js default (10 units, 512px), which leaves almost everything
+  // unshadowed. Widened while the carnival is up, put back on dispose().
+  const keyLight = world.scene?.getObjectByName("world:key");
+  let restoreShadow: (() => void) | null = null;
+  if (carnival && keyLight instanceof THREE.DirectionalLight) {
+    const sh = keyLight.shadow;
+    const cam = sh.camera;
+    const before = {
+      l: cam.left, r: cam.right, t: cam.top, b: cam.bottom, far: cam.far,
+      w: sh.mapSize.x, h: sh.mapSize.y, bias: sh.bias, normalBias: sh.normalBias,
+    };
+    const E = settings.board.shadowExtent;
+    const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+    const size = coarse ? 1024 : 2048;
+    cam.left = -E;
+    cam.right = E;
+    cam.top = E;
+    cam.bottom = -E;
+    cam.far = 80;
+    cam.updateProjectionMatrix();
+    sh.mapSize.set(size, size);
+    sh.bias = -0.0006;
+    sh.normalBias = 0.02;
+    sh.map?.dispose();
+    sh.map = null;
+    restoreShadow = () => {
+      cam.left = before.l;
+      cam.right = before.r;
+      cam.top = before.t;
+      cam.bottom = before.b;
+      cam.far = before.far;
+      cam.updateProjectionMatrix();
+      sh.mapSize.set(before.w, before.h);
+      sh.bias = before.bias;
+      sh.normalBias = before.normalBias;
+      sh.map?.dispose();
+      sh.map = null;
+    };
+  }
+
   console.log(`[SSP] board built: ${def.id} (${n} spaces)`);
   // Rigid static props only. Under the cutoff this builds no tree and does
   // not load three-mesh-bvh. A dense glTF prop added here would.
@@ -386,6 +529,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
   // Lanes go in AFTER the static-bounds pass: the merged lane geometry is over
   // the BVH triangle cutoff and would otherwise load three-mesh-bvh on every board.
   for (const m of buildBoardLanes(def, kit)) group.add(m);
+  group.add(decor);
 
   // ---- lively board: ambient loops + landing reactions (cosmetic) -------------------
   // Added after the static-bounds pass: these all move. `?lively=0` skips it all.
@@ -424,8 +568,9 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       spaceCount: n,
       spaceGroup: (i) => spaceGroups[wrapIndex(i, n)],
       spacePos: (i) => {
-        const sp = def.spaces[wrapIndex(i, n)];
-        return new THREE.Vector3(sp.x, 0, sp.y);
+        const k = wrapIndex(i, n);
+        const sp = def.spaces[k];
+        return new THREE.Vector3(sp.x, spaceY[k], sp.y);
       },
       rimColor: (type) => DISK_RIM[type as SpaceType] ?? palette.sun,
     });
@@ -461,6 +606,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
         bulbs: buntingSlots(strands, { x: cx, z: cy }),
         camera: () => world.camera,
         center: { x: cx, z: cy },
+        sky: island ? island.setSky : undefined,
       });
     }
   }
@@ -474,8 +620,9 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
     },
 
     spacePos(i: number): THREE.Vector3 {
-      const sp = def.spaces[wrapIndex(i, n)];
-      return new THREE.Vector3(sp.x, 0, sp.y);
+      const k = wrapIndex(i, n);
+      const sp = def.spaces[k];
+      return new THREE.Vector3(sp.x, spaceY[k], sp.y);
     },
 
     spaceWorldPos(i: number): THREE.Vector3 {
@@ -522,6 +669,12 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       night?.setTurn(turn, totalTurns);
     },
 
+    setGate(open: boolean): void {
+      if (!gate || gateShown === open) return;
+      gate.setOpen(open, gateShown === null);
+      gateShown = open;
+    },
+
     setPrizeBalloon(index: number | null): void {
       if (index === null) {
         prize.root.visible = false;
@@ -532,7 +685,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       prizeTarget = wrapIndex(index, n);
       if (prizeShown === null) {
         prizeShown = prizeTarget;
-        prizePop = -1;
+        prizeFly = -1;
         placePrize(prizeShown, 1);
       }
     },
@@ -541,6 +694,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       if (disposed) return;
       t += dt;
       for (const p of props) p.update?.(t, dt);
+      island?.update?.(t, dt);
       landFx?.update(dt);
       crowd?.update(dt);
       night?.update(dt);
@@ -549,22 +703,47 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
         prizeShown !== null &&
         prizeTarget !== null &&
         prizeTarget !== prizeShown &&
-        prizePop < 0
+        prizeFly < 0
       ) {
-        prizePop = 0;
+        // Take off for the new space; longer hops fly a little longer.
+        prizeFrom = prizeShown;
+        prizeShown = prizeTarget;
+        const a = def.spaces[wrapIndex(prizeFrom, n)];
+        const b = def.spaces[wrapIndex(prizeShown, n)];
+        flyA.set(a.x, spaceY[wrapIndex(prizeFrom, n)], a.y);
+        flyB.set(b.x, spaceY[wrapIndex(prizeShown, n)], b.y);
+        prizeFlyDur = FLY_LIFT + Math.min(2.4, Math.max(1.1, flyA.distanceTo(flyB) / 12)) + FLY_SETTLE;
+        prizeFly = 0;
+        bus.emit("balloon:fly", { from: prizeFrom, to: prizeShown, seconds: prizeFlyDur });
       }
-      if (prizePop >= 0 && prizeShown !== null && prizeTarget !== null) {
-        prizePop += dt;
-        if (prizePop < POP_SHRINK) {
-          placePrize(prizeShown, 1 - prizePop / POP_SHRINK);
-        } else if (prizePop < POP_SHRINK + POP_INFLATE) {
-          const u = (prizePop - POP_SHRINK) / POP_INFLATE;
-          placePrize(prizeTarget, ease.outBack(u));
+      if (prizeFly >= 0) {
+        prizeFly += dt;
+        const cruise = prizeFlyDur - FLY_LIFT - FLY_SETTLE;
+        const LIFT_H = 3.2;
+        let y = 0;
+        let w = 0; // 0 at the old space, 1 at the new one
+        let sq = 1;
+        if (prizeFly < FLY_LIFT) {
+          const u = prizeFly / FLY_LIFT;
+          y = LIFT_H * (u * u * (3 - 2 * u));
+        } else if (prizeFly < FLY_LIFT + cruise) {
+          const u = (prizeFly - FLY_LIFT) / cruise;
+          w = u * u * (3 - 2 * u);
+          // Arc higher over long hops, with a gentle bob.
+          y = LIFT_H + Math.sin(u * Math.PI) * Math.min(4, flyA.distanceTo(flyB) * 0.15) + Math.sin(u * Math.PI * 4) * 0.15;
+        } else if (prizeFly < prizeFlyDur) {
+          w = 1;
+          const u = (prizeFly - FLY_LIFT - cruise) / FLY_SETTLE;
+          y = LIFT_H * (1 - ease.outBack(u));
+          sq = 1 + 0.12 * Math.sin(u * Math.PI);
         } else {
-          prizeShown = prizeTarget;
-          prizePop = -1;
-          placePrize(prizeShown, 1);
+          w = 1;
+          prizeFly = -1;
         }
+        prize.root.position.lerpVectors(flyA, flyB, w);
+        prize.root.position.y += y;
+        prize.root.scale.set(1 / sq, sq, 1 / sq);
+        if (prizeFly < 0 && prizeShown !== null) placePrize(prizeShown, 1);
       }
       for (const r of rings) {
         if (!r.ring.visible) continue;
@@ -598,6 +777,8 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       night?.dispose();
       night = null;
       releaseStaticBoundsIn(group);
+      restoreShadow?.();
+      island?.dispose();
       world.scene?.remove(group);
       const geoms = new Set<THREE.BufferGeometry>();
       const mats = new Set<THREE.Material>();

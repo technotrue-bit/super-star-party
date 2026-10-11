@@ -33,7 +33,7 @@ export class Assets {
   toon(color: string): THREE.MeshToonMaterial {
     let m = this.toons.get(color);
     if (!m) {
-      m = new THREE.MeshToonMaterial({ map: celGradient, color: hex(color) });
+      m = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: hex(color) });
       this.toons.set(color, m);
     }
     return m;
