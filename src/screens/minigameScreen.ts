@@ -60,7 +60,10 @@ import {
   type MinigameContext,
   type MinigameEntry,
 } from "../minigames/framework";
-import { minigameDescription } from "../minigames/registry";
+import { minigameDescription, minigameEntry } from "../minigames/registry";
+import { createScoreHud, type ScoreHud } from "../minigames/scoreHud";
+import type { MinigameRules } from "../minigames/framework";
+import { prefersTouchControls } from "../ui/touchPad";
 import { isContactMinigame, loadRapier } from "../physics/contact";
 import { cpuPlayout, onlineMatch, partyAssist, setCpuPlayout } from "../net/mode";
 import { isHost, publishMinigame } from "../net/session";
@@ -110,6 +113,14 @@ function injectMinigameStyles(): void {
   display: none;
 }
 .ssp-mg-goal--on { display: block; }
+.ssp-mg-practice {
+  position: fixed; left: 50%; top: calc(14px + env(safe-area-inset-top, 0px));
+  transform: translateX(-50%); z-index: 77; pointer-events: none;
+  padding: 6px 14px; border-radius: 999px; white-space: nowrap;
+  background: ${palette.sun}; color: ${palette.ink};
+  border: 3px solid ${palette.ink}; box-shadow: 0 4px 0 ${palette.ink};
+  font-family: Fredoka, sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 0.02em;
+}
 .ssp-seat-tags { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 74; pointer-events: none; }
 .ssp-seat {
   position: fixed; left: 0; top: 0; width: max-content; pointer-events: none;
@@ -539,6 +550,8 @@ interface MgScreenState {
   _onPointerUp?: (e: PointerEvent) => void;
   _onKeyDown?: (e: KeyboardEvent) => void;
   _touch?: TouchPad;
+  _hud?: ScoreHud;
+  _practiceEl?: HTMLDivElement;
   _goalEl?: HTMLDivElement;
   _seatTags?: SeatTags;
   _seatMark?: THREE.Group;
@@ -574,7 +587,7 @@ interface MgScreenState {
 }
 
 const COUNT_TICKS = ["3", "2", "1"];
-const PRACTICE_SEC = 2.6;
+const PRACTICE_SEC = 3.2;
 const GO_BEAT = 0.48;
 const GOAL_HOLD = 4.2;
 
@@ -584,6 +597,7 @@ function skipPracticeBeat(): boolean {
 }
 
 function teachKeys(mg: Minigame): string {
+  if (mg.rules?.keys?.length) return mg.rules.keys.join("  ·  ");
   const parts: string[] = [];
   if (mg.steer) parts.push("WASD move");
   if (mg.tap) parts.push(`Space = ${mg.tap}`);
@@ -631,6 +645,9 @@ function applyTeach(self: MgScreenState): void {
     verb: mg.tap,
     steer: mg.steer,
     keys: teachKeys(mg),
+    repeat: mg.tapRepeat === true,
+    grid: mg.steerGrid === true,
+    touchVerb: mg.tapOnTouch !== false,
   });
 }
 
@@ -817,10 +834,28 @@ function beginPractice(self: MgScreenState): void {
   ensureMarker(self);
   applyTeach(self);
   self._touch?.show();
+  // A visible "practice" label with its own countdown, so GO never comes
+  // out of nowhere.
+  const badge = document.createElement("div");
+  badge.className = "ssp-mg-practice";
+  badge.dataset.mgPractice = "";
+  document.body.appendChild(badge);
+  self._practiceEl = badge;
+  tickPracticeBadge(self);
+}
+
+function tickPracticeBadge(self: MgScreenState): void {
+  const el = self._practiceEl;
+  if (!el) return;
+  const left = Math.max(1, Math.ceil(PRACTICE_SEC - (self._practiceT ?? 0)));
+  const text = `PRACTICE! Try the controls · ${left}`;
+  if (el.textContent !== text) el.textContent = text;
 }
 
 function beginGo(self: MgScreenState): void {
   setPracticeBeat(false);
+  self._practiceEl?.remove();
+  self._practiceEl = undefined;
   restorePose(self);
   self._phase = "go";
   self._goT = 0;
@@ -888,6 +923,24 @@ function minigameDie(seed: number, turn: number, round: number) {
   return mulberry32(withRound || 1);
 }
 
+/**
+ * Ranking for a game that overran the safety cap: best scoreboard value
+ * first. Seats with no number (or equal numbers) keep the deterministic
+ * order of a per-round shuffle, never plain seat order, so seat 0 is not
+ * handed the win.
+ */
+function forcedRanking(self: MgScreenState): number[] {
+  const ids = match.players.map((p) => p.id);
+  const die = minigameDie(match.seed, match.turn, 7);
+  const order = new Map(ids.map((id) => [id, die()]));
+  const vals = self._hud?.scores();
+  const num = (id: number): number => {
+    const v = vals?.get(id);
+    return typeof v === "number" ? v : typeof v === "string" ? parseFloat(v) || 0 : 0;
+  };
+  return [...ids].sort((a, b) => num(b) - num(a) || (order.get(a) ?? 0) - (order.get(b) ?? 0));
+}
+
 const minigameScreenImpl: MgScreenState & Screen = {
   id: "minigame",
 
@@ -905,7 +958,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
     const dealt = entry != null;
     const forced = new URLSearchParams(window.location.search).get("minigame");
     if (forced && match.players.length > 0) {
-      entry = { id: forced, name: forced };
+      entry = minigameEntry(forced) ?? { id: forced, name: forced };
     }
     if (!entry || match.players.length === 0) {
       screens.goto("board");
@@ -928,7 +981,15 @@ const minigameScreenImpl: MgScreenState & Screen = {
     // Show description + "START MINI GAME". The arena and players are only
     // built AFTER the user clicks, so they "jump in".
     const desc = (entry as any).description || getMinigameDescription(entry.id, entry.name);
-    showMinigamePreview(entry.name, desc).then((started) => {
+    // Load the module first so the card always has the real name, how-to and
+    // rules (the registry may still be filling in on a cold start).
+    const cardEntry = entry;
+    loadMinigame(cardEntry.id)
+      .catch(() => null)
+      .then((mg) =>
+        showMinigamePreview(mg?.name ?? cardEntry.name, mg?.howTo?.trim() || desc, mg?.rules ?? minigameEntry(cardEntry.id)?.rules),
+      )
+      .then((started) => {
       if (!started) {
         screens.goto("board");
         return;
@@ -1063,11 +1124,13 @@ const minigameScreenImpl: MgScreenState & Screen = {
           self._vsSkip = true;
         }
       };
+      // A held finger that moves is a drag, never another press: one tap is
+      // one action in every game.
       self._onPointerMove = (e) => {
         if (onPad(e)) return;
         if (self._phase === "play" && (e.buttons & 1)) {
           const [x, y] = px(e);
-          self._ctx?.input.pointer(x, y, true);
+          self._ctx?.input.drag?.(x, y);
         }
       };
       self._onPointerUp = (e) => {
@@ -1084,6 +1147,11 @@ const minigameScreenImpl: MgScreenState & Screen = {
         }
         const action = keyAction(e.key);
         if (!action) return;
+        // Holding Space/Enter is one press, not a turbo button.
+        if (action === "confirm" && e.repeat) {
+          e.preventDefault();
+          return;
+        }
         if (self._phase === "practice") {
           e.preventDefault();
           if (action === "confirm") teachTap(self);
@@ -1159,6 +1227,8 @@ const minigameScreenImpl: MgScreenState & Screen = {
           get time() { return (self as any)._playT ?? 0; },
           announce: (text, opts) => {
             ui.clearFeedback();
+            // A banner and the goal pill sit in the same band: the banner wins.
+            self._goalEl?.classList.remove("ssp-mg-goal--on");
             ui.banner(youGrammar(text), { durationMs: opts?.durationMs ?? 1800, sound: opts?.sound === undefined ? null : opts.sound });
           },
           playSfx: (name, opts) => audio.sfx.play(name, opts),
@@ -1180,6 +1250,14 @@ const minigameScreenImpl: MgScreenState & Screen = {
             pointer: (x, y, down) => {},
             key: (k) => {},
           },
+          hud: (self._hud = createScoreHud(
+            match.players.map((p) => ({
+              id: p.id,
+              name: playerLabel(p.id),
+              color: characterColor(p.kind),
+              you: !cpuPlayout() && p.controller === "local",
+            })),
+          )),
         };
         self._ctx = ctx;
 
@@ -1231,6 +1309,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
         this._practiceT = (this._practiceT ?? 0) + dt;
         tickPracticeMove(this, dt);
         tickTeach(this, dt);
+        tickPracticeBadge(this);
         if ((this._practiceT ?? 0) >= PRACTICE_SEC) beginGo(this);
         break;
       }
@@ -1291,7 +1370,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           // the match. Deterministic fallback ranking (player id order).
           if (!this._finished && (this._playT ?? 0) > settings.minigameTimeLimit) {
             this._finished = true;
-            this._ranking = match.players.map((p) => p.id).sort((a, b) => a - b);
+            this._ranking = forcedRanking(this);
             this._coinWinners = undefined;
             if (cpuPlayout() && isHost()) {
               publishMinigame({
@@ -1306,6 +1385,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
         }
         if (this._finished && this._ranking) {
           this._phase = "results";
+          document.body.dataset.mgPhase = "results";
           this._touch?.hide();
           this._resultsT = 0.6; // short winner-reveal beat
         }
@@ -1391,6 +1471,8 @@ const minigameScreenImpl: MgScreenState & Screen = {
       coins: payout,
       paidIds,
       minigameName: mg?.name ?? "MINIGAME",
+      scores: this._hud?.scores(),
+      unit: this._hud?.unitText(),
     });
   },
 
@@ -1489,6 +1571,10 @@ const minigameScreenImpl: MgScreenState & Screen = {
     this._flashEl = undefined;
     this._goalEl?.remove();
     this._goalEl = undefined;
+    this._hud?.destroy();
+    this._hud = undefined;
+    this._practiceEl?.remove();
+    this._practiceEl = undefined;
     this._seatTags?.destroy();
     this._seatTags = undefined;
     this._seatMark = undefined;
@@ -1531,42 +1617,74 @@ export function getMinigameDescription(id: string, name: string): string {
   return minigameDescription(id) ?? `Play ${name} and show your skills!`;
 }
 
-export async function showMinigamePreview(name: string, description: string): Promise<boolean> {
+const FORMAT_LABEL: Record<MinigameRules["format"], string> = {
+  ffa: "FREE-FOR-ALL",
+  "1v3": "1 VS 3",
+  "2v2": "2 VS 2",
+};
+
+/**
+ * The START MINI GAME card: name, format and length chips, what you do,
+ * the controls for THIS device (phone lines or keyboard lines), how to win,
+ * and the prize. There is no cancel: a stray tap on the backdrop or Esc
+ * must never skip the round.
+ */
+export async function showMinigamePreview(
+  name: string,
+  description: string,
+  rules?: MinigameRules,
+  coins?: number,
+): Promise<boolean> {
   return new Promise((resolve) => {
+    const touch = prefersTouchControls();
     const root = document.createElement("div");
-    root.style.cssText = "position:fixed;inset:0;z-index:95;background:rgba(43,29,78,0.35);display:flex;align-items:center;justify-content:center;font-family:Fredoka,sans-serif;box-sizing:border-box;padding:calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px));";
+    root.className = "ssp-mg-card";
+    root.style.cssText = "position:fixed;inset:0;z-index:95;background:rgba(43,29,78,0.45);display:flex;align-items:center;justify-content:center;font-family:Fredoka,sans-serif;box-sizing:border-box;padding:calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px));";
+    const chip = (text: string, bg: string): string =>
+      `<span style="display:inline-block;padding:3px 10px;border-radius:999px;background:${bg};color:${palette.ink};border:3px solid ${palette.cream};font-size:13px;font-weight:700;letter-spacing:0.04em;margin:0 3px 4px;">${escapeHtml(text)}</span>`;
+    const chips = rules ? chip(FORMAT_LABEL[rules.format], palette.sun) + chip(rules.length.toUpperCase(), palette.mint) : "";
+    const lines = rules ? (touch ? rules.touch : rules.keys) : [];
+    const controls = lines.length
+      ? `<div data-mg-controls style="text-align:left;background:rgba(255,255,255,0.08);border:2px solid rgba(255,255,255,0.18);border-radius:14px;padding:8px 12px;margin:0 0 10px;">
+          <div style="font-size:12px;font-weight:700;letter-spacing:0.08em;color:${palette.sun};margin-bottom:4px;">${touch ? "CONTROLS" : "KEYBOARD / MOUSE"}</div>
+          ${lines.map((l) => `<div style="color:${palette.cream};font-size:15px;line-height:1.35;padding:2px 0;">▸ ${escapeHtml(l)}</div>`).join("")}
+        </div>`
+      : "";
+    const win = rules
+      ? `<div data-mg-win style="background:${palette.sun};color:${palette.ink};border-radius:12px;padding:7px 10px;font-size:16px;font-weight:700;line-height:1.25;margin-bottom:10px;">🏆 ${escapeHtml(rules.win)}</div>`
+      : "";
+    const prize = coins !== undefined
+      ? `<div style="color:${palette.cream};opacity:0.85;font-size:14px;margin-bottom:12px;">Winner takes <b style="color:${palette.sun}">${coins} coins</b></div>`
+      : `<div style="height:4px"></div>`;
     root.innerHTML = `
-      <div style="background:${palette.ink};border:5px solid ${palette.cream};border-radius:20px;padding:20px 16px;width:min(92vw, 420px);max-height:calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px);overflow-y:auto;box-sizing:border-box;text-align:center;box-shadow:0 8px 0 ${palette.ink};">
-        <div style="font-size:clamp(26px, 8vw, 44px);font-weight:700;color:${palette.sun};margin-bottom:4px;line-height:1.05;text-shadow:0 3px 0 ${palette.ink};">MINI GAME TIME!</div>
-        <div style="font-size:clamp(22px, 6vw, 34px);font-weight:700;color:${palette.cream};margin-bottom:8px;line-height:1.1;">${escapeHtml(name)}</div>
-        <div id="mg-howto" data-mg-howto style="color:${palette.cream};font-size:16px;line-height:1.35;margin-bottom:14px;">${escapeHtml(description)}</div>
-        <div style="color:${palette.cream};opacity:0.75;font-size:14px;margin-bottom:16px;">Get ready, then start.</div>
+      <div style="background:${palette.ink};border:5px solid ${palette.cream};border-radius:20px;padding:18px 16px;width:min(92vw, 430px);max-height:calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px);overflow-y:auto;box-sizing:border-box;text-align:center;box-shadow:0 8px 0 ${palette.ink};">
+        <div style="font-size:clamp(22px, 6.5vw, 36px);font-weight:700;color:${palette.sun};margin-bottom:2px;line-height:1.05;text-shadow:0 3px 0 ${palette.ink};">MINI GAME TIME!</div>
+        <div style="font-size:clamp(24px, 7vw, 36px);font-weight:700;color:${palette.cream};margin-bottom:6px;line-height:1.1;">${escapeHtml(name)}</div>
+        <div>${chips}</div>
+        <div id="mg-howto" data-mg-howto style="color:${palette.cream};font-size:16px;line-height:1.35;margin:4px 0 10px;">${escapeHtml(description)}</div>
+        ${controls}
+        ${win}
+        ${prize}
         <button id="mg-start-btn" style="background:${palette.sunDeep};color:${palette.ink};border:4px solid ${palette.ink};border-radius:14px;padding:14px 20px;min-height:56px;width:100%;font-size:22px;font-weight:700;cursor:pointer;touch-action:manipulation;font-family:inherit;">START MINI GAME</button>
       </div>
     `;
     document.body.appendChild(root);
 
     const btn = root.querySelector("#mg-start-btn") as HTMLButtonElement;
-    btn.onclick = () => {
+    const go = (): void => {
+      window.removeEventListener("keydown", onKey);
       root.remove();
       resolve(true);
     };
-
-    // Allow clicking outside or escape as cancel (back to board)
-    root.onclick = (e) => {
-      if (e.target === root) {
-        root.remove();
-        resolve(false);
+    btn.onclick = go;
+    // Enter starts; nothing cancels.
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Enter" && !e.repeat) {
+        e.preventDefault();
+        go();
       }
     };
-    const onEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        window.removeEventListener("keydown", onEsc);
-        root.remove();
-        resolve(false);
-      }
-    };
-    window.addEventListener("keydown", onEsc, { once: true });
+    window.addEventListener("keydown", onKey);
   });
 }
 

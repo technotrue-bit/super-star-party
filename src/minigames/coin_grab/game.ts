@@ -68,7 +68,11 @@ const KNOCK_SPEED = 4.2; // knocked coin launch speed
 const KNOCK_VY = 4.0; // knocked coin upward launch
 const COIN_GRAV = 9; // knocked coin flight gravity
 const COIN_R = 0.17; // single coin sphere radius
-const CPU_PILE_P = 0.7; // CPU chases the nearest pile 70% of the time
+const CPU_PILE_P = 0.8; // CPU chases the nearest pile 80% of the time
+/** CPUs dash at a pile this far away, by the human's burst + cooldown rule. */
+const CPU_DASH_MIN = 1.4;
+const CPU_DASH_MAX = 3.4;
+const CPU_DASH_EXTRA_CD = 0.4;
 const TIME_CAP = 30; // round length (framework limit is exactly 30)
 const BOING_GAP = 0.09; // sfx throttle between boings
 const POP_GAP = 0.12; // sfx throttle between land pops
@@ -94,6 +98,9 @@ interface Body {
   dashT: number;
   dashX: number;
   dashZ: number;
+  cpuDashCd: number;
+  /** Per-round coin flip for exact ties (never seat order). */
+  tieBreak: number;
   brain: CpuBrain;
   sim?: XzBody;
 }
@@ -291,68 +298,16 @@ const CORNERS = [
   "bottom:calc(188px + env(safe-area-inset-bottom, 0px));right:calc(12px + env(safe-area-inset-right, 0px))",
 ];
 
+/** Scores and the clock live on the shared scoreboard (ctx.hud). */
 function buildHud(state: RoundState): void {
-  injectHudStyles();
-  const root = document.createElement("div");
-  root.id = "ssp-coin-grab-hud";
-  root.style.cssText =
-    "position:fixed;inset:0;pointer-events:none;z-index:60;font-family:Fredoka,sans-serif;";
-  state.chips = state.ctx.players.map((p, i) => {
-    const el = document.createElement("div");
-    el.style.cssText =
-      `position:absolute;${CORNERS[i] ?? CORNERS[0]};display:flex;align-items:center;gap:7px;` +
-      `background:${palette.cream};border:3px solid ${palette.ink};border-radius:999px;` +
-      `padding:5px 14px;box-shadow:0 3px 0 ${palette.ink};font-weight:700;font-size:19px;color:${palette.ink};`;
-    const dot = document.createElement("span");
-    dot.style.cssText =
-      `width:14px;height:14px;border-radius:50%;background:${characterColor(p.kind)};` +
-      `border:2px solid ${palette.ink};display:inline-block;`;
-    const num = document.createElement("span");
-    num.textContent = "0";
-    num.style.cssText = "min-width:20px;text-align:center;display:inline-block;";
-    el.append(dot, num);
-    root.appendChild(el);
-    return { el, num, last: 0 };
-  });
-  const timer = document.createElement("div");
-  timer.style.cssText =
-    `position:absolute;top:12px;left:50%;transform:translateX(-50%);` +
-    `background:${palette.ink};color:${palette.cream};border-radius:999px;padding:6px 18px;` +
-    `font-weight:700;font-size:18px;letter-spacing:1px;display:flex;align-items:center;`;
-  const clock = document.createElement("span");
-  clock.className = "cg-clock";
-  timer.appendChild(clock);
-  timer.appendChild(document.createTextNode("30"));
-  root.appendChild(timer);
-  document.body.appendChild(root);
-  state.hudRoot = root;
-  state.timerEl = timer;
-  state.timerLast = -1;
-}
-
-function popChip(chip: Chip): void {
-  chip.el.classList.remove("cg-chip-pop");
-  void chip.el.offsetWidth;
-  chip.el.classList.add("cg-chip-pop");
+  state.ctx.hud.unit("coins");
+  for (const p of state.ctx.players) state.ctx.hud.score(p.id, 0);
+  state.ctx.hud.timer(TIME_CAP, TIME_CAP);
 }
 
 function updateHud(state: RoundState): void {
-  for (let i = 0; i < state.bodies.length; i++) {
-    const chip = state.chips[i];
-    if (!chip) continue;
-    const v = state.bodies[i].coins;
-    if (v !== chip.last) {
-      chip.last = v;
-      chip.num.textContent = String(v);
-      popChip(chip);
-    }
-  }
-  const left = Math.max(0, Math.ceil(TIME_CAP - state.t));
-  if (left !== state.timerLast && state.timerEl) {
-    state.timerLast = left;
-    state.timerEl.lastChild!.textContent = String(left);
-    state.timerEl.classList.toggle("cg-timer--hot", left <= 5);
-  }
+  for (const b of state.bodies) state.ctx.hud.score(b.id, b.coins);
+  state.ctx.hud.timer(Math.max(0, TIME_CAP - state.t), TIME_CAP);
 }
 
 /* ------------------------- radius indicators ----------------------- */
@@ -993,7 +948,7 @@ function freshBrain(): CpuBrain {
 function repick(brain: CpuBrain, state: RoundState): void {
   const ctx = state.ctx;
   brain.mode = ctx.rng() < CPU_PILE_P ? "pile" : "wander";
-  brain.speedMul = 0.75 + ctx.rng() * 0.2;
+  brain.speedMul = 0.82 + ctx.rng() * 0.18;
   brain.pickIn = Math.round((0.5 + ctx.rng() * 0.5) * 60);
   const a = ctx.rng() * Math.PI * 2;
   const r = 1.0 + ctx.rng() * (WALL_CLAMP - 1.0);
@@ -1030,7 +985,7 @@ function endGame(state: RoundState): void {
   publishDebug(state);
   const ctx = state.ctx;
   const ranking = [...state.bodies]
-    .sort((a, b) => b.coins - a.coins || a.id - b.id)
+    .sort((a, b) => b.coins - a.coins || a.tieBreak - b.tieBreak)
     .map((b) => b.id);
   ctx.finish(ranking);
   const winner = state.bodies.find((b) => b.id === ranking[0]);
@@ -1137,10 +1092,9 @@ function publishDebug(state: RoundState): void {
   d.hitStopSteps = state.hitStopSteps;
   d.seats = seatDebug(state);
   if (state.ended && !d.ranking) {
-    const ranking = [...state.bodies]
-      .sort((a, b) => b.coins - a.coins || a.id - b.id)
+    d.ranking = [...state.bodies]
+      .sort((a, b) => b.coins - a.coins || a.tieBreak - b.tieBreak)
       .map((b) => b.id);
-    d.ranking = ranking;
   }
 }
 
@@ -1150,8 +1104,15 @@ export const coinGrabMinigame: Minigame = {
   id: "coin_grab",
   name: "Coin Grab",
   genre: "collect",
-  howTo: "Hold and drag to chase the coins, and tap DASH for a short burst. Whoever has the most when time runs out wins.",
-  goal: "Grab the most coins",
+  howTo: "Steer with the stick (or drag) to scoop up coin piles; tap DASH for a short burst. Bump a rival hard and you might knock a coin loose. Most coins when time runs out wins.",
+  goal: "Grab the most coins!",
+  rules: {
+    format: "ffa",
+    length: "30 seconds",
+    win: "Most coins when time runs out",
+    touch: ["Move with the stick, or drag your finger", "Tap DASH to burst forward (short cooldown)", "Bump rivals to knock coins loose"],
+    keys: ["Arrows / WASD: move", "Space: dash", "Or hold the mouse to steer"],
+  },
   tap: "DASH",
   steer: true,
   tapCooldown: DASH_COOLDOWN,
@@ -1263,6 +1224,8 @@ export const coinGrabMinigame: Minigame = {
         dashT: 0,
         dashX: 0,
         dashZ: 1,
+        cpuDashCd: 0,
+        tieBreak: ctx.rng(),
         brain: freshBrain(),
       });
 
@@ -1298,6 +1261,12 @@ export const coinGrabMinigame: Minigame = {
       state.human.ty = y;
       state.human.idleT = 0;
       if (down) state.human.held = true;
+    };
+    // A held finger dragging keeps steering toward it (drags no longer arrive as presses).
+    ctx.input.drag = (x, y): void => {
+      state.human.tx = x;
+      state.human.ty = y;
+      state.human.idleT = 0;
     };
     ctx.input.stick = (x, y): void => {
       state.human.stickX = x;
@@ -1466,6 +1435,19 @@ function stepFixed(state: RoundState, dt: number): void {
       if (b.brain.pickIn <= 0) repick(b.brain, state);
       dir = cpuDir(state, b);
       maxSpeed = HUMAN_SPEED * b.brain.speedMul;
+      // CPUs dash too (same burst + cooldown as the human) toward a pile in range.
+      b.cpuDashCd = Math.max(0, b.cpuDashCd - dt);
+      if (b.brain.mode === "pile" && dir && b.dashT <= 0 && b.cpuDashCd <= 0) {
+        let near = Infinity;
+        for (const pl of state.piles) near = Math.min(near, Math.hypot(pl.x - b.x, pl.z - b.z));
+        if (near >= CPU_DASH_MIN && near <= CPU_DASH_MAX) {
+          b.dashT = DASH_BURST;
+          b.dashX = dir.x;
+          b.dashZ = dir.z;
+          b.cpuDashCd = DASH_COOLDOWN + CPU_DASH_EXTRA_CD;
+          b.animHoldT = Math.max(b.animHoldT, 0.45);
+        }
+      }
     }
 
     if (dir && (dir.x !== 0 || dir.z !== 0)) {
@@ -1485,7 +1467,7 @@ function stepFixed(state: RoundState, dt: number): void {
       }
     }
 
-    if (isLocalPlayer(ctx.players, b.id) && b.dashT > 0) {
+    if (b.dashT > 0) {
       b.dashT = Math.max(0, b.dashT - dt);
       b.vx = b.dashX * DASH_SPEED;
       b.vz = b.dashZ * DASH_SPEED;

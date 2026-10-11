@@ -283,8 +283,15 @@ export function takeContactPlace(): { x: number; z: number } | null {
 
 /** Input entry points — minigames assign handlers in setup(). */
 export interface MinigameInput {
-  /** Human pointer, screen coords normalized 0..1, down = press/release. */
+  /**
+   * Human pointer, screen coords normalized 0..1. Called once with
+   * down=true when a finger/button goes DOWN (a real press), and once with
+   * down=false when it lifts. Moving a held finger never calls this, so a
+   * press is always one tap.
+   */
   pointer(x: number, y: number, down: boolean): void;
+  /** A held finger/button moved (drag steering). Optional. */
+  drag?(x: number, y: number): void;
   /** Human keyboard action: 'up' | 'down' | 'left' | 'right' | 'confirm'. */
   key(action: string): void;
   /**
@@ -293,6 +300,40 @@ export interface MinigameInput {
    * Minigames that only listen for the 4-direction key actions can omit it.
    */
   stick?(x: number, y: number): void;
+}
+
+/**
+ * Shared on-screen scoreboard: one chip per player across the top (name,
+ * score, YOU outline) plus an optional countdown. Games feed it; the screen
+ * draws it the same way in every game, shows the scores on the results card,
+ * and uses them if a game ever has to be force-finished. Display only.
+ */
+export interface MinigameHud {
+  /** Score (or any short text) for a player id, e.g. 12 or "3/5". */
+  score(id: number, value: number | string): void;
+  /** Small tag on a player's chip ("OUT", "SOLO", "TEAM A", "DONE"), null clears. */
+  tag(id: number, text: string | null): void;
+  /** Countdown: seconds left of `total`. Null hides it. */
+  timer(remaining: number | null, total?: number): void;
+  /** Word after scores on the results card ("pops", "pts", "pairs"). */
+  unit(text: string): void;
+}
+
+/**
+ * What the START card shows (and the board's mini-game card). Short lines;
+ * a phone shows `touch`, a keyboard player sees `keys`.
+ */
+export interface MinigameRules {
+  /** "ffa" free-for-all, "1v3", "2v2". */
+  format: "ffa" | "1v3" | "2v2";
+  /** How long / how it ends: "30 seconds", "Race to the cake", "Last one standing". */
+  length: string;
+  /** How you win, one line. */
+  win: string;
+  /** Phone controls, one short line each ("Tap a balloon to pop it"). */
+  touch: string[];
+  /** Keyboard/mouse controls, one short line each ("Space: jump"). */
+  keys: string[];
 }
 
 export interface MinigameContext {
@@ -319,6 +360,8 @@ export interface MinigameContext {
    */
   finish(ranking: number[], coinWinners?: number[]): void;
   input: MinigameInput;
+  /** Shared scoreboard + countdown (see MinigameHud). */
+  hud: MinigameHud;
 }
 
 export interface Minigame {
@@ -347,6 +390,17 @@ export interface Minigame {
   tapCooldown?: number;
   /** Sound for a practice TAP. A live round keeps the game's own sound. */
   tapSfx?: string;
+  /**
+   * False hides the TAP button on phones (the game is played by tapping the
+   * world directly) while Space still does `tap` on a keyboard. Default true.
+   */
+  tapOnTouch?: boolean;
+  /** Holding TAP re-fires every 140ms. Off by default: one press, one action. */
+  tapRepeat?: boolean;
+  /** The MOVE stick steps a cursor (grid games) instead of steering analog. */
+  steerGrid?: boolean;
+  /** START card content: format, length, win line, controls. */
+  rules: MinigameRules;
   setup(ctx: MinigameContext): void;
   update(dt: number): void;
   teardown(): void;
@@ -418,7 +472,7 @@ export async function registerAllMinigames(): Promise<void> {
     if (!howTo) {
       throw new Error(`[minigames] '${mg.id}' is missing howTo (controls and how to win)`);
     }
-    registerMinigame({ id: mg.id, name: mg.name, description: howTo });
+    registerMinigame({ id: mg.id, name: mg.name, description: howTo, rules: mg.rules });
   }
   assertMinigameHowTos();
 }

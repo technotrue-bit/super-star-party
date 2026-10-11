@@ -34,6 +34,18 @@
 - 2-on-2: partner of chosen also gets double. — **Done**: the scaled pot (base 10 × host ×1–×4 × pack-owner ×N) is paid in full to every player on the winning side. A 2v2 partner receives the same coins as their teammate, including that pack double. A 1v3 solo win pays only the solo. A 3v1 win pays each of the three. A 4-player free-for-all still pays first place only. Losers get none of that pot. Each paid player also gains one minigame win. The results card shows +N on every paid row.
 - Lucky Card triples roulette odds. — **Done**: Using the Lucky Card sets that player's `itemFx.lucky` until the next minigame is actually dealt. `takeLuckyPlayers()` hands those ids to the roulette, which triples that pack's weight, then clears the flag. A round with no balloon pop leaves the ticket armed. The same card also arms `itemFx.luckyBlue` (+1 coin on the next blue, on top of a lucky-penny double).
 
+#### How every minigame plays (rework)
+Every game has a START card with its format (free-for-all / 1 vs 3), its length, the controls for the device you're on (phone or keyboard), the win line and the prize. The card can't be dismissed by a stray tap or Esc. A labelled practice beat with its own countdown comes before GO. During play a shared scoreboard across the top shows each player's score (yours in gold) and a countdown. The results card lists every player's final score. One tap is one action: dragging a finger or holding a button or key never repeats. A grid cursor steps once per stick push. Ties are never settled by seat order. Balance is set from Monte-Carlo sims: an average phone player wins about 30–40% against three CPUs, a skilled one about 60%.
+- **Balloon Pop**: everyone gets the same balloons. Tap balloons in your colour's column: +1, gold +3, dark bombs −2. Pace ramps up over 28 s.
+- **Bumper Balls**: last one inside the shrinking ring wins. CPUs dash by the same rule as you. When several players are outside the ring, the farthest out goes first.
+- **Cake Dash**: every lane has the same obstacles. A jump taken from the PERFECT band gives a short speed boost. First to the cake wins.
+- **Coin Cannon**: 12 coins and the same basket schedule on every belt. Coins fall straight down in 0.6 s. Fire when the basket crosses the FIRE! arrow. +1 per catch, +2 for dead centre. Each basket takes one coin.
+- **Coin Grab**: most coins in 30 s. CPUs dash like you. Hard bumps can knock coins loose.
+- **Drum Solo**: everyone drums the same chart. PERFECT ±60 ms +3, GOOD ±120 ms +2, OK ±180 ms +1. CPUs are judged by the same windows.
+- **Memory Match**: memorize 12 cards for 3.5 s, then play 5 rounds of "find the twin". Right +1, fastest right +2.
+- **Pipe Puzzle**: everyone races on identical 4×4 puzzles. Tap a pipe to turn it clockwise. Each puzzle you link scores one and brings up the next.
+- **Push of War**: 1 vs 3 mash. A solo tap pushes 2.3× a trio tap, and the solo gets a surge every 20 taps. Push the crate into the other team's goal, or have it in their half at the 10 s buzzer.
+
 ### Items
 **Done** for this slice. Dice stay outcome-first: the face is chosen first (character die, or `__forcedDice`), and dash / poison change the movement total afterward. The total never drops below 1. CPUs and `__SSP__.autoplay(true)` use one legal pre-roll item per turn, chosen with `rng` (`pickAutoItem`). A manual human gets the item bar and, for aimed items, a touch picker. Poison is not in that pre-roll draw.
 

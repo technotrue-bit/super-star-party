@@ -56,6 +56,9 @@ const BOING_GAP = 0.09; // sfx throttle between boings
 const POINTER_AUTO_RELEASE = 0.5; // held pointer with no events => release
 const KEY_STALE = 0.35; // keyboard steer drops after this long without keys
 const WALL_CLAMP = ARENA_R - CHAR_R - 0.05;
+/** CPUs dash at a rival closer than this, and wait a little longer than the human between dashes. */
+const CPU_DASH_RANGE = 1.9;
+const CPU_DASH_EXTRA_CD = 0.5;
 
 const SPAWN_ANGLES = [Math.PI / 4, (3 * Math.PI) / 4, (5 * Math.PI) / 4, (7 * Math.PI) / 4];
 
@@ -79,6 +82,8 @@ interface Body {
   dashT: number; // seconds left in a human dash burst
   dashX: number;
   dashZ: number;
+  /** CPU dash cooldown (the human's lives in HumanInput.dashCd). */
+  cpuDashCd: number;
   brain: CpuBrain;
   sim?: XzBody;
 }
@@ -154,8 +159,15 @@ export const bumperBallsMinigame: Minigame = {
   id: "bumper_balls",
   name: "Bumper Balls",
   genre: "survival",
-  howTo: "Hold and drag to steer. Tap DASH to burst into the other players and knock them out of the ring. Last one still in wins.",
-  goal: "Knock everyone out of the ring",
+  howTo: "Steer with the stick (or drag). Tap DASH to burst into the others and knock them out. The ring shrinks, and anyone outside it is out. Last one still in wins.",
+  goal: "Stay in the ring. Knock the others out!",
+  rules: {
+    format: "ffa",
+    length: "Last one standing",
+    win: "Be the last player inside the shrinking ring",
+    touch: ["Move with the stick, or drag your finger", "Tap DASH to burst forward (short cooldown)"],
+    keys: ["Arrows / WASD: move", "Space: dash", "Or hold the mouse to steer"],
+  },
   tap: "DASH",
   steer: true,
   tapCooldown: DASH_COOLDOWN,
@@ -262,6 +274,7 @@ export const bumperBallsMinigame: Minigame = {
         dashT: 0,
         dashX: 0,
         dashZ: 1,
+        cpuDashCd: 0,
         brain: freshBrain(),
       });
     });
@@ -283,51 +296,9 @@ export const bumperBallsMinigame: Minigame = {
       ctx.players.map((p) => characterColor(p.kind))
     );
 
-    /* ---- in-game HUD: 4 portraits with alive/OUT state + round timer ---- */
-    // Custom chips using the existing ssp-avatar + ssp-hud-chip styles
-    const hudWrap = document.createElement("div");
-    hudWrap.style.cssText = "position:absolute;top:8px;left:0;right:0;z-index:45;display:flex;justify-content:center;gap:8px;pointer-events:none;";
-    state.hudEls = { el: hudWrap, update: () => {}, showBanner: () => ({ el: document.createElement("div"), destroy: () => {} }), destroy: () => { hudWrap.remove(); } };
-    state.hudTimerEl = null;
-    state.hudTimerAt = 0;
-
-    // Build 4 portrait chips
-    ctx.players.forEach((p, i) => {
-      const chip = document.createElement("div");
-      chip.className = "ssp-hud-chip";
-      chip.style.opacity = "1";
-      chip.dataset.playerId = String(p.id);
-      const avatar = ui.playerAvatar(p.kind, characterColor(p.kind));
-      avatar.classList.add("ssp-hud-chip__avatar");
-      const nameEl = document.createElement("div");
-      nameEl.className = "ssp-hud-chip__name";
-      nameEl.textContent = p.name;
-      chip.append(avatar, nameEl);
-      hudWrap.appendChild(chip);
-    });
-    document.getElementById("root")?.appendChild(hudWrap) ?? document.body.appendChild(hudWrap);
-    // Narrow phone: shrink the chip row to fit left of the round timer
-    // instead of running off both edges.
-    hudWrap.style.left = "6px";
-    hudWrap.style.right = "70px";
-    hudWrap.style.gap = "4px";
-    hudWrap.style.transformOrigin = "top center";
-    const fitHud = (): void => {
-      hudWrap.style.transform = "";
-      hudWrap.style.justifyContent = "flex-start"; // overflow only to the right while measuring
-      const avail = hudWrap.clientWidth;
-      const natural = hudWrap.scrollWidth;
-      hudWrap.style.justifyContent = "center";
-      if (natural > avail && natural > 0) hudWrap.style.transform = `scale(${(avail / natural).toFixed(3)})`;
-    };
-    fitHud();
-
-    // Round timer
-    const timerWrap = document.createElement("div");
-    timerWrap.style.cssText = "position:absolute;top:8px;right:12px;z-index:45;font-weight:700;font-size:22px;color:#fff;text-shadow:0 2px 0 #2B1D4E,2px 0 0 #2B1D4E,-2px 0 0 #2B1D4E,0 -2px 0 #2B1D4E;pointer-events:none;";
-    timerWrap.textContent = "0.0s";
-    document.getElementById("root")?.appendChild(timerWrap) ?? document.body.appendChild(timerWrap);
-    state.hudTimerEl = timerWrap;
+    /* ---- shared scoreboard: who's still in, and how long until the ring shuts ---- */
+    for (const p of ctx.players) ctx.hud.score(p.id, "IN");
+    ctx.hud.timer(RING_DURATION, RING_DURATION);
 
     /* ---- human input (screen routes pointer + keys while playing) ---- */
     ctx.input.pointer = (x, y, down): void => {
@@ -335,6 +306,12 @@ export const bumperBallsMinigame: Minigame = {
       state.human.ty = y;
       state.human.idleT = 0;
       if (down) state.human.held = true;
+    };
+    // A held finger dragging keeps steering toward it (drags no longer arrive as presses).
+    ctx.input.drag = (x, y): void => {
+      state.human.tx = x;
+      state.human.ty = y;
+      state.human.idleT = 0;
     };
     ctx.input.stick = (x, y): void => {
       state.human.stickX = x;
@@ -477,6 +454,21 @@ function stepFixed(state: RoundState, dt: number): void {
       }
       dir = cpuDesiredDir(b, rivals, ringR, b.brain);
       maxSpeed = HUMAN_SPEED * b.brain.speedMul;
+      // CPUs dash too, by the same rule as the human (burst + cooldown):
+      // a willing CPU hunting a rival close by bursts at it.
+      b.cpuDashCd = Math.max(0, b.cpuDashCd - dt);
+      if (b.brain.dashWill && b.brain.strategy === "chase" && b.cpuDashCd <= 0 && dir && b.dashT <= 0) {
+        let near = Infinity;
+        for (const o of rivals) near = Math.min(near, Math.hypot(o.x - b.x, o.z - b.z));
+        if (near < CPU_DASH_RANGE) {
+          b.dashT = DASH_BURST;
+          b.dashX = dir.x;
+          b.dashZ = dir.z;
+          b.cpuDashCd = DASH_COOLDOWN + CPU_DASH_EXTRA_CD;
+          b.animHoldT = Math.max(b.animHoldT, 0.45);
+          ctx.characters[b.id]?.anim.jump();
+        }
+      }
     }
 
     if (dir && (dir.x !== 0 || dir.z !== 0)) {
@@ -496,7 +488,7 @@ function stepFixed(state: RoundState, dt: number): void {
       }
     }
 
-    if (isLocalPlayer(ctx.players, b.id) && b.dashT > 0) {
+    if (b.dashT > 0) {
       b.dashT = Math.max(0, b.dashT - dt);
       b.vx = b.dashX * DASH_SPEED;
       b.vz = b.dashZ * DASH_SPEED;
@@ -600,11 +592,15 @@ function stepFixed(state: RoundState, dt: number): void {
      deterministic steps, and once the ring is below the footprint radius
      (r < CHAR_R) at most one player can fit inside, so the finale is a
      forced knockout, never a frame-timing tiebreak. ---- */
+  // Farthest past the ring goes first (an exact tie falls back to id).
   let outBody: Body | null = null;
+  let outD = 0;
   for (const b of state.bodies) {
     if (!b.alive) continue;
-    if (Math.hypot(b.x, b.z) > ringR && (outBody === null || b.id < outBody.id)) {
+    const d = Math.hypot(b.x, b.z);
+    if (d > ringR && (outBody === null || d > outD + 1e-9)) {
       outBody = b;
+      outD = d;
     }
   }
   if (outBody) eliminate(state, outBody);
@@ -652,27 +648,8 @@ function stepFixed(state: RoundState, dt: number): void {
 
   state.arena?.update(t, ringR, danger);
 
-  /* ---- HUD: timer + alive/OUT state ---- */
-  if (state.hudTimerEl) {
-    state.hudTimerEl.textContent = `${t.toFixed(1)}s`;
-  }
-  if (state.hudEls) {
-    const hudWrap = state.hudEls.el as HTMLElement;
-    ctx.players.forEach((p) => {
-      const chip = hudWrap.querySelector<HTMLElement>(`[data-player-id="${p.id}"]`);
-      if (!chip) return;
-      const body = state.bodies[p.id];
-      if (body && body.alive) {
-        chip.style.opacity = "1";
-        chip.style.transform = "";
-        chip.style.filter = "";
-      } else {
-        chip.style.opacity = "0.35";
-        chip.style.transform = "scale(0.85)";
-        chip.style.filter = "grayscale(0.7)";
-      }
-    });
-  }
+  /* ---- HUD: ring countdown ---- */
+  ctx.hud.timer(Math.max(0, RING_DURATION - t), RING_DURATION);
 
   publishDebug(state, t, ringR);
 }
@@ -762,6 +739,8 @@ function eliminate(state: RoundState, b: Body): void {
   b.sim?.setEnabled(false);
   state.aliveCount--;
   state.elimOrder.push(b.id);
+  state.ctx.hud.score(b.id, "OUT");
+  state.ctx.hud.tag(b.id, "OUT");
   state.elimRingR.push(+ringRadiusAt(state.ctx.time).toFixed(4));
   state.ctx.characters[b.id]?.anim.sad();
   state.ctx.playSfx("pop", { volume: 0.85, pitch: 0.85 + b.id * 0.06 });

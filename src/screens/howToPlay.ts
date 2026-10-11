@@ -237,7 +237,7 @@ const howToImpl: HowToState & Screen = {
         "🎮",
         palette.candy,
         "MINIGAMES",
-        "Pass or land on a <b>Minigame Balloon</b> and you pay its price (<b>5</b> or <b>10</b> coins). If anyone pops one, everybody plays a minigame after the round. No pop, no minigame. The winner earns <b>+10 coins</b>."
+        "Pass or land on a <b>Minigame Balloon</b> and you pay its price (<b>5</b> or <b>10</b> coins). If anyone pops one, everybody plays a minigame after the round. No pop, no minigame. The winner earns <b>10 coins or more</b> (the mini-game card shows the prize)."
       )
     );
 

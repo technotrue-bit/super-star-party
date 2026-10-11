@@ -222,22 +222,20 @@ export function rollKind(r: number): ObstacleKind {
 }
 
 /**
- * Draw a CPU reaction plan for an obstacle in `lane`. Lane 0 is the human
- * (nearest the camera) and gets no plan. Skill gates both the attempt
- * chance and the mis-time chance (low skill ≈ 20% failure, high ≈ 14%).
+ * Draw a CPU reaction plan for one obstacle. `skill` is 0..1 (per CPU).
+ * A CPU either misses the jump entirely (16% at skill 0, 8% at skill 1) or
+ * jumps cleanly; half its clean jumps are PERFECT (taken from the middle of
+ * the ideal band), the rest early or late but still clear.
  */
-export function cpuPlanFor(
-  lane: number,
-  skill: number,
-  rng: () => number
-): CpuPlan | null {
-  if (lane === 0) return null;
-  const attempt = rng() < 0.7 + 0.24 * skill;
-  if (!attempt) return { attempt: false, mistimed: false, lateBy: 0, triggerDist: 0 };
-  const mistimed = rng() < 0.22 - 0.13 * skill;
-  const lateBy = mistimed ? 0.26 + rng() * 0.22 : 0;
-  // Clean-jump window is ~2.2..2.55u; low skill may draw a slightly late
-  // trigger but the clamp keeps clean jumps reliable.
-  const triggerDist = Math.min(2.55, Math.max(2.2, 2.5 + (skill - 0.9) * 0.6 + (rng() - 0.5) * 0.4));
-  return { attempt: true, mistimed, lateBy, triggerDist };
+export function cpuPlanFor(skill: number, rng: () => number): CpuPlan {
+  const miss = rng() < 0.16 - 0.08 * skill;
+  if (miss) return { attempt: false, mistimed: false, lateBy: 0, triggerDist: 0 };
+  const perfect = rng() < 0.5;
+  const u = rng();
+  const triggerDist = perfect
+    ? 1.95 + u * 0.5 // inside the PERFECT band
+    : u < 0.5
+      ? 1.45 + u * 0.7 // a little late
+      : 2.65 + (u - 0.5) * 0.6; // a little early
+  return { attempt: true, mistimed: false, lateBy: 0, triggerDist };
 }

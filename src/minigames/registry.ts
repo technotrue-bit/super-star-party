@@ -34,6 +34,8 @@ export interface MinigameEntry {
    * Copied from the minigame's required `howTo` when the module loads.
    */
   description?: string;
+  /** START card content, copied from the module (see MinigameRules). */
+  rules?: import("./framework").MinigameRules;
 }
 
 const REGISTRY: MinigameEntry[] = [];
@@ -59,6 +61,7 @@ export function registerMinigame(entry: MinigameEntry): void {
     if (entry.name) existing.name = entry.name;
     existing.pack = pack;
     if (entry.description) existing.description = entry.description;
+    if (entry.rules) existing.rules = entry.rules;
     return;
   }
   REGISTRY.push({ ...entry, pack });
@@ -83,6 +86,11 @@ export function minigameCatalog(): { id: string; name: string; pack: string; des
 export function minigameDescription(id: string): string | undefined {
   const text = REGISTRY.find((e) => e.id === id)?.description?.trim();
   return text || undefined;
+}
+
+/** Registry entry for an id (rules, how-to), if registered. */
+export function minigameEntry(id: string): MinigameEntry | undefined {
+  return REGISTRY.find((e) => e.id === id);
 }
 
 /** Every registered minigame must have a non-empty how-to. */

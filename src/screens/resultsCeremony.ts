@@ -103,7 +103,7 @@ const CONFETTI_T = 1.05;
 const COIN_T = 1.25;
 const COIN_DUR = 1.2;
 const RANKCARD_T = 2.5;
-const DONE_T = 3.6;
+const DONE_T = 5.2; // long enough to read the scores on the results card
 
 /* ------------------------------------------------------------------ */
 /*  Results backdrop (own scene dressing, built once per ceremony)     */
@@ -194,6 +194,10 @@ export function startResultsCeremony(opts: {
   minigameName: string;
   /** Minigame objects hidden while the results scene shows (restored on destroy). */
   hide?: THREE.Object3D[];
+  /** Final scoreboard values by player id (shown on each row). */
+  scores?: Map<number, number | string>;
+  /** Unit after the score ("pops", "pts"). */
+  unit?: string;
 }): ResultsCeremony {
   const { chars, ranking, winner, coins, minigameName } = opts;
   const paidIds = (opts.paidIds && opts.paidIds.length > 0 ? opts.paidIds : [winner]).filter(
@@ -304,7 +308,16 @@ export function startResultsCeremony(opts: {
     z-index: 95; pointer-events: none;
     transition: transform 0.45s cubic-bezier(.34,1.56,.64,1);
   `;
-  bannerEl.textContent = paidIds.length > 1 ? "TEAM WINS!" : winnerPlayer ? `${labelDoes(winnerPlayer.id, "WIN", "WINS")}!` : "?";
+  bannerEl.textContent =
+    paidIds.length === 3
+      ? "THE TRIO WINS!"
+      : paidIds.length === 2
+        ? `${paidIds.map((id) => playerLabel(id).toUpperCase()).join(" & ")} WIN!`
+        : paidIds.length > 1
+          ? "TEAM WINS!"
+          : winnerPlayer
+            ? `${labelDoes(winnerPlayer.id, "WIN", "WINS")}!`
+            : "?";
   bannerEl.dataset.sspHeadline = "results";
   document.body.appendChild(bannerEl);
 
@@ -331,7 +344,7 @@ export function startResultsCeremony(opts: {
     z-index: 94; pointer-events: none; opacity: 0;
     transition: transform 0.4s cubic-bezier(.34,1.56,.64,1), opacity 0.3s ease-out;
     font-size: 15px; font-weight: 600; color: ${palette.ink};
-    display: flex; flex-direction: column; gap: 4px; min-width: 200px;
+    display: flex; flex-direction: column; gap: 4px; min-width: min(260px, 88vw);
   `;
   const cardHeader = document.createElement("div");
   cardHeader.style.cssText = "text-align:center; font-weight:700; margin-bottom:4px;";
@@ -343,17 +356,35 @@ export function startResultsCeremony(opts: {
     const p = match.players[ordered[i]];
     const color = characterColor(p?.kind ?? "pip");
     const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "4.";
+    // Ink text on cream, with the player's colour as a dot: yellow or mint
+    // names are unreadable on cream.
     const row = document.createElement("div");
-    row.style.color = color;
-    row.style.fontWeight = "700";
-    row.style.textShadow = `0 1px 0 ${palette.ink}`;
+    row.style.cssText = `display:flex;align-items:center;gap:7px;font-weight:700;color:${palette.ink};`;
     row.dataset.sspPlayer = String(ordered[i]);
-    let rowText = `${medal} ${p ? playerLabel(p.id) : "?"}`;
+    const medalEl = document.createElement("span");
+    medalEl.textContent = medal;
+    medalEl.style.cssText = "width:22px;text-align:center;";
+    const dot = document.createElement("span");
+    dot.style.cssText = `width:12px;height:12px;border-radius:50%;background:${color};border:2px solid ${palette.ink};flex:0 0 auto;`;
+    const nameEl = document.createElement("span");
+    nameEl.textContent = p ? playerLabel(p.id) : "?";
+    nameEl.style.flex = "1 1 auto";
+    row.append(medalEl, dot, nameEl);
+    const score = opts.scores?.get(ordered[i]);
+    if (score !== undefined) {
+      const scoreEl = document.createElement("span");
+      scoreEl.textContent = opts.unit ? `${score} ${opts.unit}` : String(score);
+      scoreEl.style.cssText = `margin-left:10px;font-variant-numeric:tabular-nums;white-space:nowrap;color:${palette.inkSoft};`;
+      scoreEl.dataset.sspScore = String(score);
+      row.appendChild(scoreEl);
+    }
     if (paid.has(ordered[i])) {
-      rowText += ` +${coins}c`;
+      const coinEl = document.createElement("span");
+      coinEl.textContent = `+${coins}c`;
+      coinEl.style.cssText = `margin-left:8px;white-space:nowrap;color:${palette.sunDeep};text-shadow:0 1px 0 ${palette.ink};`;
+      row.appendChild(coinEl);
       row.dataset.sspPaid = String(coins);
     }
-    row.textContent = rowText;
     cardEl.appendChild(row);
   }
   document.body.appendChild(cardEl);

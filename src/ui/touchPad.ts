@@ -12,8 +12,13 @@ export interface TouchPad {
   show(): void;
   hide(): void;
   destroy(): void;
-  /** Verb null hides TAP. steer false hides MOVE. keys is the desktop hint. */
-  configure(opts: { verb: string | null; steer: boolean; keys: string }): void;
+  /**
+   * Verb null hides TAP. steer false hides MOVE. keys is the desktop hint.
+   * repeat: holding TAP fires again every 140ms (off by default: one press,
+   * one action). grid: the stick steps a cursor (one step, then a slow
+   * repeat while held) instead of streaming a direction every frame.
+   */
+  configure(opts: { verb: string | null; steer: boolean; keys: string; repeat?: boolean; grid?: boolean; touchVerb?: boolean }): void;
   /** 1 = just fired, 0 = ready. Drives the cooldown ring. */
   setCooldown(ratio: number): void;
   pulse(): void;
@@ -202,6 +207,12 @@ export function createTouchPad(opts: {
   let actionTimer = 0;
   let verbText: string | null = "TAP";
   let steerOn = true;
+  let repeatOn = false;
+  let gridOn = false;
+  let touchVerb = true;
+  // Grid stepping: the direction last sent and when it may repeat.
+  let gridLast: "up" | "down" | "left" | "right" | null = null;
+  let gridNextAt = 0;
 
   const placeKnob = (dx: number, dy: number): void => {
     const max = 36;
@@ -216,7 +227,22 @@ export function createTouchPad(opts: {
     raf = 0;
     if (stickId === null) return;
     const action = steerAction(nx, ny);
-    if (action) opts.onSteer(action);
+    if (gridOn) {
+      // One step on a new direction, then a held repeat (0.34s, then every 0.17s).
+      const now = performance.now();
+      if (action !== gridLast) {
+        gridLast = action;
+        if (action) {
+          opts.onSteer(action);
+          gridNextAt = now + 340;
+        }
+      } else if (action && now >= gridNextAt) {
+        opts.onSteer(action);
+        gridNextAt = now + 170;
+      }
+    } else if (action) {
+      opts.onSteer(action);
+    }
     opts.onStick?.(nx, ny);
     raf = window.requestAnimationFrame(tick);
   };
@@ -242,6 +268,7 @@ export function createTouchPad(opts: {
     stickId = null;
     nx = 0;
     ny = 0;
+    gridLast = null;
     knob.style.transform = "";
     if (raf) window.cancelAnimationFrame(raf);
     raf = 0;
@@ -267,7 +294,7 @@ export function createTouchPad(opts: {
     e.preventDefault();
     e.stopPropagation();
     opts.onAction();
-    actionTimer = window.setInterval(() => opts.onAction(), 140);
+    if (repeatOn) actionTimer = window.setInterval(() => opts.onAction(), 140);
   };
   const onActUp = (e: PointerEvent): void => {
     if (e.pointerId !== actionId) return;
@@ -285,7 +312,7 @@ export function createTouchPad(opts: {
 
   const applyLayout = (): void => {
     const touch = prefersTouchControls();
-    const showAct = touch && !!verbText;
+    const showAct = touch && !!verbText && touchVerb;
     const showStick = touch && steerOn;
     act.style.display = showAct ? "flex" : "none";
     act.setAttribute("aria-hidden", showAct ? "false" : "true");
@@ -313,6 +340,9 @@ export function createTouchPad(opts: {
     configure(next): void {
       verbText = next.verb;
       steerOn = next.steer;
+      repeatOn = next.repeat === true;
+      gridOn = next.grid === true;
+      touchVerb = next.touchVerb !== false;
       const word = next.verb ?? "";
       actLabel.textContent = word;
       act.setAttribute("aria-label", word || "Action");

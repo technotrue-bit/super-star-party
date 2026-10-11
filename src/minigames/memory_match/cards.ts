@@ -1,35 +1,40 @@
 /**
- * SUPER STAR PARTY — memory_match: card + texture + particle kit.
+ * SUPER STAR PARTY — memory_match: card art, textures and particle kit.
  *
- * Everything here is PROPORTIONAL to the palette and 100% procedural
- * (canvas drawing, no assets). Shared module-level textures/geometry are
- * created once and intentionally NEVER disposed (same convention as
- * characters/cel.ts) — teardown() only removes scene objects and disposes
- * per-instance materials/geometries.
+ * Everything is procedural canvas drawing (no assets). Shared module-level
+ * textures and geometry are created once and never disposed (same convention
+ * as characters/cel.ts); teardown only disposes per-instance materials.
+ *
+ * Cards lie FLAT on the table. A card is a thin box: its +Y face is the
+ * patterned back, its -Y face the icon. rotation.x = 0 shows the back
+ * (face-down); rotation.x = PI shows the icon upright to a camera looking
+ * down from +Z (face-up).
  */
 import * as THREE from "three";
 import { palette, hex } from "../../config/palette";
 import { celGradient } from "../../characters/cel";
-import { attachStaticBoundsTree } from "../../render/meshBvh";
 
 /* ------------------------------------------------------------------ */
-/*  Card dimensions / layout constants                                 */
+/*  Card dimensions / layout                                           */
 /* ------------------------------------------------------------------ */
 
-export const CARD_W = 0.7;
-export const CARD_H = 0.92;
-export const CARD_T = 0.06;
-export const GRID_ROWS = 4;
+/** Card width (x), depth (z) and thickness, in world units. */
+export const CARD_W = 1.0;
+export const CARD_D = 1.25;
+export const CARD_T = 0.05;
 export const GRID_COLS = 4;
-export const GRID_STEP = 1.08;
-/** Y of the tabletop surface cards stand on. */
-export const TABLE_TOP_Y = 0.82;
+export const GRID_ROWS = 3;
+export const STEP_X = 1.13;
+export const STEP_Z = 1.38;
+/** Felt surface height; cards rest on it. */
+export const TABLE_Y = 0.3;
+export const CARD_Y = TABLE_Y + CARD_T / 2;
 
-/** World position of a grid cell (row 0 = far row, z negative). */
+/** World x/z of a grid cell (row 0 = far row, toward -z). */
 export function gridPos(row: number, col: number): { x: number; z: number } {
   return {
-    x: (col - (GRID_COLS - 1) / 2) * GRID_STEP,
-    z: (row - (GRID_ROWS - 1) / 2) * GRID_STEP,
+    x: (col - (GRID_COLS - 1) / 2) * STEP_X,
+    z: (row - (GRID_ROWS - 1) / 2) * STEP_Z,
   };
 }
 
@@ -37,10 +42,10 @@ export function gridPos(row: number, col: number): { x: number; z: number } {
 /*  Canvas helpers                                                     */
 /* ------------------------------------------------------------------ */
 
-function makeCanvas(size: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
+function makeCanvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = w;
+  canvas.height = h;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("2D canvas context unavailable");
   return [canvas, ctx];
@@ -96,14 +101,19 @@ function starPath(
 const INK = palette.ink;
 const CREAM = palette.cream;
 
-/** Card face chrome: cream ground + thick ink rounded border. */
-function drawCardChrome(ctx: CanvasRenderingContext2D, size: number): void {
+/** Face texture size: the icon art is drawn in a 128 box, centred in a 128x160 card. */
+const TEX_W = 128;
+const TEX_H = 160;
+const ICON_Y = (TEX_H - TEX_W) / 2;
+
+/** Card chrome: cream ground + thick ink rounded border. */
+function drawCardChrome(ctx: CanvasRenderingContext2D): void {
   ctx.fillStyle = CREAM;
-  roundRect(ctx, 2, 2, size - 4, size - 4, 14);
+  roundRect(ctx, 2, 2, TEX_W - 4, TEX_H - 4, 14);
   ctx.fill();
   ctx.lineWidth = 7;
   ctx.strokeStyle = INK;
-  roundRect(ctx, 7, 7, size - 14, size - 14, 11);
+  roundRect(ctx, 7, 7, TEX_W - 14, TEX_H - 14, 11);
   ctx.stroke();
 }
 
@@ -360,51 +370,54 @@ const ICON_DRAWERS: Record<IconId, (ctx: CanvasRenderingContext2D, s: number) =>
 };
 
 /* ------------------------------------------------------------------ */
-/*  Shared textures & geometry (module-level, never disposed)          */
+/*  Shared textures, geometry and materials (never disposed)           */
 /* ------------------------------------------------------------------ */
-
-const TEX_SIZE = 128;
 
 const iconTextures = new Map<IconId, THREE.CanvasTexture>();
 for (const id of ICON_IDS) {
-  const [canvas, ctx] = makeCanvas(TEX_SIZE);
-  drawCardChrome(ctx, TEX_SIZE);
-  ICON_DRAWERS[id](ctx, TEX_SIZE);
+  const [canvas, ctx] = makeCanvas(TEX_W, TEX_H);
+  drawCardChrome(ctx);
+  ctx.save();
+  ctx.translate(0, ICON_Y);
+  ICON_DRAWERS[id](ctx, TEX_W);
+  ctx.restore();
   iconTextures.set(id, toTexture(canvas));
 }
 
-/** Face-down back: candy stripes + gold star, same chrome border. */
+/** Face-down back: candy stripes + a round gold seal (looks the same at any turn). */
 function makeBackTexture(): THREE.CanvasTexture {
-  const [canvas, ctx] = makeCanvas(TEX_SIZE);
-  drawCardChrome(ctx, TEX_SIZE);
+  const [canvas, ctx] = makeCanvas(TEX_W, TEX_H);
+  drawCardChrome(ctx);
   ctx.save();
-  ctx.beginPath();
-  roundRect(ctx, 10, 10, TEX_SIZE - 20, TEX_SIZE - 20, 9);
+  roundRect(ctx, 10, 10, TEX_W - 20, TEX_H - 20, 9);
   ctx.clip();
-  ctx.translate(TEX_SIZE / 2, TEX_SIZE / 2);
+  ctx.translate(TEX_W / 2, TEX_H / 2);
   ctx.rotate(Math.PI / 4);
   const stripeW = 16;
-  for (let x = -TEX_SIZE * 1.5; x < TEX_SIZE * 1.5; x += stripeW * 2) {
-    ctx.fillStyle = palette.mint;
-    ctx.fillRect(x, -TEX_SIZE, stripeW, TEX_SIZE * 2);
-    ctx.fillStyle = palette.candy;
-    ctx.fillRect(x + stripeW, -TEX_SIZE, stripeW, TEX_SIZE * 2);
+  for (let x = -TEX_H * 1.5; x < TEX_H * 1.5; x += stripeW * 2) {
+    ctx.fillStyle = palette.berry;
+    ctx.fillRect(x, -TEX_H, stripeW, TEX_H * 2);
+    ctx.fillStyle = palette.berryDeep;
+    ctx.fillRect(x + stripeW, -TEX_H, stripeW, TEX_H * 2);
   }
   ctx.restore();
-  // center gold star over the stripes
-  starPath(ctx, TEX_SIZE / 2, TEX_SIZE / 2, 34);
+  ctx.beginPath();
+  ctx.arc(TEX_W / 2, TEX_H / 2, 34, 0, Math.PI * 2);
   ctx.fillStyle = palette.sun;
   ctx.fill();
-  ctx.lineWidth = 5;
+  ctx.lineWidth = 6;
   ctx.strokeStyle = INK;
   ctx.stroke();
+  starPath(ctx, TEX_W / 2, TEX_H / 2 + 2, 22);
+  ctx.fillStyle = palette.white;
+  ctx.fill();
   return toTexture(canvas);
 }
 const backTexture = makeBackTexture();
 
-/** Small gold star used by confetti + per-player pair pips. */
+/** Small white-edged gold star for the sparkle bursts. */
 function makeStarSpriteTexture(): THREE.CanvasTexture {
-  const [canvas, ctx] = makeCanvas(64);
+  const [canvas, ctx] = makeCanvas(64, 64);
   starPath(ctx, 32, 34, 26);
   ctx.fillStyle = "#FFFFFF";
   ctx.fill();
@@ -413,36 +426,76 @@ function makeStarSpriteTexture(): THREE.CanvasTexture {
   ctx.fill();
   return toTexture(canvas);
 }
-export const starSpriteTexture = makeStarSpriteTexture();
+const starSpriteTexture = makeStarSpriteTexture();
 
-const cardGeom = new THREE.BoxGeometry(CARD_W, CARD_H, CARD_T);
-// Shared pick target. A 12-triangle box is under the cutoff (a tree made
-// this pick slower), so this builds nothing and the raycast stays stock.
-void attachStaticBoundsTree(cardGeom);
+/**
+ * Rounded-rect outline (ink rim around a white band, clear middle) for the
+ * target frame, the keyboard cursor and the player's own pick. Tinted by
+ * the material colour: the white band takes the tint, the ink rim stays dark.
+ */
+function makeFrameTexture(): THREE.CanvasTexture {
+  const [canvas, ctx] = makeCanvas(TEX_W + 32, TEX_H + 32);
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 22;
+  ctx.strokeStyle = INK;
+  roundRect(ctx, 12, 12, TEX_W + 8, TEX_H + 8, 20);
+  ctx.stroke();
+  ctx.lineWidth = 12;
+  ctx.strokeStyle = "#FFFFFF";
+  roundRect(ctx, 12, 12, TEX_W + 8, TEX_H + 8, 20);
+  ctx.stroke();
+  return toTexture(canvas);
+}
+export const frameTexture = makeFrameTexture();
+
+/** Keyboard cursor: four thick corner brackets (a different shape from the frames). */
+function makeCursorTexture(): THREE.CanvasTexture {
+  const W = TEX_W + 32;
+  const H = TEX_H + 32;
+  const [canvas, ctx] = makeCanvas(W, H);
+  const arm = 44;
+  const m = 12;
+  const corners: Array<[number, number, number, number]> = [
+    [m, m, 1, 1],
+    [W - m, m, -1, 1],
+    [m, H - m, 1, -1],
+    [W - m, H - m, -1, -1],
+  ];
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const [width, color] of [
+    [24, INK],
+    [13, "#FFFFFF"],
+  ] as const) {
+    ctx.lineWidth = width;
+    ctx.strokeStyle = color;
+    for (const [x, y, sx, sy] of corners) {
+      ctx.beginPath();
+      ctx.moveTo(x, y + sy * arm);
+      ctx.lineTo(x, y);
+      ctx.lineTo(x + sx * arm, y);
+      ctx.stroke();
+    }
+  }
+  return toTexture(canvas);
+}
+export const cursorTexture = makeCursorTexture();
+/** Frame plane size for a card scaled by `pad` (the canvas has a 16 px margin each side). */
+export function frameSize(pad = 1): { w: number; d: number } {
+  return { w: CARD_W * ((TEX_W + 32) / TEX_W) * pad, d: CARD_D * ((TEX_H + 32) / TEX_H) * pad };
+}
+
+const cardGeom = new THREE.BoxGeometry(CARD_W, CARD_T, CARD_D);
 
 function toon(mat: THREE.MeshToonMaterialParameters): THREE.MeshToonMaterial {
   return new THREE.MeshToonMaterial({ ...mat, gradientMap: celGradient });
 }
 
 /**
- * Card faces are "printed" flat canvas art (chrome border + icon): unlit
- * MeshBasicMaterial keeps them crisp at any camera angle. Cel shading
- * would drop them into the toon mid band (faces point away from the key
- * light) and turn cream into murky gray. The table/arena stays cel.
+ * Card faces are "printed" flat canvas art: unlit MeshBasicMaterial keeps
+ * them crisp. The table stays cel shaded.
  */
-function printed(mat: THREE.MeshBasicMaterialParameters): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial(mat);
-}
-
-/** Edge + back materials shared by every card. */
-const edgeMat = printed({ color: hex(palette.woodDark) });
-const backMat = printed({ map: backTexture });
-
-/** One shared icon-face material per pair. */
-const iconMats = new Map<IconId, THREE.MeshBasicMaterial>();
-for (const id of ICON_IDS) {
-  iconMats.set(id, printed({ map: iconTextures.get(id) }));
-}
+const edgeMat = new THREE.MeshBasicMaterial({ color: hex(palette.cream) });
 
 /* ------------------------------------------------------------------ */
 /*  Card mesh                                                          */
@@ -450,28 +503,22 @@ for (const id of ICON_IDS) {
 
 export interface CardMesh {
   mesh: THREE.Mesh;
-  iconId: IconId;
+  /** Per-card materials (tinted to dim a solved pair); dispose in teardown. */
+  faceMat: THREE.MeshBasicMaterial;
+  backMat: THREE.MeshBasicMaterial;
 }
 
-/**
- * Build one standing card tile. +Z face = patterned back (visible while
- * face-down), -Z face = icon (visible after a 180deg flip).
- */
+/** One flat card: back on +Y, icon on -Y. */
 export function createCardMesh(iconId: IconId): CardMesh {
-  const mesh = new THREE.Mesh(cardGeom, [
-    edgeMat,
-    edgeMat,
-    edgeMat,
-    edgeMat,
-    backMat,
-    iconMats.get(iconId) as THREE.MeshBasicMaterial,
-  ]);
+  const faceMat = new THREE.MeshBasicMaterial({ map: iconTextures.get(iconId) });
+  const backMat = new THREE.MeshBasicMaterial({ map: backTexture });
+  const mesh = new THREE.Mesh(cardGeom, [edgeMat, edgeMat, backMat, faceMat, edgeMat, edgeMat]);
   mesh.castShadow = true;
-  return { mesh, iconId };
+  return { mesh, faceMat, backMat };
 }
 
 /* ------------------------------------------------------------------ */
-/*  Star sprite particles (confetti, match sparkles)                   */
+/*  Star sprite particles (match sparkles, finale confetti)            */
 /* ------------------------------------------------------------------ */
 
 export interface StarBurst {
@@ -491,7 +538,8 @@ interface BurstParticle {
   baseScale: number;
 }
 
-export function createStarBurst(scene: THREE.Scene, poolSize: number, rng: () => number): StarBurst {
+/** `rng` here is cosmetic only (a seeded side stream, never ctx.rng). */
+export function createStarBurst(parent: THREE.Object3D, poolSize: number, rng: () => number): StarBurst {
   const pool: BurstParticle[] = [];
   for (let i = 0; i < poolSize; i++) {
     const mat = new THREE.SpriteMaterial({
@@ -503,18 +551,13 @@ export function createStarBurst(scene: THREE.Scene, poolSize: number, rng: () =>
     });
     const sprite = new THREE.Sprite(mat);
     sprite.visible = false;
-    scene.add(sprite);
-    pool.push({
-      sprite,
-      vel: new THREE.Vector3(),
-      life: 0,
-      maxLife: 1,
-      baseScale: 0.3,
-    });
+    sprite.renderOrder = 12;
+    parent.add(sprite);
+    pool.push({ sprite, vel: new THREE.Vector3(), life: 0, maxLife: 1, baseScale: 0.3 });
   }
   let cursor = 0;
 
-  const burst: StarBurst = {
+  return {
     spawn(points, opts) {
       for (const p of points) {
         for (let k = 0; k < opts.countPerPoint; k++) {
@@ -527,7 +570,6 @@ export function createStarBurst(scene: THREE.Scene, poolSize: number, rng: () =>
           part.sprite.scale.setScalar(part.baseScale);
           part.maxLife = opts.life * (0.7 + rng() * 0.6);
           part.life = part.maxLife;
-          // spherical-ish burst biased upward
           const a = rng() * Math.PI * 2;
           const r = rng();
           part.vel.set(
@@ -550,62 +592,53 @@ export function createStarBurst(scene: THREE.Scene, poolSize: number, rng: () =>
         }
         const k = part.life / part.maxLife;
         part.sprite.position.addScaledVector(part.vel, dt);
-        part.vel.y -= dt * 3.2; // gravity
-        const s = part.baseScale * (0.6 + 0.4 * k);
-        part.sprite.scale.setScalar(s);
+        part.vel.y -= dt * 3.2;
+        part.sprite.scale.setScalar(part.baseScale * (0.6 + 0.4 * k));
         (part.sprite.material as THREE.SpriteMaterial).opacity = Math.min(1, k * 1.6);
       }
     },
     clear() {
       for (const part of pool) {
         part.life = 0;
-        part.sprite.visible = false;
         part.sprite.removeFromParent();
         (part.sprite.material as THREE.SpriteMaterial).dispose();
       }
     },
   };
-  return burst;
 }
 
 /* ------------------------------------------------------------------ */
 /*  Table                                                              */
 /* ------------------------------------------------------------------ */
 
-/** Build the wooden table + mint felt top. Returns per-instance root. */
+/** Felt extents (x half-width, z min/max). The sign strip sits at the far end. */
+export const FELT = { hx: 2.35, z0: -2.9, z1: 2.2 };
+
+/** Low wooden card table with a felt top, sitting on the lawn. */
 export function buildTable(): { group: THREE.Group; dispose(): void } {
   const group = new THREE.Group();
   const woodMat = toon({ color: hex(palette.wood) });
   const woodDarkMat = toon({ color: hex(palette.woodDark) });
-  const feltMat = toon({ color: hex(palette.mint) });
+  const feltMat = toon({ color: hex(palette.mintDeep) });
+  const w = FELT.hx * 2;
+  const d = FELT.z1 - FELT.z0;
+  const cz = (FELT.z0 + FELT.z1) / 2;
 
-  const base = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.14, 4.6), woodDarkMat);
-  base.position.y = 0.66;
+  const base = new THREE.Mesh(new THREE.BoxGeometry(w + 0.5, 0.18, d + 0.5), woodDarkMat);
+  base.position.set(0, 0.09, cz);
   base.receiveShadow = true;
+  base.castShadow = true;
   group.add(base);
 
-  const top = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.16, 4.4), woodMat);
-  top.position.y = 0.74;
-  top.receiveShadow = true;
-  group.add(top);
+  const rim = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 0.1, d + 0.4), woodMat);
+  rim.position.set(0, 0.23, cz);
+  rim.receiveShadow = true;
+  group.add(rim);
 
-  const felt = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.05, 3.8), feltMat);
-  felt.position.y = 0.85;
+  const felt = new THREE.Mesh(new THREE.BoxGeometry(w, 0.04, d), feltMat);
+  felt.position.set(0, TABLE_Y - 0.02, cz);
   felt.receiveShadow = true;
   group.add(felt);
-
-  const legMat = woodDarkMat;
-  for (const [lx, lz] of [
-    [-2.4, -1.95],
-    [2.4, -1.95],
-    [-2.4, 1.95],
-    [2.4, 1.95],
-  ]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.66, 0.2), legMat);
-    leg.position.set(lx, 0.33, lz);
-    leg.castShadow = true;
-    group.add(leg);
-  }
 
   return {
     group,

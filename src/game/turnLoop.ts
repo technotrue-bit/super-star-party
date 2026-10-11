@@ -2129,9 +2129,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     setPendingMinigame(mg);
 
     const coins = minigameCoinAward(mg.pack);
-    const baseDesc = (mg as { description?: string }).description || getMinigameDescription(mg.id, mg.name);
-    const desc = `${baseDesc} Winner takes ${coins} coins.`;
-    showMinigamePreview(mg.name, desc).then((started) => {
+    const desc = (mg as { description?: string }).description || getMinigameDescription(mg.id, mg.name);
+    showMinigamePreview(mg.name, desc, mg.rules, coins).then((started) => {
       console.log('[turnLoop] pre-screen resolved started=', started);
       if (!started) {
         // User cancelled (click outside / Escape) — clear flags and resume turns.

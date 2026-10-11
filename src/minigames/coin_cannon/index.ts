@@ -1,78 +1,108 @@
 /**
- * SUPER STAR PARTY — COIN CANNON (genre: timing)
+ * SUPER STAR PARTY — COIN CANNON (genre: timing, pack: midway)
  *
- * MP7's Coin Crossfire: four carnival cannons perched on tall platforms fire
- * coins straight down into their own conveyor lane; candy baskets slide along
- * each belt from right to left. TAP (or 'confirm') to fire — a tiny 0.12s
- * charge-up plus a ~0.6s coin flight means you must LEAD the basket. Land in
- * the basket for +1, dead-center for +2. 16 coins each, then you're out; best
- * score wins.
+ * Four conveyor belts, one per player, each tinted in its player's colour.
+ * Every cannon hangs directly above the target ring on its own belt. TAP
+ * fires a coin at once; it always takes FLIGHT (0.60 s) to drop straight
+ * down onto the ring. A basket that is on the ring when the coin lands
+ * catches it: +1 inside CATCH_R, +2 inside BULL_R. Each basket takes one
+ * coin, then lights up and closes.
  *
- * Determinism: every gameplay random draw (basket speed/color/spawn jitter,
- * CPU aim/timing) comes from ctx.rng() only. Catch resolution is analytic
- * (predicted basket position at the exact rim crossing), so results are
- * frame-rate independent.
+ * The lead is drawn on every belt: the FIRE! line sits speed x FLIGHT
+ * before the ring, so "basket crosses the line" is exactly "fire now".
+ *
+ * Fairness: ONE basket schedule (arrival times + speeds) is drawn from
+ * ctx.rng at setup and used on all four belts, so every player gets the
+ * same baskets. 12 coins each; the round ends once every coin has landed
+ * (or nothing is left to catch, or TIME_CAP).
+ *
+ * Determinism: fixed 1/60 s sim step. Every gameplay draw (schedule, CPU
+ * plans, tie-breaks) happens in setup from ctx.rng in a fixed order that
+ * does not depend on who is CPU. Particles use a separate cosmetic rng
+ * seeded from one ctx.rng draw. Rendering interpolates between steps, so
+ * baskets and coins move smoothly at any frame rate.
  */
 import * as THREE from "three";
-import { isLocalPlayer, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
+import {
+  automatedSeatIds,
+  isPracticeBeat,
+  localPlayerIndex,
+  type Minigame,
+  type MinigameContext,
+} from "../framework";
 import { registerMinigame } from "../registry";
 import { box as frameBox, frameMinigame } from "../framing";
 import { viewportSize } from "../../ui/viewport";
 import { palette, hex } from "../../config/palette";
 import { celGradient } from "../../characters/cel";
+import { isAutoplay } from "../../core/debug";
 
 /* ------------------------------ tuning --------------------------------- */
 
-const LANE_Z = [5.25, 1.75, -1.75, -5.25]; // lane depth per player (0 = human, nearest camera)
-const PLAT_X = [-1.9, 1.9, -1.9, 1.9]; // platform x per lane (staggered so fall lines stay clear)
-const PLAT_Z_OFF = -3.4; // platform z = laneZ + PLAT_Z_OFF (behind its own lane)
-const MUZZLE_Y = 4.64; // coin spawn height (muzzle)
-const MUZZLE_Z_OFF = 1.13; // muzzle z = laneZ + PLAT_Z_OFF + MUZZLE_Z_OFF
-const CATCH_Y = 0.66; // basket rim height — coin center at catch
-const LAND_Z_OFF = 0.11; // coin z at catch = laneZ + LAND_Z_OFF (belt centre)
-const GRAV = 9; // downward gravity
-const VY = -3.9; // coin launch vy (flight ~0.6s, impact ~9.3 u/s)
-const CHARGE = 0.12; // tap -> fire charge-up (fixed, feels fair)
-const AMINO = 16; // coins per player
-const BASKET_R = 0.6; // basket radius (width ~1.2)
-const CATCH_R = BASKET_R * 1.4; // generous catch radius
-const PERFECT_R = 0.10; // perfect-center radius — small target, ~12% of CPU aim error
-const BASKET_SPAWN_X = 9.8; // baskets enter on the right...
-const BASKET_DESPAWN_X = -9.8; // ...and exit on the left
-const TIME_CAP = 28.5; // round cap — the framework force-finishes at 30s, so end before that
-const BASKET_COLORS = [palette.candy, palette.berry, palette.mint, palette.bubble];
+const DT = 1 / 60; // fixed sim step
+const MAX_STEPS = 12; // per frame: maxDelta 1/20 x speed 4 = 0.2 s
+const COINS = 12; // coins per player
+const N_BASKETS = 16; // baskets per belt (same schedule on every belt)
+const FLIGHT = 0.6; // tap -> coin at basket rim, always
+const CATCH_R = 0.6; // |basket centre| at landing for +1
+const BULL_R = 0.2; // ... for +2
+const TIME_CAP = 28; // hard round length (s)
+const SETTLE = 0.12; // pause after the last coin lands before finishing
 
-// CPU fallibility: fire probability, aim/timing error ranges, decision interval
-const CPU_FIRE_P = 0.7; // probability of firing at a basket opportunity
-const CPU_AIM_ERR = 0.70; // aim error amplitude in world units (±) — still inside catch radius
-const CPU_LAND_ERR = 0.90 // landing error amplitude — applied after fire-time re-check, creates real misses
-const CPU_TIMING_MIN = 0.05; // timing error range in seconds (early/late)
-const CPU_TIMING_MAX = 0.25;
-const CPU_THINK_INTERVAL = 0.25; // fixed decision interval in seconds (frame-independent)
+// Basket schedule: speeds 2.6–3.5 u/s plus a ramp of +0.8 over the round.
+const SPEED_MIN = 2.6;
+const SPEED_JIT = 0.9;
+const SPEED_RAMP = 0.8;
+const FIRST_ARRIVAL = 3.4; // first basket reaches the ring
+const GAP_MIN = 1.15; // seconds between ring arrivals
+const GAP_JIT = 0.4;
+const MIN_SEP = 1.7; // world units between baskets anywhere on the belt
 
-/* ------------------------------ state ----------------------------------- */
+// CPU: fire at the ideal time + N(0, CPU_SD * m), m per CPU per round.
+const CPU_SD = 0.118;
+const CPU_M_MIN = 0.7;
+const CPU_M_MAX = 1.3;
+const CPU_SKIP = 0.05;
 
-interface Basket {
-  group: THREE.Group;
-  lane: number;
-  x: number;
+// Layout (world units). Ring at x = 0; baskets move right -> left.
+const LANE_Z = [4.8, 1.4, -2.0, -5.4]; // lane 0 = front = the local player
+const SPAWN_X = 9.4; // baskets appear at the right end of the belt
+const EXIT_X = -3.2; // and drop off the left end
+const BELT_L = -3.7;
+const BELT_R = 9.8;
+const FLAG_X = -4.3; // name flag over the belt's left end
+const RIM_Y = 0.66; // basket rim height (coin is caught here)
+const BELT_Y = 0.16; // belt surface (baskets sit here; a missed coin bounces here)
+const MUZZLE_Y = 2.3; // coins drop from rest at the muzzle
+const GRAV = (2 * (MUZZLE_Y - RIM_Y)) / (FLIGHT * FLIGHT);
+const POST_DZ = -1.05; // cannon post sits behind its own belt
+const CHAR_X = -1.3;
+const CHAR_DZ = -1.35;
+
+/* ------------------------------ types ----------------------------------- */
+
+interface BasketPlan {
+  arrive: number; // sim time the basket centre crosses the ring (x = 0)
   speed: number;
-  bounce: number;
-  spawnTime: number; // ctx.time when spawned (for analytic position)
+}
+
+interface BasketView {
+  group: THREE.Group;
+  rim: THREE.Mesh;
+  lid: THREE.Mesh;
+  glow: THREE.Mesh;
+  closed: boolean;
+  lit: number; // 1 -> 0 catch flash
 }
 
 interface Coin {
-  group: THREE.Group;
-  tail: THREE.Mesh[];
   lane: number;
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  landX: number; // x the coin lands at (0 for human, aim error for CPU)
+  fireT: number;
+  landT: number;
   resolved: boolean;
+  caught: boolean;
+  group: THREE.Group;
+  popped: boolean;
 }
 
 interface Particle {
@@ -86,62 +116,127 @@ interface Particle {
   base: number;
 }
 
+interface Popup {
+  sprite: THREE.Sprite;
+  life: number;
+}
+
 interface PlayerSt {
   id: number;
   lane: number;
+  name: string;
   color: number;
+  colorCss: string;
   ammo: number;
   score: number;
-  charging: boolean;
-  chargeT: number;
-  aimError: number; // CPU aim error for the in-flight shot (human: 0)
-  landError: number; // CPU landing error — applied after fire-time re-check (human: 0)
-  aimSlop: number; // CPU timing slop: widens the fire window this shot
-  cpuNextThink: number; // next ctx.time at which CPU makes a decision (frame-independent)
-  recoil: number; // 1 -> 0 cannon kick
-  poseT: number; // squash timer -> idle
-  cheerT: number; // cheer timer -> idle
-  cpuShots: number; // debug counters
-  cpuHits: number;
-  cpuAborts: number;
-  wrapper: THREE.Group;
-  char: THREE.Group | null;
+  bulls: number;
+  tieBreak: number;
+  cpu: boolean;
+  /** Planned fire time per basket (null = skip). Drawn for every seat. */
+  plan: (number | null)[];
+  nextPlan: number;
   barrel: THREE.Group;
-  glow: THREE.Mesh;
-  ammoPips: THREE.Mesh[];
-  scoreStars: THREE.Mesh[];
+  recoil: number;
+  cheerT: number;
+  baskets: BasketView[];
+  arrow: THREE.Group;
+  arrowX: number;
+  arrowMat: THREE.MeshBasicMaterial;
+  shadow: THREE.Mesh;
+  shadowMat: THREE.MeshBasicMaterial;
 }
 
 interface State {
   ctx: MinigameContext;
   root: THREE.Group;
-  players: PlayerSt[];
-  baskets: Basket[];
+  players: PlayerSt[]; // by lane
+  byId: Map<number, PlayerSt>;
+  schedule: BasketPlan[];
   coins: Coin[];
   particles: Particle[];
+  popups: Popup[];
   rollers: THREE.Mesh[];
-  nextSpawn: number[]; // per-lane next spawn time (frame-independent, via simTime)
-  simTime: number; // fixed-step simulation time (0.25s steps, frame-independent)
-  simAccumulator: number; // accumulates dt to fire fixed 0.25s sim steps
+  youFrame: THREE.MeshBasicMaterial | null;
+  humanId: number; // -1 when no seat takes local input
+  pendingFire: number;
+  reload: number;
+  simT: number;
+  acc: number;
   t: number;
-  shake: number;
-  announcedGo: boolean;
+  endAt: number; // sim time to finish at (-1 = not yet)
   finished: boolean;
+  shake: number;
   camBase: [number, number, number];
   camLook: [number, number, number];
+  cosRng: () => number;
   toons: Map<number, THREE.MeshToonMaterial>;
+  ink: THREE.MeshBasicMaterial | null;
+  shells: Map<THREE.BufferGeometry, THREE.BufferGeometry>;
   geos: THREE.BufferGeometry[];
   mats: THREE.Material[];
+  texs: THREE.Texture[];
+  g: {
+    sphere: THREE.BufferGeometry;
+    coin: THREE.BufferGeometry;
+    popup1: THREE.Texture;
+    popup2: THREE.Texture;
+  };
 }
 
 let state: State | null = null;
 
-/* --------------------------- tiny helpers ------------------------------- */
+/* --------------------------- pure helpers -------------------------------- */
 
-/** Time for a coin from (y, vy) under gravity to reach the rim plane. */
-function arriveTime(y: number, vy: number): number {
-  return (vy + Math.sqrt(vy * vy + 2 * GRAV * (y - CATCH_Y))) / GRAV;
+function mulberry32(seed: number): () => number {
+  let a = seed | 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
+
+/** Standard normal from two rng draws (Box–Muller). */
+function normal(rng: () => number): number {
+  const u = Math.max(1e-9, rng());
+  const v = rng();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+/** Basket x on its belt at time t (ring at 0, moving toward -x). */
+function basketX(b: BasketPlan, t: number): number {
+  return (b.arrive - t) * b.speed;
+}
+
+/** b (behind) never closer than MIN_SEP to a (ahead) while both are on the belt. */
+function spaced(a: BasketPlan, b: BasketPlan): boolean {
+  const t0 = b.arrive - SPAWN_X / b.speed; // b appears
+  const t1 = a.arrive - EXIT_X / a.speed; // a leaves
+  if (t0 >= t1) return true;
+  // The gap is linear in t, so checking both ends covers the whole overlap.
+  return basketX(b, t0) - basketX(a, t0) >= MIN_SEP && basketX(b, t1) - basketX(a, t1) >= MIN_SEP;
+}
+
+/** The one shared basket schedule (2 draws per basket). */
+function makeSchedule(rng: () => number): BasketPlan[] {
+  const out: BasketPlan[] = [];
+  let arrive = FIRST_ARRIVAL;
+  for (let i = 0; i < N_BASKETS; i++) {
+    const speed = SPEED_MIN + rng() * SPEED_JIT + (SPEED_RAMP * i) / (N_BASKETS - 1);
+    const gap = GAP_MIN + rng() * GAP_JIT;
+    if (i > 0) {
+      arrive += gap;
+      const plan = { arrive, speed };
+      for (let k = 0; k < 100 && !spaced(out[i - 1], plan); k++) plan.arrive += 0.05;
+      arrive = plan.arrive;
+    }
+    out.push({ arrive, speed });
+  }
+  return out;
+}
+
+/* --------------------------- render helpers ------------------------------ */
 
 function toon(st: State, color: number): THREE.MeshToonMaterial {
   let m = st.toons.get(color);
@@ -153,79 +248,109 @@ function toon(st: State, color: number): THREE.MeshToonMaterial {
   return m;
 }
 
-function basic(st: State, color: number): THREE.MeshBasicMaterial {
-  const m = new THREE.MeshBasicMaterial({ color });
+function basic(st: State, color: number, opacity = 1): THREE.MeshBasicMaterial {
+  const m = new THREE.MeshBasicMaterial({ color, transparent: opacity < 1, opacity });
   st.mats.push(m);
   return m;
 }
 
-const OUTLINE_SCALE = 1.06;
-
-/**
- * Ink outline for a mesh: a back-face shell placed exactly on the mesh. (It
- * used to keep only the geometry, so every shell piled up at the origin as
- * a solid ink post in the middle of the arena.)
- */
-function outlineShell(st: State, src: THREE.Mesh): THREE.Mesh {
-  const g = src.geometry.clone();
-  g.scale(OUTLINE_SCALE, OUTLINE_SCALE, OUTLINE_SCALE);
-  const mat = basic(st, hex(palette.ink));
-  mat.side = THREE.BackSide;
-  const shell = new THREE.Mesh(g, mat);
-  shell.position.copy(src.position);
-  shell.quaternion.copy(src.quaternion);
-  shell.scale.copy(src.scale);
-  return shell;
-}
-
-function addMesh(
-  st: State,
-  parent: THREE.Object3D,
-  geo: THREE.BufferGeometry,
-  mat: THREE.Material,
-  pos: [number, number, number],
-  rot?: [number, number, number],
-  shadow = true
-): THREE.Mesh {
-  const m = new THREE.Mesh(geo, mat);
-  m.position.set(pos[0], pos[1], pos[2]);
-  if (rot) m.rotation.set(rot[0], rot[1], rot[2]);
-  // Arena is flat-cel lit (toon bands): no shadow casting/receiving, so
-  // platform columns never darken the play lanes.
-  void shadow;
-  m.castShadow = false;
-  m.receiveShadow = false;
-  parent.add(m);
-  return m;
-}
-
-function newGeo(st: State, g: THREE.BufferGeometry): THREE.BufferGeometry {
+function geo<G extends THREE.BufferGeometry>(st: State, g: G): G {
   st.geos.push(g);
   return g;
 }
 
-/** Dispose only geometries under a root (materials are shared/round-scoped). */
-function disposeGeos(root: THREE.Object3D): void {
-  root.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (mesh.isMesh) mesh.geometry.dispose();
-  });
+function mesh(
+  parent: THREE.Object3D,
+  g: THREE.BufferGeometry,
+  m: THREE.Material,
+  pos: [number, number, number],
+  rot?: [number, number, number],
+): THREE.Mesh {
+  const out = new THREE.Mesh(g, m);
+  out.position.set(pos[0], pos[1], pos[2]);
+  if (rot) out.rotation.set(rot[0], rot[1], rot[2]);
+  parent.add(out);
+  return out;
 }
 
-/** Dispose geometries + materials under a root (full teardown). */
-function disposeObj(root: THREE.Object3D): void {
-  root.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    mesh.geometry.dispose();
-    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const m of mats) m.dispose();
-  });
+const OUTLINE_SCALE = 1.06;
+
+/** Ink back-face shell placed exactly on `src` (shell geometry shared per source). */
+function outline(st: State, src: THREE.Mesh): THREE.Mesh {
+  let g = st.shells.get(src.geometry);
+  if (!g) {
+    g = geo(st, src.geometry.clone());
+    g.scale(OUTLINE_SCALE, OUTLINE_SCALE, OUTLINE_SCALE);
+    st.shells.set(src.geometry, g);
+  }
+  if (!st.ink) {
+    st.ink = basic(st, hex(palette.ink));
+    st.ink.side = THREE.BackSide;
+  }
+  const shell = new THREE.Mesh(g, st.ink);
+  shell.position.copy(src.position);
+  shell.quaternion.copy(src.quaternion);
+  shell.scale.copy(src.scale);
+  src.parent?.add(shell);
+  return shell;
+}
+
+const mixA = new THREE.Color();
+const mixB = new THREE.Color();
+function mix(a: number, b: number, k: number): number {
+  return mixA.setHex(a).lerp(mixB.setHex(b), k).getHex();
+}
+
+/** A rounded label drawn once into a canvas texture. */
+function labelTexture(st: State, text: string, bg: string, fg: string, w = 256, h = 80): THREE.CanvasTexture {
+  const cv = document.createElement("canvas");
+  cv.width = w;
+  cv.height = h;
+  const g = cv.getContext("2d")!;
+  const r = h * 0.42;
+  const pad = 5;
+  g.beginPath();
+  g.moveTo(pad + r, pad);
+  g.lineTo(w - pad - r, pad);
+  g.arc(w - pad - r, h / 2, h / 2 - pad, -Math.PI / 2, Math.PI / 2);
+  g.lineTo(pad + r, h - pad);
+  g.arc(pad + r, h / 2, h / 2 - pad, Math.PI / 2, (Math.PI * 3) / 2);
+  g.closePath();
+  g.fillStyle = bg;
+  g.fill();
+  g.lineWidth = 7;
+  g.strokeStyle = palette.ink;
+  g.stroke();
+  let size = Math.floor(h * 0.56);
+  g.font = `700 ${size}px Fredoka, system-ui, sans-serif`;
+  while (g.measureText(text).width > w - 2 * r && size > 14) {
+    size -= 2;
+    g.font = `700 ${size}px Fredoka, system-ui, sans-serif`;
+  }
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.lineWidth = 6;
+  g.strokeStyle = palette.ink;
+  g.strokeText(text, w / 2, h / 2 + 2);
+  g.fillStyle = fg;
+  g.fillText(text, w / 2, h / 2 + 2);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  st.texs.push(tex);
+  return tex;
+}
+
+function sprite(st: State, tex: THREE.Texture, w: number, h: number): THREE.Sprite {
+  const m = new THREE.SpriteMaterial({ map: tex, depthWrite: false });
+  st.mats.push(m);
+  const s = new THREE.Sprite(m);
+  s.scale.set(w, h, 1);
+  return s;
 }
 
 /* ----------------------------- particles -------------------------------- */
 
-function spawnBurst(
+function burst(
   st: State,
   pos: [number, number, number],
   color: number,
@@ -233,28 +358,27 @@ function spawnBurst(
   speed: number,
   life: number,
   grav: number,
-  base = 0.07
+  base = 0.07,
 ): void {
-  const geo = newGeo(st, new THREE.SphereGeometry(1, 8, 6));
-  const mat = basic(st, color);
+  const r = st.cosRng;
+  const mat = toon(st, color);
   for (let i = 0; i < count; i++) {
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(pos[0], pos[1], pos[2]);
-    mesh.scale.setScalar(base);
-    mesh.castShadow = false;
-    st.root.add(mesh);
-    const th = st.ctx.rng() * Math.PI * 2;
-    const ph = st.ctx.rng() * Math.PI - Math.PI / 2;
-    const sp = speed * (0.5 + st.ctx.rng() * 0.8);
+    const m = new THREE.Mesh(st.g.sphere, mat);
+    m.position.set(pos[0], pos[1], pos[2]);
+    m.scale.setScalar(base);
+    st.root.add(m);
+    const th = r() * Math.PI * 2;
+    const ph = r() * Math.PI - Math.PI / 2;
+    const sp = speed * (0.5 + r() * 0.8);
     st.particles.push({
-      mesh,
+      mesh: m,
       vx: Math.cos(th) * Math.cos(ph) * sp,
       vy: Math.sin(ph) * sp + 1.5,
       vz: Math.sin(th) * Math.cos(ph) * sp,
       life,
       maxLife: life,
       grav,
-      base: base * (0.7 + st.ctx.rng() * 0.6),
+      base: base * (0.7 + r() * 0.6),
     });
   }
 }
@@ -272,35 +396,38 @@ function updateParticles(st: State, dt: number): void {
     p.mesh.position.x += p.vx * dt;
     p.mesh.position.y += p.vy * dt;
     p.mesh.position.z += p.vz * dt;
-    const s = p.base * Math.max(0, p.life / p.maxLife);
-    p.mesh.scale.setScalar(s);
+    p.mesh.scale.setScalar(p.base * Math.max(0, p.life / p.maxLife));
+  }
+  for (let i = st.popups.length - 1; i >= 0; i--) {
+    const p = st.popups[i];
+    p.life -= dt;
+    p.sprite.position.y += dt * 1.1;
+    const mat = p.sprite.material as THREE.SpriteMaterial;
+    mat.opacity = Math.min(1, p.life / 0.3);
+    if (p.life <= 0) {
+      st.root.remove(p.sprite);
+      mat.dispose();
+      st.popups.splice(i, 1);
+    }
   }
 }
 
-/* ---------------------------- sky dressing ------------------------------ */
+/* ---------------------------- arena build ------------------------------- */
 
-/**
- * Build a canvas texture for the sky backdrop: bubble-blue gradient at top
- * fading to warm cream at the horizon, with a sun disc and 3 parallax clouds.
- * Pure palette colors, drawn once into a CanvasTexture.
- */
-function makeSkyTexture(): THREE.CanvasTexture {
+/** Sky backdrop: bubble gradient to cream, sun disc and three clouds. */
+function makeSkyTexture(st: State): THREE.CanvasTexture {
   const W = 512;
   const H = 256;
   const cv = document.createElement("canvas");
   cv.width = W;
   cv.height = H;
   const g = cv.getContext("2d")!;
-
-  // Vertical gradient: bubble (top) -> cream (horizon)
   const grad = g.createLinearGradient(0, 0, 0, H);
   grad.addColorStop(0, palette.bubble);
   grad.addColorStop(0.6, palette.bubble);
   grad.addColorStop(1, palette.cream);
   g.fillStyle = grad;
   g.fillRect(0, 0, W, H);
-
-  // Sun disc (upper-right)
   const sunX = W * 0.75;
   const sunY = H * 0.22;
   const sunR = 28;
@@ -308,492 +435,463 @@ function makeSkyTexture(): THREE.CanvasTexture {
   g.arc(sunX, sunY, sunR, 0, Math.PI * 2);
   g.fillStyle = palette.sun;
   g.fill();
-  // Sun rays (simple starburst)
   g.strokeStyle = palette.sun;
   g.lineWidth = 3;
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
-    const r0 = sunR + 4;
-    const r1 = sunR + 12;
     g.beginPath();
-    g.moveTo(sunX + Math.cos(a) * r0, sunY + Math.sin(a) * r0);
-    g.lineTo(sunX + Math.cos(a) * r1, sunY + Math.sin(a) * r1);
+    g.moveTo(sunX + Math.cos(a) * (sunR + 4), sunY + Math.sin(a) * (sunR + 4));
+    g.lineTo(sunX + Math.cos(a) * (sunR + 12), sunY + Math.sin(a) * (sunR + 12));
     g.stroke();
   }
-
-  // 3 clouds (parallax depth cues: varying opacity, size, y-position)
-  const clouds = [
+  for (const c of [
     { x: 0.18, y: 0.28, s: 0.7, a: 0.85 },
     { x: 0.55, y: 0.18, s: 0.55, a: 0.7 },
     { x: 0.85, y: 0.4, s: 0.45, a: 0.6 },
-  ];
-  for (const c of clouds) {
+  ]) {
     const cx = c.x * W;
     const cy = c.y * H;
-    const s = c.s;
     g.globalAlpha = c.a;
     g.fillStyle = palette.white;
-    // Simple 3-bump cloud shape
     g.beginPath();
-    g.arc(cx - 18 * s, cy, 14 * s, 0, Math.PI * 2);
-    g.arc(cx, cy - 8 * s, 18 * s, 0, Math.PI * 2);
-    g.arc(cx + 18 * s, cy, 14 * s, 0, Math.PI * 2);
+    g.arc(cx - 18 * c.s, cy, 14 * c.s, 0, Math.PI * 2);
+    g.arc(cx, cy - 8 * c.s, 18 * c.s, 0, Math.PI * 2);
+    g.arc(cx + 18 * c.s, cy, 14 * c.s, 0, Math.PI * 2);
     g.fill();
   }
   g.globalAlpha = 1;
-
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
+  st.texs.push(tex);
   return tex;
 }
 
-/* ---------------------------- arena build ------------------------------- */
+function buildBackdrop(st: State): void {
+  const root = st.root;
+  const sky = mesh(root, geo(st, new THREE.PlaneGeometry(30, 12)), new THREE.MeshBasicMaterial({ map: makeSkyTexture(st) }), [0, 6.5, -11.5]);
+  st.mats.push(sky.material as THREE.Material);
 
-function buildArena(st: State): void {
-  const { ctx } = st;
-  const scene = ctx.scene;
-  const cream = hex(palette.cream);
-  const ink = hex(palette.ink);
-
-  // ---- sky backdrop: textured plane above the carnival wall ----
-  const skyTex = makeSkyTexture();
-  const skyMat = new THREE.MeshBasicMaterial({ map: skyTex });
-  st.mats.push(skyMat);
-  const sky = new THREE.Mesh(newGeo(st, new THREE.PlaneGeometry(28, 12)), skyMat);
-  sky.position.set(0, 6.5, -11.5);
-  sky.castShadow = false;
-  sky.receiveShadow = false;
-  st.root.add(sky);
-
-  // ---- party floor: saturated grass checker (cel bands stay colourful) ----
-  const grassA = hex(palette.grassA);
-  const grassB = hex(palette.grassB);
+  // grass checker floor
+  const tile = geo(st, new THREE.BoxGeometry(5.5, 0.2, 4.2));
   for (let gx = 0; gx < 4; gx++) {
-    for (let gz = 0; gz < 4; gz++) {
-      const col = (gx + gz) % 2 === 0 ? grassA : grassB;
-      addMesh(
-        st, st.root, newGeo(st, new THREE.BoxGeometry(5.5, 0.2, 4.15)),
-        toon(st, col), [gx * 5.5 - 8.25, -0.1, gz * 4.15 - 8.8], undefined, false
-      );
+    for (let gz = 0; gz < 5; gz++) {
+      const col = (gx + gz) % 2 === 0 ? hex(palette.grassA) : hex(palette.grassB);
+      mesh(root, tile, toon(st, col), [gx * 5.5 - 8.25, -0.1, gz * 4.2 - 8.8]);
     }
   }
-  const borderMat = toon(st, hex(palette.mint));
-  const b1 = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(22, 0.26, 0.3)), borderMat, [0, 0.03, -8.5], undefined, false);
-  const b2 = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(22, 0.26, 0.3)), borderMat, [0, 0.03, 7.75], undefined, false);
-  const b3 = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(0.3, 0.26, 16.5)), borderMat, [-11.15, 0.03, 0.4], undefined, false);
-  const b4 = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(0.3, 0.26, 16.5)), borderMat, [11.15, 0.03, 0.4], undefined, false);
-  for (const b of [b1, b2, b3, b4]) st.root.add(outlineShell(st, b));
+  const mint = toon(st, hex(palette.mint));
+  const longB = geo(st, new THREE.BoxGeometry(22, 0.26, 0.3));
+  const sideB = geo(st, new THREE.BoxGeometry(0.3, 0.26, 21));
+  for (const b of [
+    mesh(root, longB, mint, [0, 0.03, -10.8]),
+    mesh(root, longB, mint, [0, 0.03, 10.0]),
+    mesh(root, sideB, mint, [-11.15, 0.03, -0.4]),
+    mesh(root, sideB, mint, [11.15, 0.03, -0.4]),
+  ]) {
+    outline(st, b);
+  }
 
-  // ---- carnival backdrop wall ----
-  addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(24, 8.2, 0.3)), toon(st, cream), [0, 4.1, -9.9], undefined, false);
-  const stripeColors = [
-    hex(palette.candy), hex(palette.sun), hex(palette.mint), hex(palette.bubble),
-    hex(palette.candy), hex(palette.sun), hex(palette.mint), hex(palette.bubble),
-  ];
+  // carnival wall with candy stripes, a star and two big coins
+  mesh(root, geo(st, new THREE.BoxGeometry(24, 8.2, 0.3)), toon(st, hex(palette.cream)), [0, 4.1, -9.9]);
+  const stripe = geo(st, new THREE.BoxGeometry(3.0, 8.2, 0.34));
+  const stripeColors = [palette.candy, palette.sun, palette.mint, palette.bubble];
   for (let i = 0; i < 8; i++) {
-    const x = -10.5 + i * 3;
-    addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(3.0, 8.2, 0.34)), toon(st, stripeColors[i]), [x, 4.1, -9.74], undefined, false);
+    mesh(root, stripe, toon(st, hex(stripeColors[i % 4])), [-10.5 + i * 3, 4.1, -9.74]);
   }
-  const starGeo = newGeo(st, new THREE.OctahedronGeometry(1));
-  const star = addMesh(st, st.root, starGeo, toon(st, hex(palette.sun)), [0, 6.15, -9.7]);
+  const star = mesh(root, geo(st, new THREE.OctahedronGeometry(1)), toon(st, hex(palette.sun)), [0, 6.15, -9.7]);
   star.scale.set(1.15, 1.55, 0.5);
-  st.root.add(outlineShell(st, star));
-  // two big gold coins on the wall
+  outline(st, star);
+  const discG = geo(st, new THREE.CylinderGeometry(0.62, 0.62, 0.1, 20));
+  const innerG = geo(st, new THREE.CylinderGeometry(0.38, 0.38, 0.14, 16));
   for (const cx of [-4.4, 4.4]) {
-    const coinDisc = newGeo(st, new THREE.CylinderGeometry(0.62, 0.62, 0.1, 20));
-    const disc = addMesh(st, st.root, coinDisc, toon(st, hex(palette.sun)), [cx, 2.5, -9.72], [Math.PI / 2, 0, 0], false);
-    const inner = addMesh(st, st.root, newGeo(st, new THREE.CylinderGeometry(0.38, 0.38, 0.14, 16)), toon(st, hex(palette.sunDeep)), [cx, 2.5, -9.64], [Math.PI / 2, 0, 0], false);
-    st.root.add(outlineShell(st, disc));
-    void inner;
+    const disc = mesh(root, discG, toon(st, hex(palette.sun)), [cx, 2.5, -9.72], [Math.PI / 2, 0, 0]);
+    mesh(root, innerG, toon(st, hex(palette.sunDeep)), [cx, 2.5, -9.64], [Math.PI / 2, 0, 0]);
+    outline(st, disc);
   }
 
-  // ---- conveyor belts, rollers, lane walls, target rings, chevrons ----
-  const wood = hex(palette.wood);
-  const woodDark = hex(palette.woodDark);
-  const rollerGeo = newGeo(st, new THREE.CylinderGeometry(0.16, 0.16, 1.44, 10));
-  for (let lane = 0; lane < 4; lane++) {
-    const lz = LANE_Z[lane];
-    addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(18.4, 0.16, 1.3)), toon(st, wood), [0, 0.08, lz], undefined, true);
-    for (let x = -8; x <= 8; x += 2) {
-      const rollGroup = new THREE.Group();
-      rollGroup.position.set(x, 0.24, lz);
-      rollGroup.rotation.x = Math.PI / 2;
-      const roll = new THREE.Mesh(rollerGeo, toon(st, woodDark));
-      roll.castShadow = false;
-      rollGroup.add(roll);
-      st.root.add(rollGroup);
+  // Multi-directional fills keep every surface in the lit cel band.
+  const fill = new THREE.DirectionalLight(0xffffff, 1.15);
+  fill.position.set(2, 10, 16);
+  root.add(fill);
+  const fillBack = new THREE.DirectionalLight(0xffffff, 0.9);
+  fillBack.position.set(0, 12, -16);
+  root.add(fillBack);
+  const fillSide = new THREE.DirectionalLight(0xffffff, 0.55);
+  fillSide.position.set(-12, 7, 2);
+  root.add(fillSide);
+}
+
+function buildLanes(st: State): void {
+  const root = st.root;
+  const ink = hex(palette.ink);
+  const beltLen = BELT_R - BELT_L;
+  const beltCx = (BELT_R + BELT_L) / 2;
+  const beltG = geo(st, new THREE.BoxGeometry(beltLen, 0.16, 1.3));
+  const wallG = geo(st, new THREE.BoxGeometry(beltLen, 0.36, 0.14));
+  const capG = geo(st, new THREE.BoxGeometry(0.14, 0.36, 1.74));
+  const rollerG = geo(st, new THREE.CylinderGeometry(0.16, 0.16, 1.44, 10));
+  const ringG = geo(st, new THREE.TorusGeometry(CATCH_R, 0.05, 8, 28));
+  const bullG = geo(st, new THREE.TorusGeometry(BULL_R, 0.045, 8, 18));
+  const shadowG = geo(st, new THREE.CircleGeometry(0.34, 20));
+  const lineG = geo(st, new THREE.BoxGeometry(0.2, 0.03, 1.28));
+  const chevG = geo(st, new THREE.BoxGeometry(0.46, 0.03, 0.13));
+  const stemG = geo(st, new THREE.CylinderGeometry(0.035, 0.035, 0.8, 6));
+  const postG = geo(st, new THREE.CylinderGeometry(0.16, 0.22, 2.7, 12));
+  const armG = geo(st, new THREE.BoxGeometry(0.26, 0.22, 1.25));
+  const bodyG = geo(st, new THREE.BoxGeometry(0.62, 0.42, 0.62));
+  const barrelG = geo(st, new THREE.CylinderGeometry(0.2, 0.17, 0.62, 14));
+  const muzzleG = geo(st, new THREE.TorusGeometry(0.2, 0.055, 8, 16));
+  const poleG = geo(st, new THREE.CylinderGeometry(0.06, 0.07, 1.3, 8));
+  const basketBodyG = geo(st, new THREE.CylinderGeometry(0.55, 0.42, 0.5, 14));
+  const basketRimG = geo(st, new THREE.TorusGeometry(0.58, 0.07, 8, 18));
+  const lidG = geo(st, new THREE.CylinderGeometry(0.56, 0.56, 0.06, 18));
+  const glowG = geo(st, new THREE.TorusGeometry(0.72, 0.06, 6, 24));
+  const frameLong = geo(st, new THREE.BoxGeometry(beltLen + 0.5, 0.06, 0.12));
+  const frameEnd = geo(st, new THREE.BoxGeometry(0.12, 0.06, 2.14));
+  const fireTex = labelTexture(st, "FIRE!", palette.sun, palette.ink, 192, 72);
+
+  for (const P of st.players) {
+    const lz = LANE_Z[P.lane];
+    const you = P.lane === 0; // the front belt is always this device's seat
+    const beltCol = mix(P.color, hex(palette.cream), 0.35);
+
+    // belt, rollers, player-coloured side walls and end caps
+    mesh(root, beltG, toon(st, beltCol), [beltCx, 0.08, lz]);
+    for (let x = BELT_L + 0.45; x <= BELT_R - 0.4; x += 1.5) {
+      if (Math.abs(x) < CATCH_R + 0.3) continue; // keep the ring clear
+      const roll = mesh(root, rollerG, toon(st, hex(palette.woodDark)), [x, 0.1, lz], [Math.PI / 2, 0, 0]);
       st.rollers.push(roll);
     }
-    // lane divider walls (candy / berry alternating)
-    const wallColor = lane % 2 === 0 ? hex(palette.candy) : hex(palette.berry);
-    for (const side of [-0.8, 0.8]) {
-      const w = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(18.4, 0.36, 0.14)), toon(st, wallColor), [0, 0.18, lz + side], undefined, false);
-      st.root.add(outlineShell(st, w));
-    }
-    // target ring (bubble) + centre dot where coins land
-    const ring = addMesh(
-      st, st.root, newGeo(st, new THREE.TorusGeometry(0.36, 0.06, 8, 18)),
-      toon(st, hex(palette.bubble)), [0, 0.21, lz + LAND_Z_OFF], [Math.PI / 2, 0, 0], false
-    );
-    st.root.add(outlineShell(st, ring));
-    addMesh(st, st.root, newGeo(st, new THREE.SphereGeometry(1, 8, 6)), toon(st, hex(palette.sun)), [0, 0.22, lz + LAND_Z_OFF], undefined, false).scale.setScalar(0.08);
-    // direction chevrons painted on the belt
-    for (const cx of [-4.5, -7.5]) {
-      const c1 = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(0.5, 0.045, 0.1)), toon(st, hex(palette.sunDeep)), [cx - 0.24, 0.24, lz + 0.17], [0, 0.55, 0], false);
-      const c2 = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(0.5, 0.045, 0.1)), toon(st, hex(palette.sunDeep)), [cx - 0.24, 0.24, lz - 0.17], [0, -0.55, 0], false);
-      void c1;
-      void c2;
-    }
-  }
+    for (const side of [-0.8, 0.8]) outline(st, mesh(root, wallG, toon(st, P.color), [beltCx, 0.18, lz + side]));
+    for (const ex of [BELT_L, BELT_R]) outline(st, mesh(root, capG, toon(st, P.color), [ex, 0.18, lz]));
 
-  // ---- scoreboards: gold coin pips = ammo left, mint star pips = score ----
-  const sbX = [-8.2, -8.6, -9.0, -9.4];
-  const coinPipGeo = newGeo(st, new THREE.CylinderGeometry(1, 1, 0.42, 10));
-  const starPipGeo = newGeo(st, new THREE.OctahedronGeometry(1));
-  for (let lane = 0; lane < 4; lane++) {
-    const lz = LANE_Z[lane];
-    const bx = sbX[lane];
-    const post = addMesh(st, st.root, newGeo(st, new THREE.CylinderGeometry(0.07, 0.09, 1.1, 8)), toon(st, woodDark), [bx, 0.55, lz], undefined, false);
-    const baseDisc = addMesh(st, st.root, newGeo(st, new THREE.CylinderGeometry(0.2, 0.24, 0.1, 12)), toon(st, woodDark), [bx, 0.05, lz], undefined, false);
-    const frame = addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(2.5, 1.0, 0.06)), toon(st, cream), [bx, 1.4, lz], undefined, false);
-    addMesh(st, st.root, newGeo(st, new THREE.BoxGeometry(2.32, 0.82, 0.07)), toon(st, hex(palette.berryDeep)), [bx, 1.42, lz], undefined, false);
-    // header glyphs: gold coin = ammo, mint star = score
-    const coinHead = addMesh(st, st.root, coinPipGeo, toon(st, hex(palette.sun)), [bx - 0.68, 1.8, lz + 0.05], undefined, false);
-    coinHead.scale.setScalar(0.1);
-    const starHead = addMesh(st, st.root, starPipGeo, toon(st, hex(palette.mint)), [bx + 0.68, 1.8, lz + 0.05], undefined, false);
-    starHead.scale.setScalar(0.11);
-    const pips: THREE.Mesh[] = [];
-    for (let r = 0; r < 4; r++) {
-      for (let c = 0; c < 4; c++) {
-        const pip = new THREE.Mesh(coinPipGeo, toon(st, hex(palette.sun)));
-        pip.position.set(bx - 0.68 + (c - 1.5) * 0.17, 1.42 + (1.5 - r) * 0.17, lz + 0.05);
-        pip.scale.setScalar(0.075);
-        pip.castShadow = false;
-        st.root.add(pip);
-        pips.push(pip);
-      }
-    }
-    const stars: THREE.Mesh[] = [];
-    for (let r = 0; r < 4; r++) {
-      for (let c = 0; c < 8; c++) {
-        const pip = new THREE.Mesh(starPipGeo, toon(st, hex(palette.mint)));
-        pip.position.set(bx + 0.68 + (c - 3.5) * 0.17, 1.42 + (1.5 - r) * 0.17, lz + 0.05);
-        pip.scale.setScalar(0.08);
-        pip.castShadow = false;
-        pip.visible = false;
-        st.root.add(pip);
-        stars.push(pip);
-      }
-    }
-    st.players[lane].ammoPips = pips;
-    st.players[lane].scoreStars = stars;
-    void post;
-    void baseDisc;
-    void frame;
-  }
+    // target ring + bullseye + landing shadow
+    outline(st, mesh(root, ringG, toon(st, hex(palette.cream)), [0, BELT_Y + 0.02, lz], [Math.PI / 2, 0, 0]));
+    mesh(root, bullG, toon(st, hex(palette.sun)), [0, BELT_Y + 0.02, lz], [Math.PI / 2, 0, 0]);
+    P.shadowMat = basic(st, ink, 0.25);
+    P.shadowMat.depthWrite = false;
+    P.shadow = mesh(root, shadowG, P.shadowMat, [0, BELT_Y + 0.01, lz], [-Math.PI / 2, 0, 0]);
 
-  // ---- player platforms + cannons ----
-  const BASE_TILT = Math.atan2(0.51, -0.51); // barrel tilt toward the lane (down-forward)
-  for (let lane = 0; lane < 4; lane++) {
-    const lz = LANE_Z[lane];
-    const px = PLAT_X[lane];
-    const pz = lz + PLAT_Z_OFF;
-    const color = st.players[lane].color;
-    // stilted platform: thin column + floating disk (coin fall lines stay clear)
-    const col = addMesh(st, st.root, newGeo(st, new THREE.CylinderGeometry(0.34, 0.44, 4.3, 14)), toon(st, color), [px, 2.15, pz], undefined, true);
-    st.root.add(outlineShell(st, col));
-    const disk = addMesh(st, st.root, newGeo(st, new THREE.CylinderGeometry(1.05, 1.05, 0.55, 18)), toon(st, color), [px, 4.62, pz], undefined, true);
-    st.root.add(outlineShell(st, disk));
-    // cannon group
-    const cannon = new THREE.Group();
-    cannon.position.set(px, 0, pz);
-    st.root.add(cannon);
-    const base = addMesh(st, cannon, newGeo(st, new THREE.BoxGeometry(0.5, 0.28, 0.55)), toon(st, hex(palette.metal)), [0, 5.04, 0.62], undefined, true);
-    cannon.add(outlineShell(st, base));
+    // FIRE! marker: a gold line across the belt, chevrons, and a label
+    const arrow = new THREE.Group();
+    arrow.position.set(SPEED_MIN * FLIGHT * 1.15, 0, lz);
+    P.arrowMat = basic(st, hex(palette.ink));
+    mesh(arrow, lineG, P.arrowMat, [0, BELT_Y + 0.02, 0]);
+    // a "<" pointing at the ring (the way the baskets travel)
+    for (const sz of [-1, 1]) {
+      mesh(arrow, chevG, P.arrowMat, [-0.4, BELT_Y + 0.02, 0.15 * sz], [0, (-sz * Math.PI) / 4, 0]);
+    }
+    mesh(arrow, stemG, P.arrowMat, [0, 0.56, -0.82]);
+    const tag = sprite(st, fireTex, you ? 1.7 : 1.2, you ? 0.64 : 0.45);
+    tag.position.set(0, you ? 1.22 : 1.05, -0.82);
+    arrow.add(tag);
+    root.add(arrow);
+    P.arrow = arrow;
+    P.arrowX = arrow.position.x;
+
+    // name flag at the left end
+    mesh(root, poleG, toon(st, hex(palette.woodDark)), [FLAG_X, 0.65, lz - 0.55]);
+    const flag = sprite(st, labelTexture(st, P.name, P.colorCss, palette.white), 1.9, 0.6);
+    flag.position.set(FLAG_X, 1.35, lz - 0.45);
+    root.add(flag);
+
+    // cannon: post behind the belt, arm over the ring, barrel straight down
+    const post = mesh(root, postG, toon(st, P.color), [0, 1.35, lz + POST_DZ]);
+    outline(st, post);
+    const arm = mesh(root, armG, toon(st, hex(palette.metal)), [0, 2.75, lz + POST_DZ / 2 + 0.05]);
+    outline(st, arm);
+    const body = mesh(root, bodyG, toon(st, P.color), [0, 2.78, lz]);
+    outline(st, body);
     const barrel = new THREE.Group();
-    barrel.position.set(0, 5.15, 0.62);
-    cannon.add(barrel);
-    const barMesh = addMesh(st, barrel, newGeo(st, new THREE.CylinderGeometry(0.17, 0.21, 0.78, 12)), toon(st, hex(palette.metal)), [0, -0.255, 0.255], [BASE_TILT, 0, 0], true);
-    void barMesh;
-    const ringMesh = addMesh(st, barrel, newGeo(st, new THREE.TorusGeometry(0.2, 0.055, 8, 16)), toon(st, hex(palette.candy)), [0, -0.51, 0.51], [Math.PI / 2 + BASE_TILT, 0, 0], false);
-    void ringMesh;
-    const glow = new THREE.Mesh(newGeo(st, new THREE.SphereGeometry(1, 10, 8)), basic(st, hex(palette.sun)));
-    glow.position.set(0, -0.51, 0.51);
-    glow.scale.setScalar(0.12);
-    glow.visible = false;
-    glow.castShadow = false;
-    barrel.add(glow);
-    st.players[lane].barrel = barrel;
-    st.players[lane].glow = glow;
+    barrel.position.set(0, 2.62, lz);
+    root.add(barrel);
+    outline(st, mesh(barrel, barrelG, toon(st, hex(palette.metal)), [0, -0.12, 0]));
+    mesh(barrel, muzzleG, toon(st, hex(palette.candy)), [0, -0.42, 0], [Math.PI / 2, 0, 0]);
+    P.barrel = barrel;
 
-    // character on the platform, behind the cannon, facing the lane (+Z)
-    const ch = st.ctx.characters[st.players[lane].id] ?? null;
+    // the player's avatar stands beside its cannon, facing the camera
+    const ch = st.ctx.characters[P.id];
     if (ch) {
-      const wrapper = new THREE.Group();
-      wrapper.position.set(px + 0.55, 4.895, lz - 3.95);
-      wrapper.add(ch.group);
-      // Drop the screen's lineup offset (x, 0, 5.4) so the avatar stands on
-      // its platform instead of down on the belts.
-      ch.group.position.set(0, 0, 0);
-      st.root.add(wrapper);
-      st.players[lane].wrapper = wrapper;
-      st.players[lane].char = ch.group;
+      ch.group.position.set(CHAR_X, 0, lz + CHAR_DZ);
       ch.setFacing(0);
       ch.anim.idle();
     }
-  }
 
-  // Multi-directional fills keep every surface in the cel light band so the
-  // arena reads bright and candy-coloured from any angle.
-  const fill = new THREE.DirectionalLight(0xffffff, 1.15);
-  fill.position.set(2, 10, 16);
-  st.root.add(fill);
-  const fillBack = new THREE.DirectionalLight(0xffffff, 0.9);
-  fillBack.position.set(0, 12, -16);
-  st.root.add(fillBack);
-  const fillSide = new THREE.DirectionalLight(0xffffff, 0.55);
-  fillSide.position.set(-12, 7, 2);
-  st.root.add(fillSide);
-  void ink;
-  void scene;
+    // pulsing outline around YOUR belt
+    if (you) {
+      const m = basic(st, hex(palette.sun), 0.9);
+      m.depthWrite = false;
+      st.youFrame = m;
+      for (const dz of [-1.07, 1.07]) mesh(root, frameLong, m, [beltCx, 0.4, lz + dz]);
+      for (const ex of [BELT_L - 0.25, BELT_R + 0.25]) mesh(root, frameEnd, m, [ex, 0.4, lz]);
+    }
+
+    // this lane's copy of the shared basket schedule
+    for (let i = 0; i < st.schedule.length; i++) {
+      const group = new THREE.Group();
+      group.visible = false;
+      const bodyM = mesh(group, basketBodyG, toon(st, hex(palette.wood)), [0, 0.41, 0]);
+      outline(st, bodyM);
+      const rim = mesh(group, basketRimG, toon(st, hex(palette.cream)), [0, RIM_Y, 0], [Math.PI / 2, 0, 0]);
+      outline(st, rim);
+      const lid = mesh(group, lidG, toon(st, hex(palette.sun)), [0, RIM_Y + 0.02, 0]);
+      lid.visible = false;
+      const glow = mesh(group, glowG, basic(st, hex(palette.sun), 0.9), [0, RIM_Y, 0], [Math.PI / 2, 0, 0]);
+      glow.visible = false;
+      group.position.set(SPAWN_X, 0, lz);
+      root.add(group);
+      P.baskets.push({ group, rim, lid, glow, closed: false, lit: 0 });
+    }
+  }
 }
 
 /* --------------------------- gameplay bits ------------------------------ */
 
-function spawnBasket(st: State, lane: number): void {
-  const speed = 2.6 + st.ctx.rng() * 0.9;
-  const colorHex = hex(BASKET_COLORS[Math.floor(st.ctx.rng() * BASKET_COLORS.length)]);
-  const lz = LANE_Z[lane];
-  const group = new THREE.Group();
-  group.position.set(BASKET_SPAWN_X, 0, lz);
-  const body = addMesh(st, group, newGeo(st, new THREE.CylinderGeometry(0.55, 0.42, 0.5, 14)), toon(st, colorHex), [0, 0.41, 0], undefined, true);
-  group.add(outlineShell(st, body));
-  const rim = addMesh(st, group, newGeo(st, new THREE.TorusGeometry(0.58, 0.07, 8, 18)), toon(st, hex(palette.cream)), [0, 0.66, 0], [Math.PI / 2, 0, 0], true);
-  group.add(outlineShell(st, rim));
-  st.root.add(group);
-  st.baskets.push({ group, lane, x: BASKET_SPAWN_X, speed, bounce: 0, spawnTime: st.simTime });
+function hudAmmo(st: State, P: PlayerSt): void {
+  st.ctx.hud.tag(P.id, P.ammo > 0 ? `🪙 ${P.ammo}` : "DONE");
 }
 
-function fireCoin(st: State, pid: number): void {
-  const P = st.players[pid];
-  const lane = P.lane;
-  const tA = arriveTime(MUZZLE_Y, VY);
-  const z0 = LANE_Z[lane] + PLAT_Z_OFF + MUZZLE_Z_OFF;
-  const vx = (P.aimError - PLAT_X[lane]) / tA;
-  const vz = (LANE_Z[lane] + LAND_Z_OFF - z0) / tA;
-  const x0 = PLAT_X[lane];
+function fireCoin(st: State, P: PlayerSt): void {
+  P.ammo -= 1;
+  hudAmmo(st, P);
   const group = new THREE.Group();
-  const coinMesh = new THREE.Mesh(newGeo(st, new THREE.SphereGeometry(1, 10, 8)), toon(st, hex(palette.sun)));
-  coinMesh.scale.setScalar(0.09);
-  coinMesh.position.set(x0, MUZZLE_Y, z0);
-  coinMesh.castShadow = true;
-  group.add(coinMesh);
-  const tail: THREE.Mesh[] = [];
+  const coin = new THREE.Mesh(st.g.coin, toon(st, hex(palette.sun)));
+  coin.rotation.x = Math.PI / 2;
+  group.add(coin);
+  outline(st, coin);
   for (let i = 0; i < 2; i++) {
-    const t = new THREE.Mesh(newGeo(st, new THREE.SphereGeometry(1, 8, 6)), toon(st, hex(palette.sunDeep)));
-    t.scale.setScalar(0.05 - i * 0.012);
-    t.position.copy(coinMesh.position);
-    t.castShadow = false;
+    const t = new THREE.Mesh(st.g.sphere, toon(st, hex(palette.sunDeep)));
+    t.scale.setScalar(0.07 - i * 0.02);
+    t.position.y = 0.22 + i * 0.2;
     group.add(t);
-    tail.push(t);
   }
+  group.position.set(0, MUZZLE_Y, LANE_Z[P.lane]);
   st.root.add(group);
-  st.coins.push({ group, tail, lane, x: x0, y: MUZZLE_Y, z: z0, vx, vy: VY, vz, landX: P.aimError + P.landError, resolved: false });
+  st.coins.push({ lane: P.lane, fireT: st.simT, landT: st.simT + FLIGHT, resolved: false, caught: false, group, popped: false });
   P.recoil = 1;
-  P.poseT = 0.45;
-  const ch = st.ctx.characters[P.id];
-  if (ch) ch.anim.squash();
-  st.ctx.playSfx("whoosh", { volume: 0.6 });
+  if (P.cheerT <= 0) st.ctx.characters[P.id]?.anim.squash();
+  st.ctx.playSfx("whoosh", { volume: P.id === st.humanId ? 0.6 : 0.25, pitch: 1.2 });
 }
 
-function scoreHit(st: State, pid: number, pts: number, at: [number, number, number]): void {
-  const P = st.players[pid];
-  P.score += pts;
-  for (let k = 0; k < pts; k++) {
-    const idx = P.score - pts + k;
-    if (idx < P.scoreStars.length) P.scoreStars[idx].visible = true;
+/** Coin reaches the rim plane: the nearest open basket within CATCH_R takes it. */
+function resolveCoin(st: State, c: Coin): void {
+  c.resolved = true;
+  const P = st.players[c.lane];
+  let best = Infinity;
+  let bi = -1;
+  for (let i = 0; i < st.schedule.length; i++) {
+    if (P.baskets[i].closed) continue;
+    const d = Math.abs(basketX(st.schedule[i], c.landT));
+    if (d < best) {
+      best = d;
+      bi = i;
+    }
   }
-  if (pts >= 2) {
-    st.ctx.playSfx("coin.gain", { volume: 0.9, pitch: 1.3 });
-    st.ctx.playSfx("crowd.ooh", { volume: 0.6 });
-    spawnBurst(st, at, hex(palette.sun), 10, 3.2, 0.5, 7, 0.08);
-    spawnBurst(st, at, hex(palette.white), 6, 2.6, 0.45, 6, 0.06);
-    st.shake = Math.min(0.3, st.shake + 0.12);
+  const lz = LANE_Z[c.lane];
+  if (bi < 0 || best > CATCH_R) return; // keeps falling to the belt (render side)
+  c.caught = true;
+  const b = P.baskets[bi];
+  b.closed = true;
+  b.lit = 1;
+  const pts = best <= BULL_R ? 2 : 1;
+  P.score += pts;
+  if (pts === 2) P.bulls += 1;
+  st.ctx.hud.score(P.id, P.score);
+  const at: [number, number, number] = [basketX(st.schedule[bi], c.landT), 0.9, lz];
+  const mine = P.id === st.humanId;
+  // own material (fades out, disposed with the popup)
+  const pop = new THREE.Sprite(new THREE.SpriteMaterial({ map: pts === 2 ? st.g.popup2 : st.g.popup1, depthWrite: false }));
+  pop.scale.set(pts === 2 ? 1.2 : 0.9, pts === 2 ? 0.45 : 0.34, 1);
+  pop.position.set(at[0], 1.25, lz);
+  st.root.add(pop);
+  st.popups.push({ sprite: pop, life: 0.8 });
+  if (pts === 2) {
+    st.ctx.playSfx("coin.gain", { volume: mine ? 0.9 : 0.35, pitch: 1.3 });
+    if (mine) st.ctx.playSfx("crowd.ooh", { volume: 0.5 });
+    burst(st, at, hex(palette.sun), 10, 3.2, 0.5, 7, 0.08);
+    burst(st, at, hex(palette.white), 6, 2.6, 0.45, 6, 0.06);
+    if (mine) st.shake = Math.min(0.25, st.shake + 0.1);
   } else {
-    st.ctx.playSfx("coin.gain", { volume: 0.8 });
-    spawnBurst(st, at, hex(palette.sun), 8, 2.6, 0.45, 7, 0.07);
-    st.shake = Math.min(0.3, st.shake + 0.05);
+    st.ctx.playSfx("coin.gain", { volume: mine ? 0.75 : 0.3 });
+    burst(st, at, hex(palette.sun), 7, 2.6, 0.45, 7, 0.07);
   }
   const ch = st.ctx.characters[P.id];
   if (ch) {
     ch.anim.cheer();
-    P.cheerT = 1.1;
+    P.cheerT = 0.9;
   }
 }
 
-function resolveCoin(st: State, c: Coin): void {
-  const lane = c.lane;
-  const tA = c.y > CATCH_Y ? Math.min(arriveTime(c.y, c.vy), 0.15) : 0;
-  let best = Infinity;
-  let bestX = 0;
-  let bestB: Basket | null = null;
-  for (const b of st.baskets) {
-    if (b.lane !== lane) continue;
-    const bx = b.x - b.speed * tA;
-    const d = Math.abs(bx - c.landX); // distance from THIS coin's landing x
-    if (d < best) {
-      best = d;
-      bestX = bx;
-      bestB = b;
-    }
-  }
-  if (best <= CATCH_R) {
-    // caught (bestX = basket centre at the exact rim crossing)
-    if (bestB) bestB.bounce = 1;
-    const pts = best <= PERFECT_R ? 2 : 1;
-    if (st.players[lane].id > 0) st.players[lane].cpuHits += 1;
-    scoreHit(st, lane, pts, [bestX, 0.8, LANE_Z[lane] + LAND_Z_OFF]);
-  } else if (best <= 1.6) {
-    // near miss: little dust puff
-    spawnBurst(st, [bestX, 0.22, LANE_Z[lane] + LAND_Z_OFF], hex(palette.creamShadow), 5, 1.4, 0.4, 2.5, 0.05);
-  }
-  c.resolved = true;
-  st.root.remove(c.group);
+/** Points, then bullseyes, then the tie-break drawn from ctx.rng at setup. */
+function ranking(st: State): number[] {
+  return [...st.players]
+    .sort((a, b) => b.score - a.score || b.bulls - a.bulls || b.tieBreak - a.tieBreak)
+    .map((p) => p.id);
 }
 
 function endRound(st: State): void {
   if (st.finished) return;
   st.finished = true;
-  const ranking = [...st.players]
-    .sort((a, b) => b.score - a.score || a.id - b.id)
-    .map((p) => p.id);
-  const scores = st.players.map((p) => `${p.id}:${p.score}`).join(",");
-  const shots = st.players.map((p) => `s${p.id}:${p.cpuShots}/${p.cpuHits}/${p.cpuAborts}`).join(",");
-  console.log(`[coin_cannon] finish ranking=${ranking.join(",")} scores=${scores} shots=${shots}`);
-  const winnerName = st.ctx.players[ranking[0]]?.name ?? "?";
-  st.ctx.announce(`${winnerName} WINS COIN CANNON!`, { durationMs: 1600, sound: null });
+  const order = ranking(st);
+  st.ctx.hud.timer(null);
+  const winner = st.byId.get(order[0]);
+  st.ctx.announce(`${winner?.name ?? "?"} WINS!`, { durationMs: 1600, sound: null });
   st.ctx.playSfx("crowd.cheer", { volume: 0.9 });
-  st.shake = 0.24;
-  const winCh = st.ctx.characters[ranking[0]];
-  if (winCh) winCh.anim.cheer();
-  st.ctx.finish(ranking);
+  for (const P of st.players) P.cheerT = 0;
+  st.ctx.characters[order[0]]?.anim.cheer();
+  for (const id of order.slice(1)) st.ctx.characters[id]?.anim.idle();
+  st.ctx.finish(order);
 }
 
-/* ------------------------- fixed-step simulation ------------------------- */
+/** One fixed 1/60 s step. Gameplay decisions only; no rng draws. */
+function step(st: State): void {
+  st.simT += DT;
+  const t = st.simT;
+  if (st.reload > 0) st.reload = Math.max(0, st.reload - DT);
 
-/**
- * One fixed 0.25s simulation step. All RNG draws happen here at deterministic
- * simTime boundaries, so the draw sequence is identical across runs regardless
- * of frame timing. Visual-only updates (bounce, recoil, shake) run on dt in
- * the main update loop.
- */
-function simulateStep(st: State, step: number): void {
-  const { ctx } = st;
-
-  // ---- basket spawns (frame-independent: fixed simTime intervals) ----
-  for (let lane = 0; lane < 4; lane++) {
-    if (st.simTime >= st.nextSpawn[lane]) {
-      spawnBasket(st, lane);
-      st.nextSpawn[lane] += 1.7 + (ctx.rng() - 0.5) * 0.5;
+  // local fire (tap is taken on the next step: at most 1/60 s late)
+  if (st.pendingFire > 0) {
+    st.pendingFire -= 1;
+    const H = st.byId.get(st.humanId);
+    if (H && H.ammo > 0 && st.reload <= 0) {
+      fireCoin(st, H);
+      st.reload = 0.15;
     }
   }
 
-  // ---- move + despawn baskets (analytic position from spawnTime) ----
-  for (let i = st.baskets.length - 1; i >= 0; i--) {
-    const b = st.baskets[i];
-    b.x = BASKET_SPAWN_X - b.speed * (st.simTime - b.spawnTime);
-    b.group.position.x = b.x;
-    if (b.x < BASKET_DESPAWN_X) {
-      st.root.remove(b.group);
-      disposeGeos(b.group);
-      st.baskets.splice(i, 1);
+  // CPUs: one planned shot per basket, at the ideal time + their error
+  for (const P of st.players) {
+    if (!P.cpu) continue;
+    while (P.nextPlan < P.plan.length && P.ammo > 0) {
+      const at = P.plan[P.nextPlan];
+      if (at === null) {
+        P.nextPlan += 1;
+        continue;
+      }
+      if (t < at) break;
+      P.nextPlan += 1;
+      fireCoin(st, P);
     }
   }
 
-  // Coins fired this step wait until the next step, matching a charge that
-  // resolves before the following basket tick.
-  const coinsAtStart = st.coins.length;
-
-  // ---- CPU thinking (players 1..3): decisions at fixed simTime intervals ----
-  const tAThink = arriveTime(MUZZLE_Y, VY);
-  for (let pid = 0; pid < st.players.length; pid++) {
-    const P = st.players[pid];
-    if (isLocalPlayer(st.ctx.players, P.id)) continue;
-    if (P.ammo <= 0) continue;
-    if (st.simTime >= P.cpuNextThink && !P.charging) {
-      P.cpuNextThink += CPU_THINK_INTERVAL;
-      // draw this opportunity's slop first
-      const slop = CPU_TIMING_MIN + ctx.rng() * (CPU_TIMING_MAX - CPU_TIMING_MIN);
-      // lead: where a basket must be NOW so it is within catch+slop of the
-      // aim point when the coin lands (charge delay shifts it by ~s*CHARGE)
-      const lead = tAThink + CHARGE;
-      let best = Infinity;
-      for (const b of st.baskets) {
-        if (b.lane !== P.lane) continue;
-        const d = Math.abs(b.x - b.speed * lead);
-        if (d < best) best = d;
-      }
-      if (best <= 0.84 + slop) {
-        // fallible CPU: fire with p=CPU_FIRE_P, with real aim error (±0.70u)
-        // plus a separate landing error drawn at the same fixed sim step
-        const err = (ctx.rng() * 2 - 1) * CPU_AIM_ERR;
-        if (ctx.rng() < CPU_FIRE_P) {
-          P.aimError = err;
-          P.landError = (ctx.rng() * 2 - 1) * CPU_LAND_ERR;
-          P.aimSlop = slop;
-          // Fire on this sim step. Waiting out CHARGE on frame delta let a
-          // slow frame move the baskets before the re-check, so two seeded
-          // runs could disagree. CHARGE is shorter than the sim step, so the
-          // baskets are still the ones this decision just measured.
-          const tA = arriveTime(MUZZLE_Y, VY);
-          let bestNow = Infinity;
-          for (const b of st.baskets) {
-            if (b.lane !== P.lane) continue;
-            const d = Math.abs(b.x - b.speed * tA - P.aimError);
-            if (d < bestNow) bestNow = d;
-          }
-          if (bestNow <= 0.84 + P.aimSlop) {
-            P.ammo -= 1;
-            if (P.ammoPips[P.ammo]) P.ammoPips[P.ammo].visible = false;
-            P.cpuShots += 1;
-            fireCoin(st, P.id);
-          } else {
-            P.cpuAborts += 1;
-          }
-        }
-      }
-    }
-  }
-
-  // ---- coins: analytic rim-crossing resolve, then integrate ----
-  for (let ci = 0; ci < coinsAtStart; ci++) {
-    const c = st.coins[ci];
-    if (!c.resolved) {
-      if (c.y <= CATCH_Y || arriveTime(c.y, c.vy) <= step) {
-        resolveCoin(st, c);
-      }
-    }
+  // coins land
+  let inFlight = 0;
+  for (const c of st.coins) {
     if (c.resolved) continue;
-    c.vy -= GRAV * step;
-    c.x += c.vx * step;
-    c.y += c.vy * step;
-    c.z += c.vz * step;
-    c.group.position.set(c.x, c.y, c.z);
-    for (let i = 0; i < c.tail.length; i++) {
-      const t = c.tail[i];
-      t.position.set(c.x - c.vx * (0.03 + i * 0.035), c.y - c.vy * (0.03 + i * 0.035), c.z - c.vz * (0.03 + i * 0.035));
-      const s = 0.05 - i * 0.012;
-      t.scale.setScalar(Math.max(0.008, s * Math.min(1, c.y / (MUZZLE_Y * 0.8))));
+    if (t >= c.landT) resolveCoin(st, c);
+    else inFlight += 1;
+  }
+
+  // end: everyone out of coins (or nothing left to catch), all coins landed
+  if (st.endAt < 0) {
+    const last = st.schedule[st.schedule.length - 1];
+    const noneLeft = t > last.arrive + CATCH_R / last.speed;
+    if ((noneLeft || st.players.every((p) => p.ammo <= 0)) && inFlight === 0) st.endAt = t + SETTLE;
+  }
+  if ((st.endAt >= 0 && t >= st.endAt) || t >= TIME_CAP) endRound(st);
+}
+
+/* ------------------------------ per frame -------------------------------- */
+
+function render(st: State, dt: number): void {
+  const rt = st.simT + st.acc; // smooth render time
+  const pulse = 0.5 + 0.5 * Math.sin(st.t * 6);
+
+  for (const P of st.players) {
+    // baskets
+    let target: BasketPlan | null = null;
+    for (let i = 0; i < st.schedule.length; i++) {
+      const plan = st.schedule[i];
+      const b = P.baskets[i];
+      const x = basketX(plan, rt);
+      const on = x <= SPAWN_X && x >= EXIT_X - 0.6;
+      b.group.visible = on;
+      if (!target && !b.closed && rt < plan.arrive - FLIGHT + 0.25) target = plan;
+      if (!on) continue;
+      // pop in at the right end, sink off the left end
+      const sIn = Math.min(1, (SPAWN_X - x) / 0.6);
+      const sOut = Math.min(1, Math.max(0, (x - (EXIT_X - 0.6)) / 0.6));
+      const s = Math.max(0.01, Math.min(sIn, sOut));
+      b.lit = Math.max(0, b.lit - dt * 1.6);
+      const bounce = b.lit * b.lit;
+      b.group.position.set(x, 0.15 * bounce, LANE_Z[P.lane]);
+      b.group.scale.set(s * (1 + 0.1 * bounce), s * (1 - 0.15 * bounce), s * (1 + 0.1 * bounce));
+      b.lid.visible = b.closed;
+      b.glow.visible = b.closed;
+      if (b.closed) b.glow.scale.setScalar(1 + 0.35 * bounce);
+      b.rim.material = toon(st, hex(b.closed ? palette.sun : palette.cream));
     }
-    if (c.y <= 0.06) {
-      c.resolved = true;
-      st.root.remove(c.group);
-      ctx.playSfx("pop", { volume: 0.3 });
+
+    // FIRE! line slides to the next open basket's lead (speed x FLIGHT)
+    if (target) {
+      const want = target.speed * FLIGHT;
+      P.arrowX += (want - P.arrowX) * Math.min(1, dt * 6);
+      P.arrow.position.x = P.arrowX;
+      const until = target.arrive - FLIGHT - rt;
+      const near = Math.max(0, 1 - Math.abs(until) / 0.35);
+      P.arrowMat.color.setHex(mix(hex(palette.ink), hex(palette.candy), near));
+      P.arrow.visible = P.ammo > 0;
+    } else {
+      P.arrow.visible = false;
+    }
+
+    // landing shadow: grows and darkens while this lane's coin falls
+    let k = 0;
+    for (const c of st.coins) {
+      if (c.lane !== P.lane || c.resolved) continue;
+      k = Math.max(k, Math.min(1, (rt - c.fireT) / FLIGHT));
+    }
+    P.shadow.scale.setScalar(0.55 + 0.6 * k);
+    P.shadowMat.opacity = 0.18 + 0.4 * k;
+
+    // cannon recoil + character idle return
+    P.recoil = Math.max(0, P.recoil - dt * 4);
+    P.barrel.position.y = 2.62 + 0.12 * P.recoil;
+    P.barrel.scale.set(1 + 0.15 * P.recoil, 1 - 0.12 * P.recoil, 1 + 0.15 * P.recoil);
+    if (P.cheerT > 0) {
+      P.cheerT -= dt;
+      if (P.cheerT <= 0) st.ctx.characters[P.id]?.anim.idle();
     }
   }
+
+  // coins: analytic fall from the muzzle; misses bounce off the belt
   for (let i = st.coins.length - 1; i >= 0; i--) {
-    if (st.coins[i].resolved) st.coins.splice(i, 1);
+    const c = st.coins[i];
+    const lz = LANE_Z[c.lane];
+    if (c.resolved && c.caught) {
+      st.root.remove(c.group);
+      st.coins.splice(i, 1);
+      continue;
+    }
+    const tau = Math.max(0, rt - c.fireT);
+    const y = MUZZLE_Y - 0.5 * GRAV * tau * tau;
+    if (c.resolved && y <= BELT_Y + 0.05) {
+      if (!c.popped) {
+        c.popped = true;
+        burst(st, [0, BELT_Y + 0.05, lz], hex(palette.creamShadow), 6, 1.6, 0.4, 3, 0.06);
+        if (c.lane === 0) st.ctx.playSfx("pop", { volume: 0.35 });
+      }
+      st.root.remove(c.group);
+      st.coins.splice(i, 1);
+      continue;
+    }
+    c.group.position.set(0, Math.max(BELT_Y, y), lz);
+    c.group.rotation.y += dt * 12;
   }
+
+  for (const r of st.rollers) r.rotation.y += dt * 4;
+  if (st.youFrame) st.youFrame.opacity = 0.35 + 0.6 * pulse;
+
+  st.shake = Math.max(0, st.shake - dt * 0.9);
+  const cam = st.ctx.camera;
+  const a = st.shake;
+  cam.position.set(
+    st.camBase[0] + (a > 0 ? Math.sin(st.t * 57) * a : 0),
+    st.camBase[1] + (a > 0 ? Math.cos(st.t * 43) * a : 0),
+    st.camBase[2] + (a > 0 ? Math.sin(st.t * 61) * a : 0),
+  );
+  cam.lookAt(st.camLook[0], st.camLook[1], st.camLook[2]);
+  updateParticles(st, dt);
 }
 
 /* ------------------------------ minigame --------------------------------- */
@@ -802,236 +900,185 @@ const coinCannon: Minigame = {
   id: "coin_cannon",
   name: "Coin Cannon",
   genre: "timing",
-  howTo: "Tap to fire a coin into the moving basket. The highest score wins.",
-  goal: "Fire coins into the basket",
+  howTo:
+    "Your cannon is on the FRONT belt, glowing. Coins take a moment to drop, so tap when a basket reaches the arrow. +1 per catch, +2 dead-centre. Most points wins!",
+  goal: "Fire when the basket hits the arrow!",
   tap: "FIRE",
   steer: false,
-  tapSfx: "ui.click",
+  tapSfx: "whoosh",
+  rules: {
+    format: "ffa",
+    length: "12 coins",
+    win: "Most points after 12 coins",
+    touch: ["Tap anywhere (or FIRE) to drop a coin", "Fire as a basket reaches the arrow", "Dead-centre catches score +2"],
+    keys: ["Space: fire a coin", "Or click anywhere"],
+  },
 
   setup(ctx: MinigameContext): void {
+    // ---- every gameplay draw, in a fixed order ----
+    const schedule = makeSchedule(ctx.rng);
+    const plans = ctx.players.map(() => {
+      const m = CPU_M_MIN + ctx.rng() * (CPU_M_MAX - CPU_M_MIN);
+      return schedule.map((b) => {
+        const skip = ctx.rng() < CPU_SKIP;
+        const err = normal(ctx.rng) * CPU_SD * m;
+        return skip ? null : b.arrive - FLIGHT + err;
+      });
+    });
+    const tieBreaks = ctx.players.map(() => ctx.rng());
+    const cosRng = mulberry32(Math.floor(ctx.rng() * 0x7fffffff));
+
+    const automated = new Set(automatedSeatIds(ctx.players, isAutoplay()));
+    const localIdx = localPlayerIndex(ctx.players);
+    const localId = ctx.players[localIdx]?.id ?? 0;
+    // Lanes: the local seat at the front, the rest behind in seat order.
+    const order = [localIdx, ...ctx.players.map((_, i) => i).filter((i) => i !== localIdx)];
+
     const st: State = {
       ctx,
       root: new THREE.Group(),
       players: [],
-      baskets: [],
+      byId: new Map(),
+      schedule,
       coins: [],
       particles: [],
+      popups: [],
       rollers: [],
-      nextSpawn: [0, 0, 0, 0],
-      simTime: 0,
-      simAccumulator: 0,
+      youFrame: null,
+      humanId: automated.has(localId) ? -1 : localId,
+      pendingFire: 0,
+      reload: 0,
+      simT: 0,
+      acc: 0,
       t: 0,
-      shake: 0,
-      announcedGo: false,
+      endAt: -1,
       finished: false,
-      camBase: [0, 12.5, 13.8],
-      camLook: [0, 2.6, -0.5],
+      shake: 0,
+      camBase: [0, 12, 12],
+      camLook: [0, 0, 0],
+      cosRng,
       toons: new Map(),
+      ink: null,
+      shells: new Map(),
       geos: [],
       mats: [],
+      texs: [],
+      g: null as unknown as State["g"],
     };
     state = st;
+    st.g = {
+      sphere: geo(st, new THREE.SphereGeometry(1, 8, 6)),
+      coin: geo(st, new THREE.CylinderGeometry(0.17, 0.17, 0.06, 16)),
+      popup1: labelTexture(st, "+1", palette.mint, palette.white, 128, 64),
+      popup2: labelTexture(st, "+2!", palette.sun, palette.candy, 160, 64),
+    };
 
-    // ---- per-player state (id = playerId; lane 0 = human, nearest camera) ----
-    ctx.players.forEach((p, lane) => {
-      st.players.push({
+    order.forEach((idx, lane) => {
+      const p = ctx.players[idx];
+      const P: PlayerSt = {
         id: p.id,
         lane,
+        name: p.name,
         color: hex(p.color),
-        ammo: AMINO,
+        colorCss: p.color,
+        ammo: COINS,
         score: 0,
-        charging: false,
-        chargeT: 0,
-        aimError: 0,
-        landError: 0,
-        aimSlop: 0,
-        cpuNextThink: 0.4 + lane * CPU_THINK_INTERVAL + ctx.rng() * CPU_THINK_INTERVAL,
-        recoil: 0,
-        poseT: 0,
-        cheerT: 0,
-        cpuShots: 0,
-        cpuHits: 0,
-        cpuAborts: 0,
-        wrapper: new THREE.Group(),
-        char: null,
+        bulls: 0,
+        tieBreak: tieBreaks[idx],
+        cpu: automated.has(p.id),
+        plan: plans[idx],
+        nextPlan: 0,
         barrel: new THREE.Group(),
-        glow: new THREE.Mesh(),
-        ammoPips: [],
-        scoreStars: [],
-      });
+        recoil: 0,
+        cheerT: 0,
+        baskets: [],
+        arrow: new THREE.Group(),
+        arrowX: 0,
+        arrowMat: new THREE.MeshBasicMaterial(),
+        shadow: new THREE.Mesh(),
+        shadowMat: new THREE.MeshBasicMaterial(),
+      };
+      st.players.push(P);
+      st.byId.set(P.id, P);
     });
 
-    // ---- camera (party view of all four corridors) ----
-    // Fitted to the screen: the platforms with their characters and the four
-    // belts' landing rings always; on a wide screen also the full belts and
-    // the scoreboards on the left.
+    buildBackdrop(st);
+    buildLanes(st);
+    ctx.scene.add(st.root);
+
+    // Camera: all four belts, rings, cannons and name flags; on a wide
+    // screen also the right end of the belts where baskets appear.
     frameMinigame(
       ctx.camera,
       () => {
         const { w, h } = viewportSize();
         const wide = w / h >= 1;
         return {
-          box: frameBox([wide ? -10.7 : -6.8, 0, -9.4], [wide ? 10 : 6.8, 7.2, 6.4]),
-          dir: new THREE.Vector3(0, 13.7, 22.5),
-          fov: wide ? 50 : 55,
+          box: frameBox([FLAG_X - 1.0, 0, -7.1], [wide ? 10.2 : 6.4, 3.0, 6.0]),
+          // Steeper on a phone: the belts spread down the tall screen.
+          dir: wide ? new THREE.Vector3(0, 1.15, 1) : new THREE.Vector3(0, 2.1, 1),
+          fov: wide ? 45 : 50,
         };
       },
       (f) => {
         st.camBase = [f.pos.x, f.pos.y, f.pos.z];
         st.camLook = [f.look.x, f.look.y, f.look.z];
-      }
+      },
     );
 
-    buildArena(st);
-    st.ctx.scene.add(st.root); // the arena is one root group — add it to the live scene
+    // ---- HUD ----
+    ctx.hud.unit("pts");
+    for (const P of st.players) {
+      ctx.hud.score(P.id, 0);
+      hudAmmo(st, P);
+    }
+    ctx.hud.timer(TIME_CAP, TIME_CAP);
 
-    ctx.announce("COIN CANNON!", { durationMs: 1500, sound: null });
-
-    // ---- input: tap anywhere (or confirm) to fire ----
-    const human = st.players[localPlayerIndex(ctx.players)] ?? st.players[0];
-    ctx.input.pointer = (x: number, y: number, down: boolean): void => {
-      void x;
-      void y;
-      if (!down) return;
-      const P = human;
-      if (st.finished || P.ammo <= 0 || P.charging) return;
-      P.ammo -= 1;
-      P.ammoPips[P.ammo].visible = false;
-      P.charging = true;
-      P.chargeT = CHARGE;
-      P.aimError = 0;
-      ctx.playSfx("ui.click", { volume: 0.5 });
+    // ---- input: any press or confirm fires now ----
+    const fire = (): void => {
+      if (st.finished || st.humanId < 0 || isPracticeBeat()) return;
+      const H = st.byId.get(st.humanId);
+      if (!H || H.ammo <= 0) return;
+      st.pendingFire = Math.min(2, st.pendingFire + 1);
+    };
+    ctx.input.pointer = (_x: number, _y: number, down: boolean): void => {
+      if (down) fire();
     };
     ctx.input.key = (action: string): void => {
-      if (action !== "confirm") return;
-      const P = human;
-      if (st.finished || P.ammo <= 0 || P.charging) return;
-      P.ammo -= 1;
-      P.ammoPips[P.ammo].visible = false;
-      P.charging = true;
-      P.chargeT = CHARGE;
-      P.aimError = 0;
-      ctx.playSfx("ui.click", { volume: 0.5 });
+      if (action === "confirm") fire();
     };
   },
 
   update(dt: number): void {
     const st = state;
-    if (!st || st.finished || isPracticeBeat()) return;
-    const { ctx } = st;
+    if (!st) return;
     st.t += dt;
-
-    if (!st.announcedGo && st.t > 0.05) {
-      st.announcedGo = true;
-      ctx.announce("TAP TO FIRE!", { durationMs: 1300, sound: null });
-    }
-
-    // ---- FIXED-STEP SIMULATION: accumulate dt, fire 0.25s sim steps.
-    // All RNG draws happen here at deterministic simTime boundaries, so the
-    // draw sequence is identical regardless of frame timing. Visual-only
-    // updates (bounce decay, recoil, shake) run on dt below.
-    st.simAccumulator += dt;
-    const SIM_STEP = CPU_THINK_INTERVAL; // 0.25s
-    while (st.simAccumulator >= SIM_STEP) {
-      st.simAccumulator -= SIM_STEP;
-      st.simTime += SIM_STEP;
-      simulateStep(st, SIM_STEP);
-    }
-
-    // ---- charge-up -> fire (dt-based, no RNG — responsive for human) ----
-    for (const P of st.players) {
-      if (!isLocalPlayer(st.ctx.players, P.id) || !P.charging) continue;
-      P.chargeT -= dt;
-      const frac = 1 - Math.max(0, P.chargeT) / CHARGE;
-      P.glow.visible = true;
-      P.glow.scale.setScalar(0.12 * (0.5 + 1.3 * frac));
-      if (P.chargeT <= 0) {
-        P.charging = false;
-        P.glow.visible = false;
-        if (isLocalPlayer(st.ctx.players, P.id)) {
-          fireCoin(st, P.id);
-        } else {
-          // CPU re-checks the window at fire time
-          const tA = arriveTime(MUZZLE_Y, VY);
-          let best = Infinity;
-          for (const b of st.baskets) {
-            if (b.lane !== P.lane) continue;
-            const d = Math.abs(b.x - b.speed * tA - P.aimError);
-            if (d < best) best = d;
-          }
-          if (best <= 0.84 + P.aimSlop) {
-            P.ammo -= 1;
-            P.ammoPips[P.ammo].visible = false;
-            P.cpuShots += 1;
-            fireCoin(st, P.id);
-          } else {
-            P.cpuAborts += 1;
-          }
-        }
+    // The practice beat and the results only animate; the sim stands still.
+    if (!st.finished && !isPracticeBeat()) {
+      st.acc += dt;
+      let n = 0;
+      while (st.acc >= DT && n < MAX_STEPS && !st.finished) {
+        st.acc -= DT;
+        step(st);
+        n += 1;
       }
+      if (n >= MAX_STEPS) st.acc = Math.min(st.acc, DT);
+      if (st.finished) st.acc = 0;
+      else st.ctx.hud.timer(Math.max(0, TIME_CAP - st.simT), TIME_CAP);
     }
-
-    // ---- visual-only updates (frame-rate dependent, no RNG) ----
-    for (const b of st.baskets) {
-      b.bounce = Math.max(0, b.bounce - dt * 2.2);
-      b.group.position.y = 0.12 * b.bounce;
-      const dip = 1 - 0.18 * b.bounce;
-      b.group.scale.set(1 + 0.08 * b.bounce, dip, 1 + 0.08 * b.bounce);
-    }
-    for (const r of st.rollers) r.rotation.y += dt * 4;
-    for (const P of st.players) {
-      if (P.recoil > 0) {
-        P.recoil = Math.max(0, P.recoil - dt * 3.5);
-        P.barrel.rotation.x = Math.atan2(0.51, -0.51) + 0.22 * P.recoil;
-        P.barrel.position.z = 0.62 + 0.06 * P.recoil;
-      }
-      if (P.poseT > 0) {
-        P.poseT -= dt;
-        if (P.poseT <= 0) {
-          const ch = ctx.characters[P.id];
-          if (ch) ch.anim.idle();
-        }
-      }
-      if (P.cheerT > 0) {
-        P.cheerT -= dt;
-        if (P.cheerT <= 0) {
-          const ch = ctx.characters[P.id];
-          if (ch) ch.anim.idle();
-        }
-      }
-    }
-    st.shake = Math.max(0, st.shake - dt * 0.9);
-    if (st.shake > 0) {
-      const a = st.shake;
-      ctx.camera.position.set(
-        st.camBase[0] + Math.sin(st.t * 57) * a,
-        st.camBase[1] + Math.cos(st.t * 43) * a,
-        st.camBase[2] + Math.sin(st.t * 61) * a
-      );
-      ctx.camera.lookAt(st.camLook[0], st.camLook[1], st.camLook[2]);
-    }
-    updateParticles(st, dt);
-
-    // ---- end conditions (checked every frame; simTime is deterministic) ----
-    if (st.simTime >= TIME_CAP || st.players.every((p) => p.ammo <= 0)) {
-      endRound(st);
-    }
+    render(st, dt);
   },
 
   teardown(): void {
     const st = state;
     if (!st) return;
-    // hand the characters back to the framework (direct scene children again)
-    for (const P of st.players) {
-      if (P.char && P.wrapper) {
-        P.wrapper.remove(P.char);
-        st.ctx.scene.add(P.char);
-      }
-    }
     st.ctx.input.pointer = (): void => {};
     st.ctx.input.key = (): void => {};
     st.ctx.scene.remove(st.root);
-    disposeObj(st.root);
+    for (const p of st.popups) (p.sprite.material as THREE.Material).dispose();
+    for (const g of st.geos) g.dispose();
+    for (const m of st.mats) m.dispose();
+    for (const t of st.texs) t.dispose();
     state = null;
   },
 };
