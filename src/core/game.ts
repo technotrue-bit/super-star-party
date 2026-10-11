@@ -305,9 +305,10 @@ export function startMatch(
   match.players = kinds.map((k, i) =>
     makePlayer(i, k, names[i] ?? `P${i + 1}`, controllers?.[i] ?? defaultSeatController(i), def.startIndex),
   );
-  // The board picks the balloon's start (carnival: 4, one hop after the
-  // Fizz Stamp Stand, so a jackpot on the way in can fund a purchase).
-  match.starBalloonPos = def.prizeStart;
+  // The board picks the balloon's start: a random blue or red start where the board asks for one (match rng, so
+  // every peer and every replay of the seed agrees), never the start space.
+  const firstSpots = def.prizeSpots.filter((i) => i !== def.startIndex);
+  match.starBalloonPos = def.prizeStartRandom && firstSpots.length > 0 ? rng.pick(firstSpots) : def.prizeStart;
   match.minigameTriggeredThisRound = false;
   match.turnOrder = [0, 1, 2, 3];
   match.orderRolls = [];

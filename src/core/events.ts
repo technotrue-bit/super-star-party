@@ -28,6 +28,8 @@ export interface SSPEventMap {
   "audio:track": { track: string; playing: boolean };
   "audio:sfx": { name: string };
   "ui:toast": { text: string };
+  /** Presentation: the Grand Prize Balloon takes off for `to` (after any star ceremony). */
+  "balloon:fly": { from: number; to: number; seconds: number };
   /** The board's gate flipped at a round rollover (Funhouse Gate). */
   "board:gate": { open: boolean; turn: number };
 }

@@ -122,7 +122,7 @@ export function tryBuyStars(playerId: number, requested: number): StarPurchase {
 /**
  * Spaces the Grand Prize Balloon may float to: the board's ordered
  * prizeSpots minus where it is now. Order matters, rng.pick reads it.
- * (On the carnival the Funhouse Cut tiles are never a spot.)
+ * (On the carnival only blue and red spaces are spots.)
  */
 function prizeBalloonSpots(except: number): number[] {
   return activeBoard().prizeSpots.filter((index) => index !== except);

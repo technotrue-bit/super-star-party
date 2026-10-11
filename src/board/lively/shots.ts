@@ -7,7 +7,7 @@
  * 1. Lively shots: a one-at-a-time queue of curved swoops (an orbit arc
  *    around the subject that dips in or climbs, blended over the follow
  *    camera and eased back). Triggered by bus events: star:buy,
- *    star:balloon_moved, happening:event, stamp:jackpot, squeeze:hug, and the
+ *    balloon:fly, happening:event, stamp:jackpot, squeeze:hug, and the
  *    first turn:start of the last five turns (once a match). All six are
  *    real event names in core/events.ts; nothing needed remapping.
  * 2. The dice/ceremony punch (`_punch`), applied last so it always wins.
@@ -62,7 +62,7 @@ const STYLES: Record<ShotKind, ShotStyle> = {
   // Star buy: the ceremony holds the camera, so this plays right after it, on the buyer.
   star: { dur: 1.6, swing: 0.55, close: 0.55, rise: 0.75, lookY: 1.2 },
   // Balloon: sweep over to where the Grand Prize Balloon re-inflated.
-  balloon: { dur: 1.8, swing: -0.7, close: 0.6, rise: 0.85, lookY: 1.6 },
+  balloon: { dur: 2.8, swing: -0.7, close: 0.55, rise: 0.9, lookY: 2.2 },
   // Happening: inside the ~2.8 s happening stinger.
   happening: { dur: 2.2, swing: 0.8, close: 0.5, rise: 0.7, lookY: 1.0 },
   jackpot: { dur: 1.6, swing: -0.5, close: 0.55, rise: 0.75, lookY: 1.2 },
@@ -171,7 +171,9 @@ function wire(): void {
   if (wired) return;
   wired = true;
   bus.on("star:buy", ({ player }) => request("star", playerSpace(player)));
-  bus.on("star:balloon_moved", ({ to }) => request("balloon", to));
+  // Follow the balloon's flight to its new space. It takes off once any star
+  // ceremony is over, so the shot plays when the camera is free.
+  bus.on("balloon:fly", ({ to }) => request("balloon", to));
   bus.on("happening:event", ({ player }) => request("happening", playerSpace(player)));
   bus.on("stamp:jackpot", ({ player }) => request("jackpot", playerSpace(player)));
   bus.on("squeeze:hug", ({ space }) => request("hug", space));

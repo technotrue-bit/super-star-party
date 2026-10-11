@@ -236,6 +236,9 @@ interface StarTravelActive {
 }
 
 /** 5-pointed star shape for the traveling star mesh (replicates boardScenery's starShape5). */
+/** Width of the purchase star, tip to tip: about a dice block. */
+const STAR_SIZE = 1.15;
+
 function starShape5(): THREE.Shape {
   const s = new THREE.Shape();
   for (let i = 0; i < 10; i++) {
@@ -813,27 +816,25 @@ const boardScreenImpl: BoardScreenState & Screen = {
         },
         starTravel: (startPos: THREE.Vector3, endPos: THREE.Vector3, duration: number) => {
           if (!world.scene) return;
+          // A chunky upright gold star about the size of a dice block
+          // (STAR_SIZE across), ink-outlined, spinning on its own axis.
           const geo = new THREE.ExtrudeGeometry(starShape5(), {
-            depth: 0.18, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.06, bevelSegments: 2,
+            depth: 0.32, bevelEnabled: true, bevelThickness: 0.1, bevelSize: 0.08, bevelSegments: 2,
           });
-          const mat = new THREE.MeshBasicMaterial({
-            color: palette.sun, transparent: true, opacity: 1,
-            depthWrite: false, side: THREE.DoubleSide,
-            blending: THREE.AdditiveBlending,
-          });
+          geo.center();
+          const mat = new THREE.MeshBasicMaterial({ color: palette.sun, transparent: true, opacity: 1 });
           const star = new THREE.Mesh(geo, mat);
-          star.rotation.x = -Math.PI / 2;
-          star.scale.setScalar(2.5);
           // Ink outline shell (BackSide = silhouette border)
           const shell = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-            color: palette.ink, side: THREE.BackSide, depthWrite: false,
-            transparent: true, opacity: 0.85,
+            color: palette.ink, side: THREE.BackSide, transparent: true, opacity: 1,
           }));
-          shell.scale.setScalar(2.95);
+          shell.scale.setScalar(1.14);
+          star.add(shell);
           const group = new THREE.Group();
-          group.add(star, shell);
+          group.add(star);
+          group.scale.setScalar(0.001);
           group.position.copy(startPos);
-          group.position.y = startPos.y + 0.9; // lifted off the space
+          group.position.y = startPos.y + 1.2; // pops out of the balloon
           world.scene?.add(group);
           (boardScreenImpl._starTravels = boardScreenImpl._starTravels ?? []).push({
             group, geo, mat, elapsed: 0, duration,
@@ -1092,7 +1093,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
         world.scene?.remove(s.group);
         s.geo.dispose();
         s.mat.dispose();
-        ((s.group.children[1] as THREE.Mesh).material as THREE.Material).dispose();
+        ((s.group.children[0].children[0] as THREE.Mesh).material as THREE.Material).dispose();
       }
       this._starTravels = [];
     }
@@ -1124,7 +1125,9 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._t = (this._t ?? 0) + dt;
     const t = this._t;
 
-    this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
+    // The balloon waits out the star ceremony, then flies to its new space.
+    const starCeremonyOn = (globalThis as { __SSP_STAR_CEREMONY?: { active?: boolean } }).__SSP_STAR_CEREMONY?.active === true;
+    if (!starCeremonyOn) this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
     this._board?.update(dt);
     for (const ch of this._chars ?? []) ch.update(dt);
 
@@ -1223,17 +1226,33 @@ const boardScreenImpl: BoardScreenState & Screen = {
         s.elapsed += dt;
         s.sparkleCooldown -= dt;
         const p = Math.min(1, s.elapsed / s.duration);
-        const e = ease.outCubic(p);
-        // Parabolic arc: rise then fall.
-        const height = Math.sin(p * Math.PI) * 2.6;
-        const pos = new THREE.Vector3().lerpVectors(s.start, s.end, e);
-        pos.y = height + 0.5;
+        // Three beats (MP-style): pop out of the balloon and rise (0-35%),
+        // hover and spin over the buyer's head (35-70%), then dive into the
+        // buyer, shrinking away (70-100%).
+        const over = s.end.clone().add(new THREE.Vector3(0, 2.7, 0));
+        const into = s.end.clone().add(new THREE.Vector3(0, 0.8, 0));
+        const pos = new THREE.Vector3();
+        let size = STAR_SIZE;
+        if (p < 0.35) {
+          const u = p / 0.35;
+          const e = ease.outCubic(u);
+          pos.lerpVectors(s.start.clone().setY(s.start.y + 1.2), over, e);
+          // Pop-in with a little overshoot.
+          size = STAR_SIZE * (u < 0.6 ? (u / 0.6) * 1.25 : 1.25 - 0.25 * ((u - 0.6) / 0.4));
+        } else if (p < 0.7) {
+          const u = (p - 0.35) / 0.35;
+          pos.copy(over);
+          pos.y += Math.sin(u * Math.PI * 2) * 0.12;
+        } else {
+          const u = (p - 0.7) / 0.3;
+          const e = u * u;
+          pos.lerpVectors(over, into, e);
+          size = STAR_SIZE * (1 - e * 0.95);
+        }
         s.group.position.copy(pos);
-        s.group.rotation.y = s.elapsed * 4;
-        // Scale pulse: the star gently grows/shrinks during flight for life.
-        const pulse = 1 + Math.sin(s.elapsed * 6) * 0.15;
-        (s.group.children[0] as THREE.Mesh).scale.setScalar(5 * pulse);
-        (s.group.children[1] as THREE.Mesh).scale.setScalar(6.0 * (0.95 + Math.sin(s.elapsed * 4) * 0.05));
+        // Spin faster as it dives in.
+        s.group.rotation.y += dt * (p < 0.7 ? 5 : 14);
+        s.group.scale.setScalar(Math.max(0.001, size / 2));
         // Sparkle trail at the star's projected screen position.
         if (s.sparkleCooldown <= 0 && p < 0.98) {
           s.sparkleCooldown = 0.08;
@@ -1247,7 +1266,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
           world.scene?.remove(s.group);
           s.geo.dispose();
           s.mat.dispose();
-          ((s.group.children[1] as THREE.Mesh).material as THREE.Material).dispose();
+          ((s.group.children[0].children[0] as THREE.Mesh).material as THREE.Material).dispose();
           this._starTravels.splice(i, 1);
         }
       }

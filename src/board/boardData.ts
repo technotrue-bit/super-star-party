@@ -34,8 +34,13 @@ export interface BoardDef {
   walk: "index" | "graph";
   /** Grand Prize Balloon spots in rng.pick order. The order is gameplay data. */
   prizeSpots: number[];
-  /** Space the Grand Prize Balloon starts on. */
+  /** Space the Grand Prize Balloon starts on (unless prizeStartRandom). */
   prizeStart: number;
+  /**
+   * Start the balloon on a random prize spot (match rng at match start, never
+   * the start space) instead of prizeStart.
+   */
+  prizeStartRandom?: boolean;
   /** Scenery theme key; boardScene builds the carnival look for "carnival". */
   theme: "carnival" | "downtown";
   /**
@@ -403,17 +408,17 @@ function deriveNext(def: BoardBase): number[][] {
 }
 
 /**
- * Carnival prize spots: every loop space in loop order, minus the tiles the
- * shortcut skips on the main loop ([shortcut.from, shortcut.to)).
+ * Carnival prize spots: the blue and red spaces on every loop, in loop order
+ * (rng.pick reads the order). The balloon never parks on a happening, shop,
+ * stamp stand, minigame balloon or Grumpus space. Funhouse Row counts: the
+ * Funhouse Gate opens it every other round.
  */
 function derivePrizeSpots(def: BoardBase): number[] {
-  const sc = def.shortcut;
-  const main = def.loops[0];
   const spots: number[] = [];
   for (const loop of def.loops) {
     for (const index of loop) {
-      if (loop === main && sc && index >= sc.from && index < sc.to) continue;
-      spots.push(index);
+      const type = def.spaces[index]?.type;
+      if (type === "blue" || type === "red") spots.push(index);
     }
   }
   return spots;
@@ -435,9 +440,10 @@ const fizzyBase: BoardBase = {
   startIndex: 0,
   cam: { center: [0, 0], fit: 1.35 },
   walk: "index",
-  // Grand Prize Balloon starts one hop after the Fizz Stamp Stand, so a
-  // jackpot collected on the way in can fund a purchase the same move.
+  // The Grand Prize Balloon starts on a random blue or red space each match
+  // (prizeStartRandom); 4 is only the fallback.
   prizeStart: 4,
+  prizeStartRandom: true,
   theme: "carnival",
   terrain: CARNIVAL_TERRAIN,
   // The Funhouse Gate: open, the Cut (19 -> 26) skips Funhouse Row; closed,

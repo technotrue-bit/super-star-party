@@ -12,6 +12,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { world } from "../main";
+import { bus } from "../core/events";
 import { settings, livelyEnabled } from "../config/settings";
 import { palette } from "../config/palette";
 import { ease } from "../core/rng";
@@ -82,7 +83,7 @@ export interface BoardScene {
   update(dt: number): void;
   /**
    * Park the Grand Prize Balloon on a space. The first call snaps into place.
-   * Later calls pop it and reinflate at the new index. Null hides it.
+   * Later calls fly it over the board to the new index. Null hides it.
    */
   setPrizeBalloon(index: number | null): void;
   /** Show the board's gate (Funhouse Gate) open or shut. No-op without one. */
@@ -340,9 +341,14 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
   props.push(prize);
   let prizeShown: number | null = null;
   let prizeTarget: number | null = null;
-  let prizePop = -1;
-  const POP_SHRINK = 0.16;
-  const POP_INFLATE = 0.42;
+  // Flight to a new space: lift off, sail over the board in an arc, settle.
+  let prizeFly = -1; // seconds into the flight, -1 = parked
+  let prizeFlyDur = 0;
+  let prizeFrom = 0;
+  const FLY_LIFT = 0.55;
+  const FLY_SETTLE = 0.55;
+  const flyA = new THREE.Vector3();
+  const flyB = new THREE.Vector3();
 
   const placePrize = (index: number, scale: number): void => {
     const k = wrapIndex(index, n);
@@ -679,7 +685,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       prizeTarget = wrapIndex(index, n);
       if (prizeShown === null) {
         prizeShown = prizeTarget;
-        prizePop = -1;
+        prizeFly = -1;
         placePrize(prizeShown, 1);
       }
     },
@@ -697,22 +703,47 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
         prizeShown !== null &&
         prizeTarget !== null &&
         prizeTarget !== prizeShown &&
-        prizePop < 0
+        prizeFly < 0
       ) {
-        prizePop = 0;
+        // Take off for the new space; longer hops fly a little longer.
+        prizeFrom = prizeShown;
+        prizeShown = prizeTarget;
+        const a = def.spaces[wrapIndex(prizeFrom, n)];
+        const b = def.spaces[wrapIndex(prizeShown, n)];
+        flyA.set(a.x, spaceY[wrapIndex(prizeFrom, n)], a.y);
+        flyB.set(b.x, spaceY[wrapIndex(prizeShown, n)], b.y);
+        prizeFlyDur = FLY_LIFT + Math.min(2.4, Math.max(1.1, flyA.distanceTo(flyB) / 12)) + FLY_SETTLE;
+        prizeFly = 0;
+        bus.emit("balloon:fly", { from: prizeFrom, to: prizeShown, seconds: prizeFlyDur });
       }
-      if (prizePop >= 0 && prizeShown !== null && prizeTarget !== null) {
-        prizePop += dt;
-        if (prizePop < POP_SHRINK) {
-          placePrize(prizeShown, 1 - prizePop / POP_SHRINK);
-        } else if (prizePop < POP_SHRINK + POP_INFLATE) {
-          const u = (prizePop - POP_SHRINK) / POP_INFLATE;
-          placePrize(prizeTarget, ease.outBack(u));
+      if (prizeFly >= 0) {
+        prizeFly += dt;
+        const cruise = prizeFlyDur - FLY_LIFT - FLY_SETTLE;
+        const LIFT_H = 3.2;
+        let y = 0;
+        let w = 0; // 0 at the old space, 1 at the new one
+        let sq = 1;
+        if (prizeFly < FLY_LIFT) {
+          const u = prizeFly / FLY_LIFT;
+          y = LIFT_H * (u * u * (3 - 2 * u));
+        } else if (prizeFly < FLY_LIFT + cruise) {
+          const u = (prizeFly - FLY_LIFT) / cruise;
+          w = u * u * (3 - 2 * u);
+          // Arc higher over long hops, with a gentle bob.
+          y = LIFT_H + Math.sin(u * Math.PI) * Math.min(4, flyA.distanceTo(flyB) * 0.15) + Math.sin(u * Math.PI * 4) * 0.15;
+        } else if (prizeFly < prizeFlyDur) {
+          w = 1;
+          const u = (prizeFly - FLY_LIFT - cruise) / FLY_SETTLE;
+          y = LIFT_H * (1 - ease.outBack(u));
+          sq = 1 + 0.12 * Math.sin(u * Math.PI);
         } else {
-          prizeShown = prizeTarget;
-          prizePop = -1;
-          placePrize(prizeShown, 1);
+          w = 1;
+          prizeFly = -1;
         }
+        prize.root.position.lerpVectors(flyA, flyB, w);
+        prize.root.position.y += y;
+        prize.root.scale.set(1 / sq, sq, 1 / sq);
+        if (prizeFly < 0 && prizeShown !== null) placePrize(prizeShown, 1);
       }
       for (const r of rings) {
         if (!r.ring.visible) continue;
