@@ -149,8 +149,19 @@ async function waitHumanDice(page) {
 async function buyScenario(page, G, B, { setStar = null, shotTag = null } = {}) {
   await waitHumanDice(page);
   if (setStar !== null) await page.evaluate((s) => window.__SSP__.placeBalloon(s), setStar);
-  const star = await page.evaluate(() => window.__SSP__.state().match.starBalloonPos);
-  const preds = B.next.map((row, i) => [row, i]).filter(([row, i]) => i !== star && row.length === 1 && row[0] === star).map(([, i]) => i);
+  const singlePreds = (st) => B.next.map((row, i) => [row, i]).filter(([row, i]) => i !== st && row.length === 1 && row[0] === st).map(([, i]) => i);
+  let star = await page.evaluate(() => window.__SSP__.state().match.starBalloonPos);
+  let preds = singlePreds(star);
+  if (!preds.length) {
+    // The seeded spot sits right after a fork (only the fork leads in), so a
+    // forced roll of 1 would start on the lane popup. Use the next prize spot
+    // that has a plain predecessor; the relocation rule under test is the same.
+    const alt = B.prizeSpots.find((sp) => sp > star && singlePreds(sp).length) ?? B.prizeSpots.find((sp) => singlePreds(sp).length);
+    note(`seeded star ${star} has no single-exit predecessor; balloon placed on ${alt}`);
+    await page.evaluate((sp) => window.__SSP__.placeBalloon(sp), alt);
+    star = alt;
+    preds = singlePreds(star);
+  }
   if (!preds.length) return { error: `no single-exit predecessor of ${star}` };
   const pred = preds[0];
   await page.evaluate((p) => { window.__SSP__.placePlayer(0, p); window.__SSP__.fundPlayer(0, 60); }, pred);
@@ -378,7 +389,8 @@ try {
   if (CI) {
     await partBuys("carnival", [1]);
   } else {
-    for (const b of boards) await partBuys(b, [1, 2, 3, 4, 5, 6, 7, 8]);
+    const seedList = (process.env.SSP_SEEDS ?? "1,2,3,4,5,6,7,8").split(",").map(Number);
+    for (const b of boards) await partBuys(b, seedList);
     if (boards.includes("carnival")) await partScale430();
     if (boards.includes("downtown")) await sweep();
   }
