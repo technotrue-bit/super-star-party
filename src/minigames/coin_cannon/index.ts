@@ -146,7 +146,7 @@ function arriveTime(y: number, vy: number): number {
 function toon(st: State, color: number): THREE.MeshToonMaterial {
   let m = st.toons.get(color);
   if (!m) {
-    m = new THREE.MeshToonMaterial({ map: celGradient, color });
+    m = new THREE.MeshToonMaterial({ gradientMap: celGradient, color });
     st.toons.set(color, m);
     st.mats.push(m);
   }
