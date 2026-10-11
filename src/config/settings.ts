@@ -131,6 +131,38 @@ export const settings = {
     highlightRise: 0.5, // highlight ring max rise (world units)
     highlightPulse: 2.2, // highlight ring pulse rate (cycles/s)
     boundsPad: 0.8, // camera-fit padding beyond the space radius
+    // Diorama (carnival): the fairground is an island over open sea, under a
+    // sky dome, like a party-board map rather than a tablecloth in a void.
+    island: {
+      halfX: 24.5, // superellipse half width (world units, x)
+      halfZ: 21, // superellipse half depth (world units, z)
+      centerZ: 1.2, // nudged south so the tent row and carousel stay on the grass
+      power: 4.2, // superellipse exponent: 2 = ellipse, higher = squarer corners
+      wobble: 0.035, // low-frequency coastline wobble (fraction of radius)
+      cliffDepth: 2.6, // cliff height from the grass down past the waterline
+      seaY: -1.35, // water level
+      seaRadius: 230, // sea disc radius (reaches the sky dome horizon)
+      foamPulse: 0.9, // rad/s shoreline foam breathing
+      seaDrift: 0.012, // ripple texture scroll (texture units/s)
+      skyRadius: 300, // sky dome radius (inside the camera far plane)
+    },
+    // Foliage: instanced trees, bushes, flowers, and rocks scattered off the lanes.
+    foliage: {
+      laneClear: 2.25, // keep-out from any lane centreline (world units)
+      propClear: 1.0, // extra keep-out around landmark footprints
+      rimTrees: 46, // trees seeded along the coast ring
+      fieldTrees: 34, // trees seeded across the open grass
+      bushes: 70,
+      flowers: 150,
+      rocks: 18,
+    },
+    // Landmarks on the open grass (world x/z). The Big Top faces the board.
+    landmarks: {
+      bigTop: { x: -18.8, z: -0.6 },
+      helter: { x: 18.6, z: 1.6 },
+      pierAngle: Math.PI / 2 - 0.45, // heading on the coast (0 = east, pi/2 = south)
+    },
+    shadowExtent: 26, // key-light shadow box half-size while the carnival board is up
   },
 
   // ---- lively board (cosmetic only; `?lively=0` turns it off) ----

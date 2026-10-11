@@ -31,6 +31,8 @@ export interface NightHost {
   camera: () => THREE.Camera | null;
   /** Board centre (fireworks fallback without a camera). */
   center: { x: number; z: number };
+  /** Optional board sky dome: receives the eased zenith and horizon (0xRRGGBB). */
+  sky?: (top: number, horizon: number) => void;
 }
 
 export interface Night {
@@ -210,6 +212,7 @@ export function createNight(host: NightHost): Night {
       key.intensity = cur.keyIntensity;
     }
     scene.background = bg.setHex(cur.sky);
+    host.sky?.(cur.skyTop, cur.skyHorizon);
     if (cur.fogFar < FOG_OFF_FAR) {
       fog.color.setHex(cur.fogColor);
       fog.near = cur.fogNear;

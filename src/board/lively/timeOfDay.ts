@@ -18,6 +18,9 @@ export interface TimeOfDay {
   /** Inside the last five turns (the same rule as the last5 camera shot). */
   last5: boolean;
   sky: number;
+  /** Board sky dome: zenith and horizon (the horizon meets the fog). */
+  skyTop: number;
+  skyHorizon: number;
   hemiSky: number;
   hemiGround: number;
   hemiIntensity: number;
@@ -36,6 +39,8 @@ export const FOG_OFF_FAR = 400;
 interface Key {
   at: number;
   sky: number;
+  skyTop: number;
+  skyHorizon: number;
   hemiSky: number;
   hemiGround: number;
   hemiIntensity: number;
@@ -49,6 +54,8 @@ interface Key {
 
 const DAY = {
   sky: hex(palette.ink),
+  skyTop: hex(palette.skyTop),
+  skyHorizon: hex(palette.skyHorizon),
   hemiSky: hex(palette.white),
   hemiGround: hex(palette.ink),
   hemiIntensity: 1.1,
@@ -61,6 +68,8 @@ const DAY = {
 };
 const DUSK = {
   sky: hex(palette.duskSky),
+  skyTop: hex(palette.duskSkyTop),
+  skyHorizon: hex(palette.duskSky),
   hemiSky: hex(palette.duskHemi),
   hemiGround: hex(palette.duskGround),
   hemiIntensity: 0.78,
@@ -76,6 +85,8 @@ const DUSK = {
 // Fog starts past the active area and tints the top of the frame.
 const NIGHT = {
   sky: hex(palette.nightSky),
+  skyTop: hex(palette.nightSkyTop),
+  skyHorizon: hex(palette.nightSky),
   hemiSky: hex(palette.nightHemi),
   hemiGround: hex(palette.nightGround),
   hemiIntensity: 0.62,
@@ -132,6 +143,8 @@ export function sampleTimeOfDay(progress: number, out: TimeOfDay): TimeOfDay {
   const u = x * x * (3 - 2 * x);
   out.progress = p;
   out.sky = lerpHex(a.sky, b.sky, u);
+  out.skyTop = lerpHex(a.skyTop, b.skyTop, u);
+  out.skyHorizon = lerpHex(a.skyHorizon, b.skyHorizon, u);
   out.hemiSky = lerpHex(a.hemiSky, b.hemiSky, u);
   out.hemiGround = lerpHex(a.hemiGround, b.hemiGround, u);
   out.hemiIntensity = a.hemiIntensity + (b.hemiIntensity - a.hemiIntensity) * u;
@@ -151,6 +164,8 @@ export function blankTimeOfDay(): TimeOfDay {
     phase: "day",
     last5: false,
     sky: 0,
+    skyTop: 0,
+    skyHorizon: 0,
     hemiSky: 0,
     hemiGround: 0,
     hemiIntensity: 0,
