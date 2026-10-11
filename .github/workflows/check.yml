@@ -6,7 +6,7 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 38
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,6 +53,9 @@ jobs:
 
       - name: Board registry (carnival seed-7 parity + Downtown graph)
         run: node tools/probe-board-downtown.mjs
+
+      - name: Fork walk-through and item-then-roll (both boards)
+        run: node tools/probe-fork-walk.mjs --ci
 
       - name: Playtest
         run: node tools/smoke-play.mjs
