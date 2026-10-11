@@ -115,6 +115,14 @@ Published names are original to the Fizzy Fairground. The MP7 labels below are d
 
 8. **Funhouse Gate** (Fizzy Fairground's board gimmick) — **Done**: A striped gate stands on the Funhouse Cut at space 19. It starts the match open and flips at every round rollover (`match.gateOpen`, no rng, so every peer flips together). Open: a mover on 19 steps across the Cut to 26, as before. Shut: the mover walks Funhouse Row (20–25), past the Prize Booth Bazaar shop and Grumpus Gulch, which were unreachable before the gate. The first turn of each round toasts the new state and the camera swings to the gate. CPU star-pathing and the "N spaces to the Grand Prize Balloon" hint follow the gate. The Grand Prize Balloon can park on Funhouse Row's blue and red spaces, so the gate decides whether you can reach it. The flip changes seeded matches, so the carnival rev is 3 and `tools/golden/carnival-seed7.json` / `carnival-seed2.json` were re-recorded.
 
+9. **Hidden Blocks** — **Done**: Landing on a blue space (land only, after its coins) has a `settings.hiddenBlockChance` (12%) chance to pop a gold "?" block out of thin air above the player. They jump and bonk it. Inside, weighted by `settings.hiddenBlockOdds` (star 1 : item 3 : coins 3 : dice 3):
+   - **Star** — a free star, with the full star ceremony. The Grand Prize Balloon stays put.
+   - **Item** — one bag item the player does not hold, from the Fizzy Barker pool. A full bag pays the smallest coin prize instead.
+   - **Coins** — 5, 10, 10, 15 or 20 coins (`settings.hiddenBlockCoins`, drawn evenly).
+   - **Coin Dice Block** — the block turns into a die whose pips are gold coins. For `settings.coinBlockSeconds` (4 s) the player hits it as fast as they can (HIT! button, Space or Enter). Each hit pays 1 coin, at most one hit per 0.16 s and 20 coins a block. CPUs and autoplay seats hit 6–14 times (rng).
+
+   The spawn, the prize and a CPU's hit count all come from the match rng at fixed points, so every peer sees the same block. Online, a human's hit count is relayed as a `block` choice (assist seats relay `auto` and take the CPU count). `window.__forcedBlock = "star" | "item" | "coins" | "dice"` forces the next blue landing's block. The new draw changes seeded matches, so the carnival rev is 4, Downtown's is 3, and `tools/golden/carnival-seed7.json` / `carnival-seed2.json` were re-recorded. Logic: `src/game/hiddenBlocks.ts`. Prop: `src/board/hiddenBlockProp.ts`.
+
 These keep the MP7 structure 100% faithful while making the game feel like *our* bright, mischievous carnival.
 
 ## Immediate Next Steps (small pieces)

@@ -70,6 +70,15 @@ export const settings = {
   orderBlockMax: 10, // turn-order dice blocks show 1..this, every number different
   blueCoin: 3, // coins gained on blue space
   redCoin: 3, // coins lost on red space
+  // Hidden blocks: landing on a blue space can pop one out of thin air.
+  hiddenBlockChance: 0.12, // per blue landing (match rng)
+  // Prize weights: a free star is rare, the coin dice block is the showpiece.
+  hiddenBlockOdds: { star: 1, item: 3, coins: 3, dice: 3 },
+  hiddenBlockCoins: [5, 10, 10, 15, 20] as readonly number[], // coin prize, drawn evenly
+  coinBlockSeconds: 4, // how long the coin dice block can be hit
+  coinBlockCooldown: 0.16, // fastest hit rate (s between hits), so mashing has a ceiling
+  coinBlockMaxHits: 20, // coins the block can hold
+  coinBlockCpuHits: [6, 14] as readonly [number, number], // CPU hits, drawn inclusive
   minigameWinCoins: 10, // base minigame winner payout, before pack bonus and the host multiplier
   minigameCoinMultiplier: 1, // host scale (1, 2, 3, or 4); live value is persisted in localStorage
   stampJackpot: 30, // coins when a player completes the 3-stamp set

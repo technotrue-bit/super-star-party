@@ -58,6 +58,16 @@ import {
   type UseItemResult,
 } from "./items";
 import { openShop } from "../screens/shopScreen";
+import {
+  rollHiddenBlock,
+  openHiddenBlock,
+  cpuCoinBlockHits,
+  clampCoinBlockHits,
+  payCoinBlock,
+  type HiddenBlockKind,
+  type HiddenBlockPrize,
+} from "./hiddenBlocks";
+import { createHiddenBlock, type HiddenBlockProp } from "../board/hiddenBlockProp";
 import { restockShops } from "./shopStock";
 import { tryPickMinigame } from "../minigames/registry";
 import { setPendingMinigame } from "../minigames/framework";
@@ -265,6 +275,25 @@ setAutoplayHook(() => {
 export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const { board, chars, hud, rollButton, dice, itemBar, punchCamera, ceremony, projectToScreen, flashOverlay } = deps;
 
+  /** One Hidden Block, from popping out of the air to vanishing. */
+  interface BlockRun {
+    pid: number;
+    kind: HiddenBlockKind;
+    prop: HiddenBlockProp;
+    stage: "spawn" | "hit" | "reveal" | "mash" | "wait" | "replay" | "pay" | "out";
+    /** Seconds in the current stage. */
+    t: number;
+    then: () => void;
+    prize: HiddenBlockPrize | null;
+    /** Coin Dice Block: hits counted (mash) or to play back (replay). */
+    hits: number;
+    shown: number;
+    lastHitT: number;
+    /** Local online human: relay the hit count when the window closes. */
+    publish: boolean;
+    mash: { root: HTMLElement; count: HTMLElement; bar: HTMLElement; btn: ButtonHandle; onKey: (e: KeyboardEvent) => void } | null;
+  }
+
   interface LoopState {
     phase: LoopPhase;
     disposed: boolean;
@@ -318,6 +347,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     netDice: boolean;
     netShop: { pid: number; space: number; done: () => void } | null;
     netStar: { pid: number; commit: (count: number) => void; pass: () => void } | null;
+    /** Waiting on a remote seat's Coin Dice Block hits (null hits = the CPU draw). */
+    netBlock: { pid: number; finish: (hits: number | null) => void } | null;
+    /** A Hidden Block in play: runs INSTEAD of the pause chain, like the star ceremony. */
+    blockRun: BlockRun | null;
     netPoison: { holderId: number; finish: (use: boolean) => void } | null;
     netPath: {
       pid: number;
@@ -377,6 +410,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     netDice: false,
     netShop: null,
     netStar: null,
+    netBlock: null,
+    blockRun: null,
     netPoison: null,
     netPath: null,
     resultSteps: [],
@@ -441,6 +476,20 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   let pumping = false;
   /** Apply one queued remote choice. True when the caller should look again. */
   const stepNet = (): boolean => {
+    if (S.netBlock) {
+      const wait = S.netBlock;
+      if (playerController(wait.pid) === "cpu") {
+        S.netBlock = null;
+        wait.finish(null);
+        return true;
+      }
+      const msg = peekChoice();
+      if (!msg || msg.kind !== "block" || msg.playerId !== wait.pid) return false;
+      shiftChoice();
+      S.netBlock = null;
+      wait.finish(msg.auto ? null : clampCoinBlockHits(msg.hits ?? 0));
+      return true;
+    }
     if (S.netPoison) {
       const wait = S.netPoison;
       if (playerController(wait.holderId) === "cpu") {
@@ -1129,6 +1178,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         hud.showBanner(`+${gained} COINS!`, { durationMs: 1400 });
         const sc = projectToScreen(pos);
         if (sc) ui.confettiBurst(sc.x, sc.y, { count: 36, sound: null });
+        // Now and then a Hidden Block pops out of thin air (match rng).
+        const block = rollHiddenBlock();
+        if (block) {
+          refreshHud();
+          pause(1.0, () => hiddenBlock(pid, block, finishEffect));
+          return;
+        }
         break;
       }
       case "red": {
@@ -1172,6 +1228,278 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         break;
     }
     finishEffect();
+  };
+
+  /* ---------------- hidden blocks ---------------- */
+
+  const BLOCK_RISE = 3.0; // block height above the player's space
+
+  const blockBanner = (kind: HiddenBlockKind, prize: HiddenBlockPrize): string => {
+    if (kind === "star") return "A STAR!";
+    if (prize.item) return `${(ITEM_DEFS[prize.item]?.name ?? prize.item).toUpperCase()}!`;
+    return `+${prize.coins} COINS!`;
+  };
+
+  /**
+   * A Hidden Block appears above `pid` (they just landed on blue). The player
+   * bonks it: a star, an item or coins pop out, or it turns into the Coin
+   * Dice Block, which pays a coin per hit until it vanishes.
+   */
+  const hiddenBlock = (pid: number, kind: HiddenBlockKind, then: () => void): void => {
+    const prop = createHiddenBlock();
+    const parent = board.group.parent ?? board.group;
+    parent.add(prop.root);
+    S.blockRun = {
+      pid,
+      kind,
+      prop,
+      stage: "spawn",
+      t: 0,
+      then,
+      prize: null,
+      hits: 0,
+      shown: 0,
+      lastHitT: -1,
+      publish: false,
+      mash: null,
+    };
+    placeBlock(S.blockRun);
+    audio.sfx.play("happening.magic");
+    audio.sfx.play("pop", { pitch: 1.4 });
+    hud.showBanner("HIDDEN BLOCK!", { durationMs: 1300 });
+    ceremony.focusCamera(charPos(pid), 0.35);
+    chars[pid]?.anim.squash();
+    bus.emit("hidden:block", { player: pid, space: match.players[pid]?.space ?? 0, prize: kind, coins: 0, item: null });
+  };
+
+  const placeBlock = (run: BlockRun): void => {
+    const p = charPos(run.pid);
+    run.prop.root.position.set(p.x, p.y + BLOCK_RISE, p.z);
+  };
+
+  const blockSparkle = (run: BlockRun, color: string, count = 10): void => {
+    const sc = projectToScreen(run.prop.root.position);
+    if (sc) ceremony.sparkle(sc.x, sc.y, count, color);
+  };
+
+  /** One hit on the Coin Dice Block (counted or played back). */
+  const blockHit = (run: BlockRun): void => {
+    run.prop.bump();
+    run.prop.popCoin();
+    run.lastHitT = run.t;
+    audio.sfx.play("coin.gain", { volume: 0.7, pitch: 1 + Math.min(run.shown, 20) * 0.03 });
+    if (run.mash) run.mash.count.textContent = `×${run.hits}`;
+  };
+
+  /** Decide how the Coin Dice Block gets hit: tap window, CPU, or the relay. */
+  const startCoinBlock = (run: BlockRun): void => {
+    const pid = run.pid;
+    // Fists pumping, hopping into the block for the whole window.
+    chars[pid]?.anim.cheer();
+    const replay = (hits: number): void => {
+      run.hits = clampCoinBlockHits(hits);
+      run.shown = 0;
+      run.stage = "replay";
+      run.t = 0;
+    };
+    const gate = netGate(pid);
+    if (gate === "remote") {
+      run.stage = "wait";
+      run.t = 0;
+      S.netBlock = { pid, finish: (hits) => replay(hits ?? cpuCoinBlockHits()) };
+      pumpNet();
+      return;
+    }
+    if (gate === "assist") {
+      publishChoice({ kind: "block", playerId: pid, auto: true });
+      replay(cpuCoinBlockHits());
+      return;
+    }
+    if (gate === "cpu" && !decisions.choosesLocally(pid)) {
+      replay(cpuCoinBlockHits());
+      return;
+    }
+    // A local human: tap HIT! (or Space / Enter) as fast as you can.
+    run.publish = gate === "human";
+    run.stage = "mash";
+    run.t = 0;
+    run.hits = 0;
+    openMashUi(run);
+  };
+
+  const openMashUi = (run: BlockRun): void => {
+    const root = document.createElement("div");
+    root.className = "ssp-coinblock";
+    root.style.cssText =
+      "position:fixed;left:50%;bottom:calc(120px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);" +
+      "display:flex;flex-direction:column;align-items:center;gap:8px;z-index:40;pointer-events:auto;";
+    const count = document.createElement("div");
+    count.style.cssText =
+      `font-family:Fredoka,sans-serif;font-weight:700;font-size:40px;line-height:1;color:${palette.sun};` +
+      `-webkit-text-stroke:2px ${palette.ink};paint-order:stroke fill;text-shadow:3px 3px 0 ${palette.ink};`;
+    count.textContent = "×0";
+    const track = document.createElement("div");
+    track.style.cssText = `width:200px;height:12px;border-radius:8px;background:${palette.cream};border:3px solid ${palette.ink};overflow:hidden;`;
+    const bar = document.createElement("div");
+    bar.style.cssText = `height:100%;width:100%;background:${palette.sun};`;
+    track.appendChild(bar);
+    const hit = (): void => {
+      const r = S.blockRun;
+      if (!r || r.stage !== "mash") return;
+      if (r.lastHitT >= 0 && r.t - r.lastHitT < settings.coinBlockCooldown) return;
+      if (r.hits >= settings.coinBlockMaxHits) return;
+      r.hits += 1;
+      r.shown = r.hits;
+      blockHit(r);
+    };
+    const btn = ui.button({
+      label: "HIT!",
+      kind: "gold",
+      size: "lg",
+      sound: null,
+      ariaLabel: "Hit the coin block",
+      onClick: hit,
+    });
+    btn.el.style.minWidth = "200px";
+    btn.el.style.touchAction = "manipulation";
+    // pointerdown, not click, so fast taps all count on a phone.
+    btn.el.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      hit();
+    });
+    btn.el.addEventListener("click", (e) => e.preventDefault(), true);
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.repeat) return;
+      if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        hit();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    root.append(count, track, btn.el);
+    document.body.appendChild(root);
+    run.mash = { root, count, bar, btn, onKey };
+  };
+
+  const closeMashUi = (run: BlockRun): void => {
+    if (!run.mash) return;
+    window.removeEventListener("keydown", run.mash.onKey);
+    run.mash.btn.destroy();
+    run.mash.root.remove();
+    run.mash = null;
+  };
+
+  const endBlock = (run: BlockRun): void => {
+    closeMashUi(run);
+    run.prop.dispose();
+    S.blockRun = null;
+    if (S.netBlock?.pid === run.pid) S.netBlock = null;
+  };
+
+  /** Hidden Block update, driven from update() while S.blockRun is set. */
+  const updateBlock = (dt: number): void => {
+    const run = S.blockRun;
+    if (!run) return;
+    run.t += dt;
+    placeBlock(run);
+    const alive = run.prop.update(dt);
+    const pid = run.pid;
+    const next = (stage: BlockRun["stage"]): void => {
+      run.stage = stage;
+      run.t = 0;
+    };
+    switch (run.stage) {
+      case "spawn":
+        if (run.t >= 1.0) {
+          chars[pid]?.anim.jump();
+          audio.sfx.play("jump");
+          next("hit");
+        }
+        break;
+      case "hit":
+        if (run.t >= 0.32) {
+          run.prop.bump();
+          audio.sfx.play("boing", { pitch: 1.2 });
+          blockSparkle(run, palette.sun, 14);
+          if (run.kind === "dice") {
+            run.prop.setLook("dice");
+            hud.showBanner("COIN DICE BLOCK! HIT IT!", { durationMs: 1500 });
+            startCoinBlock(run);
+            break;
+          }
+          const prize = openHiddenBlock(pid, run.kind);
+          run.prize = prize;
+          run.prop.reveal(run.kind === "star" ? "star" : prize.item ? "item" : "coins");
+          run.prop.setLook("spent");
+          hud.showBanner(blockBanner(run.kind, prize), { durationMs: 1500 });
+          audio.sfx.play(run.kind === "star" ? "star.get" : prize.item ? "shop.buy" : "coin.gain");
+          chars[pid]?.anim.cheer();
+          if (prize.item) ui.toast(`${playerLabel(pid)} found ${ITEM_DEFS[prize.item]?.name ?? prize.item}!`, { durationMs: 1700 });
+          bus.emit("hidden:block", { player: pid, space: match.players[pid]?.space ?? 0, prize: run.kind, coins: prize.coins, item: prize.item });
+          refreshHud();
+          next("reveal");
+        }
+        break;
+      case "reveal":
+        if (run.t >= 1.5) {
+          run.prop.vanish();
+          next("out");
+        }
+        break;
+      case "mash": {
+        const left = Math.max(0, 1 - run.t / settings.coinBlockSeconds);
+        if (run.mash) run.mash.bar.style.width = `${Math.round(left * 100)}%`;
+        if (run.t >= settings.coinBlockSeconds || run.hits >= settings.coinBlockMaxHits) {
+          closeMashUi(run);
+          if (run.publish) publishChoice({ kind: "block", playerId: pid, hits: run.hits });
+          next("pay");
+        }
+        break;
+      }
+      case "wait":
+        break; // stepNet hands the relayed count to replay()
+      case "replay": {
+        // Play the hits back at a quick, readable pace inside the block's window.
+        const gap = Math.min(0.26, settings.coinBlockSeconds / Math.max(1, run.hits));
+        if (run.shown < run.hits && run.t >= 0.25 + run.shown * gap) {
+          run.shown += 1;
+          blockHit(run);
+        }
+        if (run.shown >= run.hits && run.t >= 0.25 + run.hits * gap + 0.3) next("pay");
+        break;
+      }
+      case "pay":
+        if (run.t >= 0.2 && !run.prize) {
+          const coins = payCoinBlock(pid, run.hits);
+          run.prize = { kind: "dice", coins, item: null };
+          run.prop.setLook("spent");
+          if (coins > 0) {
+            hud.showBanner(`+${coins} COINS!`, { durationMs: 1500 });
+            chars[pid]?.anim.cheer();
+            blockSparkle(run, palette.sun, 18);
+          } else {
+            hud.showBanner("NO COINS...", { durationMs: 1300 });
+            chars[pid]?.anim.sad();
+          }
+          bus.emit("hidden:block", { player: pid, space: match.players[pid]?.space ?? 0, prize: "dice", coins, item: null });
+          refreshHud();
+        }
+        if (run.t >= 1.4) {
+          run.prop.vanish();
+          next("out");
+        }
+        break;
+      case "out":
+        if (!alive) {
+          const then = run.then;
+          const star = run.kind === "star";
+          endBlock(run);
+          chars[pid]?.anim.idle();
+          if (star) celebrateStar(pid, 1, then);
+          else then();
+        }
+        break;
+    }
   };
 
   const finishEffect = (): void => {
@@ -2250,6 +2578,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       return;
     }
 
+    // A Hidden Block is a staged beat too; remote hit counts arrive via pumpNet.
+    if (S.blockRun) {
+      updateBlock(dt);
+      pumpNet();
+      return;
+    }
+
     if (S.pauseT > 0) {
       S.pauseT -= dt;
       if (S.pauseT <= 0) {
@@ -2449,6 +2784,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     S.poisonPopup?.destroy();
     S.poisonPopup = null;
     S.poisonAutoCommit = null;
+    if (S.blockRun) endBlock(S.blockRun);
+    S.netBlock = null;
     liveLoop = null;
   };
 
@@ -2463,6 +2800,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       !S.shopOpen &&
       !S.starPopup &&
       !S.starCeremony &&
+      !S.blockRun &&
       !S.itemResolving &&
       !S.itemPopup &&
       !S.poisonPopup,

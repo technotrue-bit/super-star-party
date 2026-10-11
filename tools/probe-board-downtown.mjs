@@ -5,7 +5,8 @@
  * match and compares every turn-boundary snapshot hash (boardId dropped) and
  * every synchronous rng mark against tools/golden/carnival-seed7.json, recorded
  * on main d0b3484 and re-recorded when the Funhouse Gate (a per-round gameplay
- * flip, carnival rev 3) landed. Any unintended gameplay drift fails here.
+ * flip, carnival rev 3) and Hidden Blocks (a rng draw on every blue landing,
+ * carnival rev 4) landed. Any unintended gameplay drift fails here.
  *
  * Part 2 (Downtown graph, static): loads ?board=downtown and checks the def from
  * __SSP__.board(): 46 spaces, next[] well-formed (1 or 2 edges, in range), every

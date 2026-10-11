@@ -41,7 +41,9 @@ export type BoardChoice =
     }
   | { kind: "star"; playerId: number; auto?: boolean; count: number; pass?: boolean }
   | { kind: "poison"; playerId: number; auto?: boolean; use: boolean }
-  | { kind: "path"; playerId: number; auto?: boolean; to?: number };
+  | { kind: "path"; playerId: number; auto?: boolean; to?: number }
+  /** Coin Dice Block: how many times the seat hit it (auto = the CPU draw). */
+  | { kind: "block"; playerId: number; auto?: boolean; hits?: number };
 
 export type PartyMessage =
   | {
