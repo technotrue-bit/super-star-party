@@ -82,6 +82,11 @@ export const palette = {
   heroBounce: "#3FA9F5", // Bounce — blue spring rabbit
   heroGlimmer: "#2EE6A8", // Glimmer — green imp
   heroTusk: "#F07FE0", // Tusk — pink elephant
+  heroMallow: "#A98BF5", // Mallow — lavender hippo
+  heroRumble: "#F2605A", // Rumble — coral dino
+  heroJack: "#FF8A1F", // Jack — floating pumpkin
+  heroWisp: "#EEF0FF", // Wisp — chibi ghost
+  pumpkinStem: "#4E8B3A", // Jack's stem + leaf
 
   // ---- misc ----
   white: "#FFFFFF",

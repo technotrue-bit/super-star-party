@@ -12,6 +12,10 @@ const KIND_COLORS: Record<string, string> = {
   bounce: palette.heroBounce,
   glimmer: palette.heroGlimmer,
   tusk: palette.heroTusk,
+  mallow: palette.heroMallow,
+  rumble: palette.heroRumble,
+  jack: palette.heroJack,
+  wisp: palette.heroWisp,
 };
 
 const FALLBACKS = [

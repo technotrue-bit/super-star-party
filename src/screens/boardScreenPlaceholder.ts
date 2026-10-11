@@ -18,7 +18,7 @@ import { playerLabel, labelDoes } from "../ui/labels";
 import { setOnlineMatch } from "../net/mode";
 import { rng, ease } from "../core/rng";
 import { bus } from "../core/events";
-import { roster } from "../characters/roster";
+import { roster, MATCH_SEATS } from "../characters/roster";
 import { audio } from "../audio/audioEngine";
 import { ui, queue } from "../ui/kit";
 import { setAutoplay } from "../core/debug";
@@ -416,9 +416,10 @@ const boardScreenImpl: BoardScreenState & Screen = {
       // The reset below restarts the dice stream at that seed (pack picks
       // use their own stream and do not consume this one).
       setOnlineMatch(false);
+      const seated = roster.slice(0, MATCH_SEATS);
       startMatch(
-        roster.map((c) => c.key),
-        roster.map((c) => c.name),
+        seated.map((c) => c.key),
+        seated.map((c) => c.name),
         10,
         used,
       );

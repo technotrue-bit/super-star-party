@@ -4,6 +4,8 @@ import { palette } from '../config/palette';
 export interface FaceSpec {
   smile: 'grin' | 'open' | 'half' | 'wide';
   eyeSize: number;
+  /** A little white fang poking down from the smile (Rumble). */
+  fang?: boolean;
 }
 
 const FACE_WIDTH = 256;
@@ -51,6 +53,20 @@ function drawSmile(ctx: CanvasRenderingContext2D, smile: FaceSpec['smile']): voi
 
   ctx.beginPath();
   ctx.arc(centerX, SMILE_Y, radius, 0, Math.PI);
+  ctx.stroke();
+}
+
+function drawFang(ctx: CanvasRenderingContext2D): void {
+  ctx.fillStyle = palette.white;
+  ctx.strokeStyle = palette.ink;
+  ctx.lineWidth = 3;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(140, SMILE_Y + 17);
+  ctx.lineTo(152, SMILE_Y + 13);
+  ctx.lineTo(147, SMILE_Y + 27);
+  ctx.closePath();
+  ctx.fill();
   ctx.stroke();
 }
 
@@ -181,6 +197,7 @@ export function makeFaceTexture(spec: FaceSpec, expr: Expression = 'normal'): TH
       drawSmile(ctx, spec.smile);
       break;
   }
+  if (spec.fang && (expr === 'normal' || expr === 'blink')) drawFang(ctx);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.LinearFilter;
@@ -196,4 +213,8 @@ export const faceSpecs: Record<string, FaceSpec> = {
   bounce: { smile: 'open', eyeSize: 1.15 },
   glimmer: { smile: 'half', eyeSize: 0.95 },
   tusk: { smile: 'wide', eyeSize: 1.05 },
+  mallow: { smile: 'wide', eyeSize: 0.9 },
+  rumble: { smile: 'grin', eyeSize: 1.05, fang: true },
+  jack: { smile: 'wide', eyeSize: 1.1 },
+  wisp: { smile: 'open', eyeSize: 1.25 },
 };
