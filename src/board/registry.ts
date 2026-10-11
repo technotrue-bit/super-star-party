@@ -29,8 +29,8 @@ export const BOARDS: Record<BoardId, BoardEntry> = {
   "fizzy-fairground": {
     def: fizzyFairground,
     name: "Fizzy Fairground",
-    blurb: "A carnival midway with an inner lane and the Funhouse Cut.",
-    rev: 2,
+    blurb: "An island midway: a hilltop inner lane and a Funhouse Gate that flips every round.",
+    rev: 3,
   },
   downtown: {
     def: downtown,

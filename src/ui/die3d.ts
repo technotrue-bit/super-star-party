@@ -265,7 +265,7 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
       const s = Math.min(1, timer / LAND_DUR);
       const k = ease.outBack(s);
       group.quaternion.slerp(targetQuat, k); // snap to the settled face
-      group.position.y = THREE.MathUtils.lerp(group.position.y, GROUND_Y, 0.6);
+      group.position.y = THREE.MathUtils.lerp(group.position.y, landPos.y, 0.6);
       const sy = 0.55 + 0.45 * k; // squash on impact
       const sx = 1.16 - 0.2 * k; // bulge then recover
       group.scale.set(sx, sy, sx);
@@ -305,7 +305,7 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
     const off = PLAYER_OFFSETS[pid] ?? [0, 0];
     base.x += off[0];
     base.z += off[1];
-    landPos.set(base.x + LAND_OFFSET.x, GROUND_Y, base.z + LAND_OFFSET.z);
+    landPos.set(base.x + LAND_OFFSET.x, base.y + GROUND_Y, base.z + LAND_OFFSET.z);
 
     // If the die was hovering above the player, start the "roll on the board"
     // animation from that high position so it flies down while tumbling.
@@ -315,7 +315,7 @@ export function createDie3d(scene: THREE.Scene, camera: THREE.Camera, board: Boa
       // add a little extra upward pop for a nice throw feel
       group.position.y = Math.max(group.position.y, hoverBase.y + 0.8);
     } else {
-      group.position.set(landPos.x, GROUND_Y + 0.4, landPos.z);
+      group.position.set(landPos.x, landPos.y + 0.4, landPos.z);
     }
     hoverBase = null;
 

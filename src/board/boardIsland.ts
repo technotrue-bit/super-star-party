@@ -82,13 +82,35 @@ function ring(shape: IslandShape, off: number): { x: number; z: number; nx: numb
   return out;
 }
 
-/** Grass plateau: a fan over the coastline, UVs in world space for the 2u checker. */
-function buildTop(shape: IslandShape, kit: BoardTextures): THREE.Mesh {
-  const pts = ring(shape, 0);
-  const pos: number[] = [shape.cx, 0, shape.cz];
-  for (const p of pts) pos.push(p.x, 0, p.z);
+/** Ground height at (x, z) on the island top (0 off the hills). */
+export type HeightFn = (x: number, z: number) => number;
+
+/**
+ * Grass plateau: a polar grid from the centre out to the coastline, lifted by
+ * the board terrain (Starlight Rise). The outer ring is the coast itself, so
+ * it meets the cliff band exactly. UVs are world space for the 2u checker.
+ */
+function buildTop(shape: IslandShape, kit: BoardTextures, heightAt: HeightFn): THREE.Mesh {
+  const RINGS = 44;
+  const pos: number[] = [shape.cx, heightAt(shape.cx, shape.cz), shape.cz];
+  for (let r = 1; r <= RINGS; r++) {
+    const f = r / RINGS;
+    for (let i = 0; i < SEG; i++) {
+      const a = (i / SEG) * Math.PI * 2;
+      const rad = shape.radiusAt(a) * f;
+      const x = shape.cx + Math.cos(a) * rad;
+      const z = shape.cz + Math.sin(a) * rad;
+      pos.push(x, r === RINGS ? 0 : heightAt(x, z), z);
+    }
+  }
   const idx: number[] = [];
-  for (let i = 0; i < SEG; i++) idx.push(0, 1 + ((i + 1) % SEG), 1 + i);
+  const v = (r: number, i: number): number => 1 + (r - 1) * SEG + (i % SEG);
+  for (let i = 0; i < SEG; i++) idx.push(0, v(1, i + 1), v(1, i));
+  for (let r = 1; r < RINGS; r++) {
+    for (let i = 0; i < SEG; i++) {
+      idx.push(v(r, i), v(r, i + 1), v(r + 1, i), v(r + 1, i), v(r, i + 1), v(r + 1, i + 1));
+    }
+  }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   const uv: number[] = [];
@@ -96,13 +118,25 @@ function buildTop(shape: IslandShape, kit: BoardTextures): THREE.Mesh {
   const tile = settings.board.groundTile * 2;
   for (let i = 0; i < pos.length; i += 3) uv.push(pos[i] / tile, -pos[i + 2] / tile);
   geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
-  geo.setAttribute("normal", new THREE.Float32BufferAttribute(new Array((pos.length / 3) * 3).fill(0).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
   geo.setIndex(idx);
+  geo.computeVertexNormals();
+  // Slopes print a shade darker than the flat grass, so a hill reads as a
+  // raised tier from the high party camera, not just as lighting.
+  const col = new Float32Array((pos.length / 3) * 3);
+  const nrm = geo.getAttribute("normal");
+  for (let k = 0; k < nrm.count; k++) {
+    const tilt = 1 - nrm.getY(k);
+    const shade = 1 - Math.min(0.22, tilt * 1.6);
+    col[k * 3] = shade;
+    col[k * 3 + 1] = shade;
+    col[k * 3 + 2] = shade;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
   const grass = kit.grass;
   grass.repeat.set(1, 1);
   const mesh = new THREE.Mesh(
     geo,
-    new THREE.MeshToonMaterial({ color: palette.white, map: grass, gradientMap: kit.grad })
+    new THREE.MeshToonMaterial({ color: palette.white, map: grass, gradientMap: kit.grad, vertexColors: true })
   );
   mesh.name = "island:top";
   mesh.receiveShadow = true;
@@ -422,12 +456,12 @@ export interface Island extends Prop {
 }
 
 /** Build the whole diorama. Add `root` to the board group. */
-export function buildIsland(kit: BoardTextures): Island {
+export function buildIsland(kit: BoardTextures, heightAt: HeightFn = () => 0): Island {
   const shape = islandShape();
   const root = new THREE.Group();
   root.name = "island";
 
-  root.add(buildTop(shape, kit));
+  root.add(buildTop(shape, kit, heightAt));
   root.add(buildCliff(shape, kit));
 
   const rip = rippleTexture();

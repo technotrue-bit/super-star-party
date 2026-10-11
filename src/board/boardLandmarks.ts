@@ -208,3 +208,120 @@ export function buildPier(kit: BoardTextures, island: IslandShape, a: number): P
     },
   };
 }
+
+export interface GateProp extends Prop {
+  /** Swing the doors toward open (along the cut) or shut (across it). */
+  setOpen(open: boolean, snap?: boolean): void;
+}
+
+/** Arch sign texture: "FUNHOUSE" on a candy board with an ink border. */
+function gateSignTexture(text: string): THREE.CanvasTexture {
+  const c = document.createElement("canvas");
+  c.width = 256;
+  c.height = 64;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = palette.candy;
+  ctx.fillRect(0, 0, 256, 64);
+  ctx.strokeStyle = palette.ink;
+  ctx.lineWidth = 8;
+  ctx.strokeRect(4, 4, 248, 56);
+  ctx.fillStyle = palette.cream;
+  ctx.font = "700 38px Fredoka, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 128, 35);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  t.needsUpdate = true;
+  return t;
+}
+
+/**
+ * The Funhouse Gate: a striped archway across the Funhouse Cut, just past
+ * the fork tile, with two picket doors on hinges. Open, the doors fold back
+ * along the cut; shut, they meet across it. Presentation only: the rule is
+ * match.gateOpen, read by the turn loop.
+ */
+export function buildFunhouseGate(kit: BoardTextures, at: THREE.Vector3, toward: THREE.Vector3): GateProp {
+  const root = new THREE.Group();
+  const dir = toward.clone().sub(at).setY(0).normalize();
+  root.position.copy(at).addScaledVector(dir, 2.0);
+  // Local +z runs along the cut (away from the fork), local x across it.
+  root.rotation.y = Math.atan2(dir.x, dir.z);
+  const HALF = 1.25;
+  const stripe = kit.stripe(palette.candy, palette.cream);
+  const postGeo = new THREE.CylinderGeometry(0.16, 0.19, 2.6, 10);
+  for (const s of [-1, 1]) {
+    const post = new THREE.Mesh(postGeo, toonMat(kit, palette.white, { map: stripe }));
+    post.position.set(s * HALF, 1.3, 0);
+    root.add(post, outline(post, 1.1));
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 8), toonMat(kit, palette.sun));
+    knob.position.set(s * HALF, 2.72, 0);
+    root.add(knob);
+  }
+  const signTex = gateSignTexture("FUNHOUSE");
+  const sign = new THREE.Mesh(
+    new THREE.BoxGeometry(2.9, 0.62, 0.14),
+    [
+      toonMat(kit, palette.candyDeep),
+      toonMat(kit, palette.candyDeep),
+      toonMat(kit, palette.candyDeep),
+      toonMat(kit, palette.candyDeep),
+      toonMat(kit, palette.white, { map: signTex }),
+      toonMat(kit, palette.white, { map: signTex }),
+    ]
+  );
+  sign.position.y = 2.35;
+  root.add(sign, outline(sign, 1.05));
+
+  // Picket doors: hinge at each post, panel reaching to the middle when shut.
+  const doors: THREE.Group[] = [];
+  const pick = toonMat(kit, palette.sun);
+  for (const s of [-1, 1]) {
+    const hinge = new THREE.Group();
+    hinge.position.set(s * HALF, 0, 0);
+    const W = HALF - 0.08;
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(W, 0.1, 0.08), pick);
+    for (const y of [0.35, 0.95]) {
+      const r = rail.clone();
+      r.position.set((-s * W) / 2, y, 0);
+      hinge.add(r);
+    }
+    for (let k = 0; k < 4; k++) {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.2, 0.08), pick);
+      bar.position.set(-s * (0.15 + k * (W - 0.2) / 3), 0.65, 0);
+      hinge.add(bar);
+    }
+    root.add(hinge);
+    doors.push(hinge);
+  }
+
+  let target = 1;
+  let cur = 1;
+  const pose = (u: number): void => {
+    // u = 1 open (folded back along +z), 0 shut (across the cut).
+    doors[0].rotation.y = (-Math.PI / 2) * u;
+    doors[1].rotation.y = (Math.PI / 2) * u;
+  };
+  pose(cur);
+  shadowAll(root);
+  return {
+    root,
+    setOpen(open: boolean, snap = false) {
+      target = open ? 1 : 0;
+      if (snap) {
+        cur = target;
+        pose(cur);
+      }
+    },
+    update(_t: number, dt: number) {
+      if (cur === target) return;
+      const step = dt * 2.2;
+      cur = Math.abs(target - cur) <= step ? target : cur + Math.sign(target - cur) * step;
+      // A little bounce as the doors settle.
+      const e = cur === target ? cur : cur + Math.sin(cur * Math.PI) * 0.08 * Math.sign(target - cur);
+      pose(e);
+    },
+  };
+}

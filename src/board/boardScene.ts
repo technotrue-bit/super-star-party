@@ -16,7 +16,7 @@ import { settings, livelyEnabled } from "../config/settings";
 import { palette } from "../config/palette";
 import { ease } from "../core/rng";
 import type { SpaceType } from "../core/game";
-import type { BoardDef } from "./boardData";
+import { groundHeight, type BoardDef } from "./boardData";
 import { activeBoard } from "./registry";
 import { buildKit, type BoardTextures } from "./boardTextures";
 import { buildBoardLanes } from "./boardLanes";
@@ -48,16 +48,16 @@ import { createNight, type Night } from "./lively/night";
 import { attachStaticBoundsIn, releaseStaticBoundsIn } from "../render/meshBvh";
 import { buildIsland, type Island } from "./boardIsland";
 import { buildFoliage, type KeepOut } from "./boardFoliage";
-import { buildBigTop, buildHelterSkelter, buildPier, LANDMARK_RADIUS } from "./boardLandmarks";
+import { buildBigTop, buildHelterSkelter, buildPier, buildFunhouseGate, LANDMARK_RADIUS, type GateProp } from "./boardLandmarks";
 
 export interface BoardScene {
   /** Root group, added to world.scene by buildBoardScene(). */
   group: THREE.Group;
   /** Type string of the space at index i ("blue" | "red" | ...). */
   spaceType(i: number): string;
-  /** Space center in group-local ground-plane coords (y = 0). */
+  /** Space center in group-local coords (y = ground height under the space). */
   spacePos(i: number): THREE.Vector3;
-  /** Space center in world coords (y = 0). */
+  /** Space center in world coords (y = ground height under the space). */
   spaceWorldPos(i: number): THREE.Vector3;
   /** The space's root Object3D (disk + any per-space prop). */
   spaceMesh(i: number): THREE.Object3D;
@@ -85,6 +85,8 @@ export interface BoardScene {
    * Later calls pop it and reinflate at the new index. Null hides it.
    */
   setPrizeBalloon(index: number | null): void;
+  /** Show the board's gate (Funhouse Gate) open or shut. No-op without one. */
+  setGate(open: boolean): void;
   /** Remove the group and free all GPU resources. */
   dispose(): void;
 }
@@ -194,6 +196,8 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
   builtDef = def;
   const n = def.spaces.length;
   const B = settings.board;
+  // Ground height under every space (Starlight Rise lifts the inner loop).
+  const spaceY = def.spaces.map((sp) => groundHeight(def, sp.x, sp.y));
   const group = new THREE.Group();
   group.name = `board:${def.id}`;
   const kit: BoardTextures = buildKit();
@@ -213,7 +217,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
   decor.name = "decor";
   let island: Island | null = null;
   if (carnival) {
-    island = buildIsland(kit);
+    island = buildIsland(kit, (x, z) => groundHeight(def, x, z));
     decor.add(island.root);
   } else {
     const ground = new THREE.Mesh(
@@ -241,7 +245,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
   for (let i = 0; i < n; i++) {
     const sp = def.spaces[i];
     const g = new THREE.Group();
-    g.position.set(sp.x, 0, sp.y);
+    g.position.set(sp.x, spaceY[i], sp.y);
 
     const disk = new THREE.Mesh(
       diskGeo,
@@ -321,7 +325,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       rims.name = "space-rims";
       rims.receiveShadow = true;
       const m = new THREE.Matrix4();
-      for (let i = 0; i < n; i++) rims.setMatrixAt(i, m.makeTranslation(def.spaces[i].x, 0, def.spaces[i].y));
+      for (let i = 0; i < n; i++) rims.setMatrixAt(i, m.makeTranslation(def.spaces[i].x, spaceY[i], def.spaces[i].y));
       rims.instanceMatrix.needsUpdate = true;
       rims.computeBoundingSphere();
       group.add(rims);
@@ -341,8 +345,9 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
   const POP_INFLATE = 0.42;
 
   const placePrize = (index: number, scale: number): void => {
-    const sp = def.spaces[wrapIndex(index, n)];
-    prize.root.position.set(sp.x, 0, sp.y);
+    const k = wrapIndex(index, n);
+    const sp = def.spaces[k];
+    prize.root.position.set(sp.x, spaceY[k], sp.y);
     const s = Math.max(0.001, scale);
     prize.root.scale.setScalar(s);
   };
@@ -382,7 +387,9 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
     // ferris wheel at the bottom-right corner
     props.push(buildFerrisWheel(kit, cx + halfW + 3.6, cy - halfH - 4.2));
     // star fountain plaza in the middle
-    props.push(buildFountain(kit, 1.3));
+    const fountain = buildFountain(kit, 1.3);
+    fountain.root.position.y = groundHeight(def, 0, 0);
+    props.push(fountain);
     // gumball machine beside each shop space
     for (const sp of def.spaces) {
       if (sp.type === "shop") {
@@ -393,6 +400,8 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
   }
   // Landmarks on the open grass either side of the loop, plus the pier.
   const keepOut: KeepOut[] = [];
+  let gate: GateProp | null = null;
+  let gateShown: boolean | null = null;
   if (carnival && island) {
     const L = settings.board.landmarks;
     const bigTop = buildBigTop(kit, L.bigTop.x, L.bigTop.z, Math.atan2(-(cy - L.bigTop.z), cx - L.bigTop.x));
@@ -401,6 +410,15 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
     for (const p of [bigTop, helter, pier]) {
       decor.add(p.root);
       props.push(p);
+    }
+    if (def.gate) {
+      const g = def.gate;
+      const at = new THREE.Vector3(def.spaces[g.from].x, spaceY[g.from], def.spaces[g.from].y);
+      const to = new THREE.Vector3(def.spaces[g.open].x, spaceY[g.open], def.spaces[g.open].y);
+      gate = buildFunhouseGate(kit, at, to);
+      decor.add(gate.root);
+      props.push(gate);
+      keepOut.push({ x: gate.root.position.x, z: gate.root.position.z, r: 1.8 });
     }
     keepOut.push(
       { x: L.bigTop.x, z: L.bigTop.z, r: LANDMARK_RADIUS.bigTop },
@@ -544,8 +562,9 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       spaceCount: n,
       spaceGroup: (i) => spaceGroups[wrapIndex(i, n)],
       spacePos: (i) => {
-        const sp = def.spaces[wrapIndex(i, n)];
-        return new THREE.Vector3(sp.x, 0, sp.y);
+        const k = wrapIndex(i, n);
+        const sp = def.spaces[k];
+        return new THREE.Vector3(sp.x, spaceY[k], sp.y);
       },
       rimColor: (type) => DISK_RIM[type as SpaceType] ?? palette.sun,
     });
@@ -595,8 +614,9 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
     },
 
     spacePos(i: number): THREE.Vector3 {
-      const sp = def.spaces[wrapIndex(i, n)];
-      return new THREE.Vector3(sp.x, 0, sp.y);
+      const k = wrapIndex(i, n);
+      const sp = def.spaces[k];
+      return new THREE.Vector3(sp.x, spaceY[k], sp.y);
     },
 
     spaceWorldPos(i: number): THREE.Vector3 {
@@ -641,6 +661,12 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
 
     setTimeOfDay(turn: number, totalTurns: number): void {
       night?.setTurn(turn, totalTurns);
+    },
+
+    setGate(open: boolean): void {
+      if (!gate || gateShown === open) return;
+      gate.setOpen(open, gateShown === null);
+      gateShown = open;
     },
 
     setPrizeBalloon(index: number | null): void {

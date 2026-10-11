@@ -99,6 +99,8 @@ Published names are original to the Fizzy Fairground. The MP7 labels below are d
 
 7. **Lucky Ticket** — **Done**: Our Lucky Card is a golden carnival ticket. It triples roulette odds and gives +1 coin on the next blue.
 
+8. **Funhouse Gate** (Fizzy Fairground's board gimmick) — **Done**: A striped gate stands on the Funhouse Cut at space 19. It starts the match open and flips at every round rollover (`match.gateOpen`, no rng, so every peer flips together). Open: a mover on 19 steps across the Cut to 26, as before. Shut: the mover walks Funhouse Row (20–25), past the Prize Booth Bazaar shop and Grumpus Gulch, which were unreachable before the gate. The first turn of each round toasts the new state and the camera swings to the gate. CPU star-pathing and the "N spaces to the Grand Prize Balloon" hint follow the gate. The Grand Prize Balloon still never parks on Funhouse Row. The flip changes seeded matches, so the carnival rev is 3 and `tools/golden/carnival-seed7.json` / `carnival-seed2.json` were re-recorded.
+
 These keep the MP7 structure 100% faithful while making the game feel like *our* bright, mischievous carnival.
 
 ## Immediate Next Steps (small pieces)

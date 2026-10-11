@@ -121,9 +121,9 @@ export const settings = {
       // Red (the landmark the critic counts) sits front-center: it stays
       // on-screen even during the SW dice-camera punch; sun takes the west
       // slot, mint the east.
-      { x: -1.5, z: 14.6 }, // tentRed — south grass, front-center
-      { x: -8.0, z: 13.5 }, // sun — south grass, left
-      { x: 4.0, z: 13.0 }, // mint — south grass, right
+      { x: -2.0, z: 18.4 }, // tentRed — south grass, front-center
+      { x: -9.0, z: 17.6 }, // sun — south grass, left
+      { x: 4.8, z: 17.4 }, // mint — south grass, right
     ],
     tentBalloonInset: 1.8, // balloon cluster offset from each tent back toward the loop
     fountainPulse: 2.0, // rad/s fountain sparkle pulse
@@ -158,8 +158,8 @@ export const settings = {
     },
     // Landmarks on the open grass (world x/z). The Big Top faces the board.
     landmarks: {
-      bigTop: { x: -18.8, z: -0.6 },
-      helter: { x: 18.6, z: 1.6 },
+      bigTop: { x: -20.2, z: -2.4 },
+      helter: { x: 19.6, z: 1.6 },
       pierAngle: Math.PI / 2 - 0.45, // heading on the coast (0 = east, pi/2 = south)
     },
     shadowExtent: 26, // key-light shadow box half-size while the carnival board is up

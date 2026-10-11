@@ -25,6 +25,10 @@ import { setAutoplay } from "../core/debug";
 import { isAutoplay } from "../core/debug";
 import { buildBoardScene, boardBounds, type BoardScene } from "../board/boardScene";
 import { activeBoard } from "../board/registry";
+import { liveNext, type BoardDef } from "../board/boardData";
+import { createIntroFlyover, type IntroFlyover } from "../board/introFlyover";
+import { playSpeed, prefersReducedMotion } from "../config/settings";
+import { onlineMatch } from "../net/mode";
 import { distanceTo } from "../board/boardGraph";
 import { createMoveCountdown, type MoveCountdown } from "../ui/moveCountdown";
 import { createPrizeHint, type PrizeHint } from "../ui/prizeHint";
@@ -282,6 +286,10 @@ interface BoardScreenState {
   _pause?: PauseOverlayHandle;
   _onPauseKey?: (e: KeyboardEvent) => void;
   _unfreezeAutoplay?: boolean;
+  /** Match-start flyover while it plays (camera override + skip listener). */
+  _intro?: { fly: IntroFlyover; start: number; shown: number; hud: IntroHud; done: () => void; off: () => void };
+  _startIntro: (def: BoardDef, hud: IntroHud, done: () => void) => void;
+
   _finaleShown?: boolean;
   _unsubs: Array<() => void>;
   _updateHudExtras: () => void;
@@ -290,8 +298,14 @@ interface BoardScreenState {
   _closePause: () => void;
 }
 
-/** The board the match plays; the hint's BFS reads its edges. */
-const graphDef = () => activeBoard();
+/** What the flyover needs from the HUD: banners. */
+type IntroHud = { showBanner: (text: string, opts?: { durationMs?: number; style?: "default" }) => unknown };
+
+/** The move graph as it stands this round (the Funhouse Gate applied). */
+const graphDef = () => {
+  const def = activeBoard();
+  return { next: liveNext(def, match.gateOpen), startIndex: def.startIndex };
+};
 
 function projectToScreen(pos: THREE.Vector3): { x: number; y: number } | null {
   const cam = world.camera;
@@ -386,6 +400,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
 
     // ---- match: start a default one when nothing is running (URL-direct) ----
     const params = new URLSearchParams(window.location.search);
+    // URL-direct boards (?screen=board: critics, probes) skip the intro flyover.
+    const urlDirect = match.players.length === 0;
     if (match.players.length === 0) {
       const seed = Number(params.get("seed") ?? "1");
       const used = Number.isFinite(seed) ? seed : 1;
@@ -445,7 +461,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._chars = match.players.map((p, i) => {
       const off = PLAYER_OFFSETS[i] ?? [0, 0];
       const ch = createCharacter(p.kind);
-      ch.group.position.set(start.x + off[0], 0, start.z + off[1]);
+      ch.group.position.set(start.x + off[0], start.y, start.z + off[1]);
       ch.group.scale.setScalar(0.92);
       ch.setFacing(Math.PI / 4 + i);
       ch.anim.idle();
@@ -813,7 +829,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
           const group = new THREE.Group();
           group.add(star, shell);
           group.position.copy(startPos);
-          group.position.y = 0.9; // lifted off the space
+          group.position.y = startPos.y + 0.9; // lifted off the space
           world.scene?.add(group);
           (boardScreenImpl._starTravels = boardScreenImpl._starTravels ?? []).push({
             group, geo, mat, elapsed: 0, duration,
@@ -867,7 +883,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
 
     // Mario Party "roll to see who goes first" — show the rolls with suspense
     // The match and first turn only start after the order ceremony finishes.
-    if (match.orderRolls.length > 0 && match.turn === 1) {
+    const orderCeremony = (): void => {
       const order = match.turnOrder;
       const rolls = match.orderRolls;
 
@@ -892,6 +908,26 @@ const boardScreenImpl: BoardScreenState & Screen = {
         // The match now officially begins. The first player in the determined order gets their turn.
         this._loop?.start();
       }, delay + 150);
+    };
+    if (match.orderRolls.length > 0 && match.turn === 1) {
+      // Match-start flyover over the island first (menu starts only; never
+      // under autoplay, ?speed, reduced motion, or online play). ?intro=1
+      // forces it, ?intro=0 turns it off.
+      const introParam = params.get("intro");
+      const wantIntro =
+        introParam === "1" ||
+        (introParam !== "0" &&
+          !urlDirect &&
+          !isAutoplay() &&
+          params.get("autoplay") !== "1" &&
+          playSpeed() === 1 &&
+          !prefersReducedMotion() &&
+          !onlineMatch());
+      if (wantIntro && this._cam) {
+        this._startIntro(boardDef, queuedHud, orderCeremony);
+      } else {
+        orderCeremony();
+      }
     } else {
       // Not a fresh match start (e.g. returning from minigame)
       this._loop?.start();
@@ -906,7 +942,54 @@ const boardScreenImpl: BoardScreenState & Screen = {
   },
 
 
+  _startIntro(def: BoardDef, hud: IntroHud, done: () => void) {
+    if (!this._cam) {
+      done();
+      return;
+    }
+    const start = performance.now();
+    const fly = createIntroFlyover(def, start, this._cam.base.clone(), this._cam.look.clone());
+    const tip = document.createElement("div");
+    tip.className = "ssp-intro-skip";
+    tip.textContent = "TAP TO SKIP";
+    tip.style.cssText = [
+      "position:fixed",
+      "left:50%",
+      "bottom:calc(112px + env(safe-area-inset-bottom, 0px))",
+      "transform:translateX(-50%)",
+      "z-index:60",
+      "padding:8px 16px",
+      `background:${palette.cream}`,
+      `color:${palette.ink}`,
+      `border:3px solid ${palette.ink}`,
+      `box-shadow:0 4px 0 ${palette.ink}`,
+      "border-radius:999px",
+      "font:700 14px Fredoka, sans-serif",
+      "letter-spacing:0.06em",
+      "pointer-events:none",
+    ].join(";");
+    document.body.appendChild(tip);
+    const onSkip = (): void => {
+      const it = this._intro;
+      if (!it) return;
+      it.shown = it.fly.beats.length;
+      ui.clearFeedback();
+      it.fly.skip(performance.now());
+    };
+    window.addEventListener("pointerdown", onSkip);
+    window.addEventListener("keydown", onSkip);
+    const off = (): void => {
+      window.removeEventListener("pointerdown", onSkip);
+      window.removeEventListener("keydown", onSkip);
+      tip.remove();
+    };
+    audio.sfx.play("whoosh");
+    this._intro = { fly, start, shown: 0, hud, done, off };
+  },
+
   exit() {
+    this._intro?.off();
+    this._intro = undefined;
     document.body.classList.remove("ssp-board-on");
     for (const off of this._unsubs ?? []) off();
     this._unsubs = [];
@@ -993,6 +1076,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
       this._mapBtn.classList.toggle("ssp-map-fab--on", myTurn && !this._mapLook?.isOpen());
     }
     this._board?.setTimeOfDay(match.turn, match.totalTurns);
+    this._board?.setGate(match.gateOpen);
     if (this._mapLook?.isOpen()) {
       this._countdown?.update(null);
       this._hint?.update(null);
@@ -1010,7 +1094,29 @@ const boardScreenImpl: BoardScreenState & Screen = {
 
     // ---- party camera: smooth follow on active player, overview, or slow minigame pan ----
     const cam = world.camera;
-    if (cam && this._cam && this._followPos && this._followLook) {
+    // Match-start flyover owns the camera until it ends (or is skipped).
+    const intro = this._intro;
+    let introPose: { pos: THREE.Vector3; look: THREE.Vector3 } | null = null;
+    if (intro) {
+      const now = performance.now();
+      const beats = intro.fly.beats;
+      while (intro.shown < beats.length && (now - intro.start) / 1000 >= beats[intro.shown].at) {
+        intro.hud.showBanner(beats[intro.shown].text, { durationMs: 1700, style: "default" });
+        intro.shown += 1;
+      }
+      introPose = intro.fly.pose(now);
+      if (!introPose) {
+        intro.off();
+        this._intro = undefined;
+        intro.done();
+      }
+    }
+    if (cam && introPose) {
+      cam.position.copy(introPose.pos);
+      cam.lookAt(introPose.look);
+      this._followPos?.copy(introPose.pos);
+      this._followLook?.copy(introPose.look);
+    } else if (cam && this._cam && this._followPos && this._followLook) {
       const phase = match.phase;
       const currentPid = match.currentPlayer;
 

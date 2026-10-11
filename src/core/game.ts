@@ -198,6 +198,12 @@ export interface MatchState {
    * field stays as it was before boards existed.
    */
   boardId: BoardId;
+  /**
+   * Funhouse Gate (boards with a `gate`): true while the gate is open and the
+   * cut is the stay edge, false while movers walk the detour. Flips at every
+   * round rollover. Unused (always true) on boards without a gate.
+   */
+  gateOpen: boolean;
 }
 
 function makePlayer(id: number, kind: string, name: string, controller: SeatController, startSpace: number): PlayerState {
@@ -254,6 +260,7 @@ export const match: MatchState = {
   shopStockRound: 0,
   itemUsedThisTurn: false,
   boardId: DEFAULT_BOARD,
+  gateOpen: true,
 };
 
 bindLiveRules(match);
@@ -305,6 +312,7 @@ export function startMatch(
   match.shopStock = {};
   match.shopStockRound = 0;
   match.itemUsedThisTurn = false;
+  match.gateOpen = true;
 
   // Pull the host's saved rotation onto this match, then deal packs.
   // Local seats keep the human pack; CPU and remote seats draw.

@@ -27,6 +27,7 @@
 import * as THREE from "three";
 import { bus } from "../../core/events";
 import { match } from "../../core/game";
+import { activeBoard } from "../registry";
 import { settings, livelyEnabled, playSpeed, prefersReducedMotion } from "../../config/settings";
 
 /** Shape of the board screen's `_punch` (dice roll / ceremony focus). */
@@ -41,8 +42,8 @@ export interface ShotBoard {
   spaceWorldPos(i: number): THREE.Vector3;
 }
 
-export type ShotKind = "star" | "balloon" | "happening" | "jackpot" | "hug" | "last5";
-export const SHOT_KINDS: readonly ShotKind[] = ["star", "balloon", "happening", "jackpot", "hug", "last5"];
+export type ShotKind = "star" | "balloon" | "happening" | "jackpot" | "hug" | "last5" | "gate";
+export const SHOT_KINDS: readonly ShotKind[] = ["star", "balloon", "happening", "jackpot", "hug", "last5", "gate"];
 
 interface ShotStyle {
   /** Board seconds; each fits inside the beat it plays in. */
@@ -69,6 +70,8 @@ const STYLES: Record<ShotKind, ShotStyle> = {
   // Last five turns: a climbing, backing-off arc around whatever the camera
   // was framing, inside the TURN banner beat (~1.7 s before the dice).
   last5: { dur: 1.6, swing: 0.9, close: -0.12, rise: 1.3, lookY: 0 },
+  // Funhouse Gate flipped: a quick look at the gate inside the TURN banner beat.
+  gate: { dur: 1.6, swing: -0.6, close: 0.55, rise: 0.8, lookY: 1.4 },
 };
 
 /** Debug counters for probes. Never read by gameplay. */
@@ -157,6 +160,8 @@ function request(kind: ShotKind, space: number): void {
   q.wait = 0;
 }
 
+let gateTurn = -1;
+
 function clearShots(): void {
   qLen = 0;
   active = false;
@@ -172,6 +177,18 @@ function wire(): void {
   bus.on("squeeze:hug", ({ space }) => request("hug", space));
   // match:start fires on every board entry (after each minigame too), so the
   // once-a-match latch re-arms on any turn before the last five instead.
+  // The gate flips at the round rollover (often under a minigame); show it on
+  // the first turn of the new round, when the board is back on screen.
+  bus.on("board:gate", ({ turn }) => {
+    gateTurn = turn;
+  });
+  bus.on("turn:start", ({ turn }) => {
+    if (gateTurn === turn) {
+      gateTurn = -1;
+      const g = activeBoard().gate;
+      if (g) request("gate", g.from);
+    }
+  });
   bus.on("turn:start", ({ turn }) => {
     if (match.totalTurns <= 0) return;
     if (turn < match.totalTurns - 4) {

@@ -39,8 +39,11 @@ coins, buying stars (20 coins), triggering happenings, shopping for items, and
 surviving Grumpus — with a minigame after every turn. 10 turns, then bonus
 stars and a winner celebration.
 
-- **Board**: ~28 spaces — 12 blue (+3 coins), 6 red (−3), 4 green happenings,
-  2 star, 2 shop, 2 grumpus, plus a shortcut path.
+- **Board**: an island midway: 28 spaces on a winding outer loop, a 16-space
+  inner loop up on Starlight Rise (a hill reached by ramps), and the Funhouse
+  Gate: open, the Funhouse Cut skips Funhouse Row; shut, everyone walks it.
+  The gate flips every round. A camera flyover introduces the island at match
+  start (menu starts only; `?intro=0|1`).
 - **Dice**: personality dice per character (standard 1–6, swingy, steady).
 - **Items**: Mushroom (roll twice), Midway Whistle (teleport ahead), Zappy
   (steal 5 coins from the nearest rival).

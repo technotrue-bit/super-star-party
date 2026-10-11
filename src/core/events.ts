@@ -28,6 +28,8 @@ export interface SSPEventMap {
   "audio:track": { track: string; playing: boolean };
   "audio:sfx": { name: string };
   "ui:toast": { text: string };
+  /** The board's gate flipped at a round rollover (Funhouse Gate). */
+  "board:gate": { open: boolean; turn: number };
 }
 
 type Handler<T> = (payload: T) => void;

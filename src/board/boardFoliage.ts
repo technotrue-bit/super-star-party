@@ -13,7 +13,7 @@
 import * as THREE from "three";
 import { palette } from "../config/palette";
 import { settings } from "../config/settings";
-import type { BoardDef } from "./boardData";
+import { groundHeight, type BoardDef } from "./boardData";
 import type { BoardTextures } from "./boardTextures";
 import type { IslandShape } from "./boardIsland";
 import { fxMulberry32 } from "./lively/fxRng";
@@ -234,6 +234,22 @@ export function buildFoliage(def: BoardDef, kit: BoardTextures, island: IslandSh
       flowers.push({ x, z, c, s: 0.11 + fx() * 0.06 });
     }
   }
+  // A border of blossoms along the rim of each hill (Starlight Rise), the
+  // way a party board trims a raised tier. Gaps where a lane climbs the ramp.
+  for (const hill of def.terrain?.hills ?? []) {
+    const RIM = 120;
+    for (let k = 0; k < RIM && flowers.length < F.flowers + RIM; k++) {
+      const a = (k / RIM) * Math.PI * 2;
+      const c = Math.cos(a);
+      const sn = Math.sin(a);
+      // Superellipse rim point, a little out on the slope.
+      const r = 1 / Math.pow(Math.pow(Math.abs(c) / hill.hx, hill.power) + Math.pow(Math.abs(sn) / hill.hz, hill.power), 1 / hill.power);
+      const x = hill.x + c * (r + 0.35);
+      const z = hill.z + sn * (r + 0.35);
+      if (laneDist(x, z) < 1.25) continue;
+      flowers.push({ x, z, c: bloom[k % bloom.length], s: 0.15 });
+    }
+  }
   // Bloom: a flat five-lobed blossom lifted just off the grass. Round lobes,
   // never points, so a flower can't be mistaken for a star pickup.
   const petal = new THREE.Shape();
@@ -246,7 +262,7 @@ export function buildFoliage(def: BoardDef, kit: BoardTextures, island: IslandSh
   const bloomGeo = new THREE.ShapeGeometry(petal).rotateX(-Math.PI / 2).translate(0, 1.4, 0);
   const flowerMesh = inst(bloomGeo, new THREE.MeshToonMaterial({ color: palette.white, gradientMap: kit.grad, side: THREE.DoubleSide }), flowers.length, "foliage:flowers", false);
   flowers.forEach((f, i) => {
-    dummy.position.set(f.x, 0, f.z);
+    dummy.position.set(f.x, groundHeight(def, f.x, f.z), f.z);
     dummy.rotation.set(0, (i * 1.37) % 6.28, 0);
     dummy.scale.set(f.s * 1.6, f.s, f.s * 1.6);
     dummy.updateMatrix();
