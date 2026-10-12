@@ -27,6 +27,8 @@
  * localStorage keys are imported from the title screen so settings are
  * consistent everywhere.
  */
+import { buildRulesGuide } from "../ui/rulesGuide";
+import { resetTips, setTipsEnabled, tipsEnabled } from "../ui/tips";
 import { palette } from "../config/palette";
 import { effectsQualityChoices, type EffectsQuality } from "../config/settings";
 import { ui } from "../ui/kit";
@@ -476,68 +478,33 @@ export function createPauseOverlay(opts: PauseOverlayOpts): PauseOverlayHandle {
 
     const rules = document.createElement("div");
     rules.className = "ssp-pause-rules";
+    rules.appendChild(buildRulesGuide());
 
-    const goal = document.createElement("h4");
-    goal.textContent = "🎯 THE GOAL";
-    rules.appendChild(goal);
-    const goalP = document.createElement("p");
-    goalP.style.margin = "0";
-    goalP.innerHTML =
-      "Race around the <b>Fizzy Fairground</b> — a 28-space carnival loop. Collect <b>coins</b>, buy <b>stars</b>, and play <b>minigames</b>. After 10 rounds, bonus stars go to the player with the most minigame wins AND the player with the most coins. Most total stars wins!";
-    rules.appendChild(goalP);
-
-    const spaces = document.createElement("h4");
-    spaces.textContent = "🎲 SPACE COLORS";
-    rules.appendChild(spaces);
-    const chipData: Array<[string, string]> = [
-      [palette.mint, "Blue — +3 coins"],
-      [palette.lava, "Red — −3 coins"],
-      [palette.berry, "Purple — Happening!"],
-      [palette.sun, "Prize Balloon — 10 coins a star, up to 5"],
-      [palette.bubble, "Cyan — Gumball Shop"],
-      [palette.lavaDeep, "Crimson — Grumpus!"],
-      [palette.heroPip, "Gold ticket — Stamp"],
-      [palette.candy, "Balloon — pay 5 or 10, calls a minigame"],
-    ];
-    for (const [color, label] of chipData) {
-      const chip = document.createElement("span");
-      chip.className = "ssp-pause-chip";
-      const dot = document.createElement("span");
-      dot.className = "ssp-pause-chip__dot";
-      dot.style.background = color;
-      chip.appendChild(dot);
-      const t = document.createElement("span");
-      t.textContent = label;
-      chip.appendChild(t);
-      rules.appendChild(chip);
-    }
-
-    const stars = document.createElement("h4");
-    stars.textContent = "⭐ COINS & STARS";
-    rules.appendChild(stars);
-    const starsP = document.createElement("p");
-    starsP.style.margin = "0";
-    starsP.innerHTML =
-      "Everyone starts with <b>10 coins</b>. Pass or land on the <b>Grand Prize Balloon</b> to buy up to <b>5 stars</b> at <b>10 coins</b> each. Unpaid stars in a bundle are discarded, then the balloon pops and moves. End your move on a space someone else is standing on and everyone there gets a <b>group hug: +2 coins</b>. Stars decide the winner!";
-    rules.appendChild(starsP);
-
-    const mini = document.createElement("h4");
-    mini.textContent = "🎮 MINIGAMES";
-    rules.appendChild(mini);
-    const miniP = document.createElement("p");
-    miniP.style.margin = "0";
-    miniP.innerHTML =
-      "Pop a <b>Minigame Balloon</b> (pay 5 or 10) and everyone plays a minigame after the round. No pop, the round just rolls on. Places pay <b>10 / 6 / 3 coins</b> for 1st / 2nd / 3rd (more with bonuses; the mini-game card shows the prize), and a winning team gets 10 each. All three stamps pays the <b>30-coin Carnival Jackpot</b>.";
-    rules.appendChild(miniP);
-
-    const items = document.createElement("h4");
-    items.textContent = "🍄 ITEMS";
-    rules.appendChild(items);
-    const itemsP = document.createElement("p");
-    itemsP.style.margin = "0";
-    itemsP.innerHTML =
-      "Pass or land on the <b>Gumball Shop</b> (🛒) to buy. The stall sells a Zip Mushroom, a Golden Zip Mushroom, a Sour Mushroom, double dice, a Funhouse Hatch, a dueling glove, the <b>Lucky Card</b> (triple roulette odds and +1 on your next blue), Cogfly, a swap card, Wisp Bell, a genie lamp, Balloon Tug, and a Grumpus Coat, plus the mushroom, Midway Whistle, zappy, and orbs. Orbs ride in your bag: before you roll, tap one and throw it onto a space up to 7 steps away. Tap an item before you roll; the Sour Mushroom is used after a rival rolls. In the <b>last 5 turns</b>, Fizzy Barker gives the last-place player one free bag item at the start of their turn.";
-    rules.appendChild(itemsP);
+    // Beginner tips: on/off, and show them all again.
+    const tipsRow = document.createElement("div");
+    tipsRow.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:12px;";
+    const toggle = ui.button({
+      label: tipsEnabled() ? "💡 Tips: ON" : "💡 Tips: OFF",
+      kind: "primary",
+      size: "sm",
+      onClick: () => {
+        setTipsEnabled(!tipsEnabled());
+        toggle.setLabel(tipsEnabled() ? "💡 Tips: ON" : "💡 Tips: OFF");
+      },
+    });
+    const again = ui.button({
+      label: "↺ Show tips again",
+      kind: "ghost",
+      size: "sm",
+      onClick: () => {
+        resetTips();
+        setTipsEnabled(true);
+        toggle.setLabel("💡 Tips: ON");
+        again.setLabel("✓ Tips reset");
+      },
+    });
+    tipsRow.append(toggle.el, again.el);
+    rules.appendChild(tipsRow);
 
     panel.appendChild(rules);
     backBtn("◀ BACK", "menu");

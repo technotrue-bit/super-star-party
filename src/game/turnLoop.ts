@@ -1046,6 +1046,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     }
     const content = document.createElement("div");
     content.style.cssText = "display:flex;flex-direction:column;gap:10px;";
+    bus.emit("tip:moment", { id: "fork", player: pid });
     const pop = ui.popup({
       title: "WHICH LANE?",
       body: forkLabel(activeBoard(), here),
@@ -1767,6 +1768,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         btn.el.addEventListener("click", () => useItemPressed(pid, key));
       }
       itemBar.appendChild(btn.el);
+      if (!used) bus.emit("tip:moment", { id: "item-bar", player: pid });
     }
   };
 
@@ -1827,6 +1829,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     // Start on the nearest reachable space ahead, else the first one.
     const here = match.players[pid]?.space ?? 0;
     let at = Math.max(0, spots.findIndex((i) => i > here));
+    bus.emit("tip:moment", { id: "orb-aim", player: pid });
     const ghost = createOrbMesh(def.places, 0.3);
     (board.group.parent ?? board.group).add(ghost);
     let t = 0;
@@ -2442,6 +2445,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       }),
     });
     row.appendChild(pass.el);
+    bus.emit("tip:moment", { id: "star-offer", player: pid });
     S.starPopup = ui.popup({
       title: "GRAND PRIZE BALLOON",
       body: `${player.name}, stars are ${settings.starCost} coins each, up to ${settings.starBundleMax}. You have ${player.coins} coins. If you can't pay for the whole bundle, you get what you can afford and the rest pops away.`,
@@ -2514,6 +2518,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     };
     // The stall has its own cheerful music-box jingle while the human is choosing.
     audio.music.play("shop", { intensity: 0.35 });
+    bus.emit("tip:moment", { id: "land-shop", player: pid });
     openShop(pid, { shopSpace: space })
       .then((res) => {
         if (S.disposed) return;
@@ -2726,6 +2731,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
     const coins = minigameCoinAward(mg.pack);
     const desc = (mg as { description?: string }).description || getMinigameDescription(mg.id, mg.name);
+    const me = match.players.findIndex((p) => p.controller === "local");
+    if (me >= 0) bus.emit("tip:moment", { id: "minigame", player: me });
     showMinigamePreview(mg.name, desc, mg.rules, coins).then((started) => {
       console.log('[turnLoop] pre-screen resolved started=', started);
       if (!started) {

@@ -126,6 +126,8 @@ Published names are original to the Fizzy Fairground. The MP7 labels below are d
 
 10. **Minigame free play** — **Done**: MINIGAMES on the title opens character select (no board or match rules; START reads NEXT), then the minigame menu: a picture card per game, grouped by pack, with its format. A card opens the ready screen, MP7-style: a short looping clip of the game in action, how to win and the controls, and the four players lined up on a stage. PLAY sends them leaping up into the game, which then runs as normal (practice, GO, play, results) and returns to the menu. The pictures and clips in `public/minigames/` are recorded by `tools/capture-minigame-clips.mjs` (four CPUs, fixed-step play); re-run it after changing how a minigame looks. Free play lives in `src/game/freeplay.ts`, `src/screens/minigameMenu.ts` and `src/screens/minigameReady.ts`.
 
+11. **Learning the game** — **Done**: one plain-language guide (`src/ui/rulesGuide.ts`) is the How to Play screen and the pause menu's rules page, with the board's real space pictures and numbers read from settings, so the two can't drift. One-time beginner tips (`src/ui/tips.ts`) slide in the first time the local player meets something: their first roll, each space type, the shop, the Grand Prize Balloon offer, a Hidden Block, a fork, a group hug, their first item, aiming an orb, minigame time and the last 5 rounds. Tips never block play, hide after 7 s or on a tap, show once per device, are off under autoplay, and can be switched off or reset from the pause menu's rules page.
+
 These keep the MP7 structure 100% faithful while making the game feel like *our* bright, mischievous carnival.
 
 ## Immediate Next Steps (small pieces)

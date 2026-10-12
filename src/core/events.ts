@@ -22,6 +22,8 @@ export interface SSPEventMap {
   /** Everyone standing on the space, including the player who just ended there. */
   "squeeze:hug": { space: number; players: number[]; coins: number };
   "pity:gift": { player: number; item: string };
+  /** A beginner-tip moment for this player (src/ui/tips.ts shows it once). */
+  "tip:moment": { id: string; player: number };
   "hidden:block": { player: number; space: number; prize: string; coins: number; item: string | null };
   "minigame:start": { id: string; name: string };
   "minigame:end": { id: string; winner: number; coins: number };

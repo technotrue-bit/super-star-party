@@ -44,6 +44,7 @@ import { openShop } from "./shopScreen";
 import { onViewportChange, viewportSize } from "../ui/viewport";
 import { createMapLook, type MapLook } from "../ui/mapLook";
 import { createOrbMarkers, type OrbMarkers } from "../board/orbProp";
+import { installTips, type TipsHandle } from "../ui/tips";
 import { applyCameraShots } from "../board/lively/shots";
 
 /* ------------------------------------------------------------------ */
@@ -320,6 +321,8 @@ interface BoardScreenState {
   /** Seconds left of the slow, gentle follow after an aim change. */
   _camSoftT?: number;
   _orbMarkers?: OrbMarkers;
+  /** One-time beginner tips (src/ui/tips.ts). */
+  _tips?: TipsHandle;
   /** Spring velocities for the follow camera (position, look target). */
   _followVel?: THREE.Vector3;
   _lookVel?: THREE.Vector3;
@@ -496,6 +499,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._camAim = null;
     this._camSoftT = 0;
     this._orbMarkers = createOrbMarkers(board);
+    this._tips?.dispose();
+    this._tips = installTips();
     // Lively time of day snaps to this turn's look before the first frame.
     board.setTimeOfDay(match.turn, match.totalTurns);
 
@@ -1111,6 +1116,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
     }
     this._chars = undefined;
     this._orbMarkers?.dispose();
+    this._tips?.dispose();
+    this._tips = undefined;
     this._orbMarkers = undefined;
     this._camAim = null;
     this._board?.dispose();
