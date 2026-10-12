@@ -688,6 +688,9 @@ const quickDraw: Minigame = {
       steps++;
       if (st.phase === "over" && st.step >= st.phaseEnd && !st.finished) {
         st.finished = true;
+        // Guns away before the results podium reuses the avatars.
+        for (const d of st.duel) d.gun.removeFromParent();
+        for (const id of st.watchers) st.ctx.characters[id]?.group.scale.setScalar(1);
         const w = st.winner ?? st.duel[0];
         const l = other(st, w);
         st.ctx.finish([w.id, l.id, ...st.watchers], [w.id]);

@@ -1472,8 +1472,18 @@ const minigameScreenImpl: MgScreenState & Screen = {
     if (this._seatMark) hide.push(this._seatMark);
 
     // Start the ceremony (camera + podium + banner + coins + confetti + card).
+    // A 1v1 duel: only the two duelists take the podium; the watchers step out.
+    const duel = mg?.rules?.format === "1v1";
+    const podiumIds = duel ? ranking.slice(0, 2) : undefined;
+    if (podiumIds) {
+      for (const ch of this._chars ?? []) {
+        const id = (this._chars ?? []).indexOf(ch);
+        if (!podiumIds.includes(id)) hide.push(ch.group);
+      }
+    }
     this._ceremony = startResultsCeremony({
       hide,
+      podiumIds,
       chars: this._chars ?? [],
       ranking,
       winner,
