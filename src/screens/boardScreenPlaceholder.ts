@@ -43,6 +43,7 @@ import { screens } from "./screenManager";
 import { openShop } from "./shopScreen";
 import { onViewportChange, viewportSize } from "../ui/viewport";
 import { createMapLook, type MapLook } from "../ui/mapLook";
+import { createOrbMarkers, type OrbMarkers } from "../board/orbProp";
 import { applyCameraShots } from "../board/lively/shots";
 
 /* ------------------------------------------------------------------ */
@@ -279,6 +280,11 @@ interface BoardScreenState {
   _cam?: CamFit;
   _camHold?: { base: THREE.Vector3; look: THREE.Vector3; fov: number } | null;
   _punch?: Punch | null;
+  /** Orb aim / throw: the follow camera looks here instead of the active player. */
+  _camAim?: THREE.Vector3 | null;
+  /** Seconds left of the slow, gentle follow after an aim change. */
+  _camSoftT?: number;
+  _orbMarkers?: OrbMarkers;
   _followPos?: THREE.Vector3;
   _followLook?: THREE.Vector3;
   _t?: number;
@@ -440,6 +446,9 @@ const boardScreenImpl: BoardScreenState & Screen = {
     const boardDef = activeBoard();
     const board = buildBoardScene(boardDef);
     this._board = board;
+    this._camAim = null;
+    this._camSoftT = 0;
+    this._orbMarkers = createOrbMarkers(board);
     // Lively time of day snaps to this turn's look before the first frame.
     board.setTimeOfDay(match.turn, match.totalTurns);
 
@@ -776,6 +785,11 @@ const boardScreenImpl: BoardScreenState & Screen = {
           cam.fov = fov;
           cam.updateProjectionMatrix();
         },
+        aimCamera: (target: THREE.Vector3 | null) => {
+          this._camAim = target ? target.clone() : null;
+          // Glide (not snap) there and back again.
+          this._camSoftT = 1.4;
+        },
         releaseCamera: () => {
           if (!this._cam || !this._camHold) return;
           this._cam.base.copy(this._camHold.base);
@@ -1044,6 +1058,9 @@ const boardScreenImpl: BoardScreenState & Screen = {
       ch.dispose();
     }
     this._chars = undefined;
+    this._orbMarkers?.dispose();
+    this._orbMarkers = undefined;
+    this._camAim = null;
     this._board?.dispose();
     this._board = undefined;
     this._die3d?.dispose();
@@ -1132,6 +1149,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     const starCeremonyOn = this._loop?.starCeremonyActive === true;
     if (!starCeremonyOn) this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
     this._board?.update(dt);
+    this._orbMarkers?.update(dt);
     for (const ch of this._chars ?? []) ch.update(dt);
 
     // ---- party camera: smooth follow on active player, overview, or slow minigame pan ----
@@ -1175,6 +1193,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
         const playerPos = v.clone();
         playerPos.x += off[0];
         playerPos.z += off[1];
+        // Orb aim / throw: frame the target instead (the turn loop glides it).
+        if (this._camAim) playerPos.copy(this._camAim);
 
         idealPos = playerPos.clone();
         idealPos.y += 18; // high angle
@@ -1202,7 +1222,11 @@ const boardScreenImpl: BoardScreenState & Screen = {
       }
 
       // Smooth lerp the persistent follow target toward the ideal (prevents stutter/clip from discrete player hops)
-      const followSpeed = 1 - Math.exp(-11 * dt); // responsive but silky (tune 9-14)
+      // Aiming / throwing an orb: a slow, gentle glide so moving the target
+      // never whips the view around (and the same on the way back).
+      const soft = this._camAim != null || (this._camSoftT ?? 0) > 0;
+      if (!this._camAim && (this._camSoftT ?? 0) > 0) this._camSoftT = Math.max(0, (this._camSoftT ?? 0) - dt);
+      const followSpeed = 1 - Math.exp(-(soft ? 3.2 : 11) * dt); // responsive but silky (tune 9-14)
       this._followPos.lerp(idealPos, followSpeed);
       this._followLook.lerp(idealLook, followSpeed * 0.85);
 

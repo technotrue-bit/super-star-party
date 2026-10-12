@@ -54,6 +54,7 @@ import {
   movementTotal,
   takeLuckyPlayers,
   collectLuckyBlue,
+  orbThrowSpaces,
   type ShopDecision,
   type UseItemResult,
 } from "./items";
@@ -68,6 +69,7 @@ import {
   type HiddenBlockPrize,
 } from "./hiddenBlocks";
 import { createHiddenBlock, type HiddenBlockProp } from "../board/hiddenBlockProp";
+import { createOrbMesh, disposeOrbMesh, orbColor } from "../board/orbProp";
 import { restockShops } from "./shopStock";
 import { tryPickMinigame } from "../minigames/registry";
 import { setPendingMinigame } from "../minigames/framework";
@@ -225,6 +227,11 @@ export interface CeremonyDeps {
   holdCamera(pos: THREE.Vector3, look: THREE.Vector3, fov: number): void;
   /** Restore the camera to its default position after a holdCamera. */
   releaseCamera(): void;
+  /**
+   * Glide the follow camera to look at a world point (orb aiming / throw),
+   * slowly and smoothly; null glides back to the active player.
+   */
+  aimCamera(target: THREE.Vector3 | null): void;
 }
 
 export interface TurnLoopDeps {
@@ -351,6 +358,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     netBlock: { pid: number; finish: (hits: number | null) => void } | null;
     /** A Hidden Block in play: runs INSTEAD of the pause chain, like the star ceremony. */
     blockRun: BlockRun | null;
+    /** Orb aim mode is open (ghost orb bob + cancel on dispose). */
+    orbAim: { update: (dt: number) => void; cancel: () => void } | null;
+    /** An orb in flight: update returns false when the beat is over. */
+    orbThrow: { t: number; landed: boolean; update: (dt: number) => boolean; done: () => void } | null;
     netPoison: { holderId: number; finish: (use: boolean) => void } | null;
     netPath: {
       pid: number;
@@ -412,6 +423,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     netStar: null,
     netBlock: null,
     blockRun: null,
+    orbAim: null,
+    orbThrow: null,
     netPoison: null,
     netPath: null,
     resultSteps: [],
@@ -455,21 +468,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     bought: string[],
     traps: { space: number; kind: string }[],
   ): void => {
-    let trapAtIndex = 0;
+    // Orbs go in the bag like any item now; `traps` is kept for the message
+    // shape only (every peer on this rev sends it empty).
+    void traps;
     for (const key of bought) {
       const def = ITEM_DEFS[key];
       if (!buyItem(pid, key)) continue;
-      if (!def?.places) {
-        ui.toast(`Bought ${def?.name ?? key}!`, { durationMs: 1200 });
-        continue;
-      }
-      const held = match.players[pid]?.items;
-      const at = held?.lastIndexOf(key) ?? -1;
-      if (held && at >= 0) held.splice(at, 1);
-      const trap = traps[trapAtIndex];
-      trapAtIndex += 1;
-      if (trap) placeTrap(pid, trap.space, trap.kind as TrapKind);
-      ui.toast(`Set ${def.name}!`, { durationMs: 1200 });
+      ui.toast(`Bought ${def?.name ?? key}!`, { durationMs: 1200 });
     }
   };
 
@@ -872,6 +877,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const applyAutoItem = (pid: number, key: string, res: UseItemResult): boolean => {
     if (!res.ok) return false;
     markItemUsed();
+    if (res.placedOn !== undefined) {
+      refreshHud();
+      throwOrb(pid, key, res);
+      return true;
+    }
     ui.toast(res.message, { durationMs: 1600 });
     audio.sfx.play("boing");
     refreshHud();
@@ -1786,7 +1796,254 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       chompThenRoll(pid);
       return;
     }
+    if (res.placedOn !== undefined) {
+      throwOrb(pid, key, res);
+      return;
+    }
     itemBeat(pid, res);
+  };
+
+  /* ---------------- orbs: aim, then throw ---------------- */
+
+  /**
+   * Aim an orb: the spaces in reach glow, the camera glides to the chosen one,
+   * and a ghost orb bobs over it. Tap a glowing space or step with ◀ ▶, then
+   * THROW. CANCEL keeps the orb.
+   */
+  const openOrbAim = (pid: number, key: string): void => {
+    const def = ITEM_DEFS[key];
+    const spots = orbThrowSpaces(pid);
+    if (!def?.places || spots.length === 0) {
+      ui.toast("No space in reach.", { durationMs: 1300 });
+      return;
+    }
+    S.itemResolving = true;
+    rollButton.setEnabled(false);
+    // Clear the view: no ROLL button or hovering die over the board while aiming.
+    rollButton.setVisible(false);
+    dice.hide();
+    itemBar.innerHTML = "";
+    for (const i of spots) board.setHighlight(i, true);
+    // Start on the nearest reachable space ahead, else the first one.
+    const here = match.players[pid]?.space ?? 0;
+    let at = Math.max(0, spots.findIndex((i) => i > here));
+    const ghost = createOrbMesh(def.places, 0.3);
+    (board.group.parent ?? board.group).add(ghost);
+    let t = 0;
+
+    const sheet = document.createElement("div");
+    sheet.className = "ssp-orbaim";
+    sheet.style.cssText =
+      "position:fixed;left:50%;bottom:calc(104px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);" +
+      `z-index:45;display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 12px;border-radius:20px;` +
+      `background:${palette.cream};border:4px solid ${palette.ink};box-shadow:0 5px 0 ${palette.ink};` +
+      "width:min(92vw,380px);box-sizing:border-box;pointer-events:auto;font-family:Fredoka,sans-serif;";
+    const title = document.createElement("div");
+    title.style.cssText = `font-weight:700;font-size:18px;color:${palette.ink};`;
+    title.textContent = `${def.icon} Throw ${def.name}`;
+    const hint = document.createElement("div");
+    hint.style.cssText = `font-weight:600;font-size:13px;color:${palette.inkSoft};text-align:center;`;
+    hint.textContent = `Tap a glowing space (up to ${settings.orbThrowRange} away).`;
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:8px;width:100%;";
+    const label = document.createElement("div");
+    label.style.cssText = `flex:1;min-width:0;text-align:center;font-weight:700;font-size:15px;color:${palette.ink};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+    const prev = ui.button({ label: "◀", kind: "primary", size: "sm", ariaLabel: "Previous space", onClick: () => step(-1) });
+    const next = ui.button({ label: "▶", kind: "primary", size: "sm", ariaLabel: "Next space", onClick: () => step(1) });
+    row.append(prev.el, label, next.el);
+    const actions = document.createElement("div");
+    actions.style.cssText = "display:flex;gap:8px;width:100%;";
+    const cancelBtn = ui.button({ label: "CANCEL", kind: "ghost", size: "sm", onClick: () => cancel() });
+    const throwBtn = ui.button({ label: "THROW!", kind: "gold", size: "sm", onClick: () => commit(spots[at]) });
+    cancelBtn.el.style.flex = "1";
+    throwBtn.el.style.flex = "2";
+    actions.append(cancelBtn.el, throwBtn.el);
+    sheet.append(title, hint, row, actions);
+    document.body.appendChild(sheet);
+
+    const show = (): void => {
+      const i = spots[at];
+      const sp = activeBoard().spaces[i];
+      const steps = hopsBetweenAny(here, i);
+      label.textContent = `${sp?.name ?? `Space ${i + 1}`} · ${steps} away`;
+      const p = board.spaceWorldPos(i);
+      ceremony.aimCamera(p);
+    };
+    const step = (d: number): void => {
+      at = (at + d + spots.length) % spots.length;
+      audio.sfx.play("ui.click");
+      show();
+    };
+    // Tap on the board: the nearest glowing space under the finger.
+    const onTap = (e: PointerEvent): void => {
+      if ((e.target as HTMLElement | null)?.closest?.("button, .ssp-orbaim, .ssp-popup")) return;
+      let best = -1;
+      let bestD = 46 * 46;
+      spots.forEach((i, k) => {
+        const sc = projectToScreen(board.spaceWorldPos(i));
+        if (!sc) return;
+        const d = (sc.x - e.clientX) ** 2 + (sc.y - e.clientY) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = k;
+        }
+      });
+      if (best < 0) return;
+      if (best === at) {
+        commit(spots[at]);
+        return;
+      }
+      at = best;
+      audio.sfx.play("ui.click");
+      show();
+    };
+    window.addEventListener("pointerdown", onTap);
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "ArrowLeft") step(-1);
+      else if (e.key === "ArrowRight") step(1);
+      else if (e.key === "Enter") commit(spots[at]);
+      else if (e.key === "Escape") cancel();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+
+    let settled = false;
+    const close = (): void => {
+      window.removeEventListener("pointerdown", onTap);
+      window.removeEventListener("keydown", onKey);
+      for (const b of [prev, next, cancelBtn, throwBtn]) b.destroy();
+      sheet.remove();
+      disposeOrbMesh(ghost);
+      for (const i of spots) board.setHighlight(i, false);
+      S.orbAim = null;
+      S.itemAutoCommit = null;
+    };
+    const cancel = (): void => {
+      if (settled) return;
+      settled = true;
+      close();
+      ceremony.aimCamera(null);
+      S.itemResolving = false;
+      rollButton.setVisible(true);
+      dice.hover(pid);
+      if (decisions.usesRollButton(pid)) rollButton.setEnabled(true);
+      rebuildItemBar(pid);
+    };
+    const commit = (space?: number): void => {
+      if (settled) return;
+      settled = true;
+      close();
+      S.itemResolving = false;
+      publishLocal(pid, { kind: "item", playerId: pid, key, target: space });
+      finishBarUse(pid, key, useItem(pid, key, space));
+    };
+    // Autoplay that flips on mid-aim throws at a rng space and never waits.
+    S.itemAutoCommit = () => commit();
+    S.orbAim = {
+      update: (dt: number) => {
+        t += dt;
+        const p = board.spaceWorldPos(spots[at]);
+        ghost.position.set(p.x, p.y + 1.1 + Math.sin(t * 4) * 0.12, p.z);
+        ghost.rotation.y = t * 2;
+      },
+      cancel,
+    };
+    show();
+  };
+
+  /** Steps between two spaces along the paths, either way (display only). */
+  const hopsBetweenAny = (from: number, to: number): number => {
+    const def = activeBoard();
+    const n = def.spaces.length;
+    const adj: number[][] = Array.from({ length: n }, () => []);
+    def.next.forEach((outs, a) => outs.forEach((b) => { adj[a].push(b); adj[b].push(a); }));
+    const dist = new Array<number>(n).fill(-1);
+    dist[from] = 0;
+    const q = [from];
+    for (let qi = 0; qi < q.length; qi++) {
+      for (const b of adj[q[qi]]) {
+        if (dist[b] !== -1) continue;
+        dist[b] = dist[q[qi]] + 1;
+        q.push(b);
+      }
+    }
+    return Math.max(0, dist[to]);
+  };
+
+  /**
+   * The throw beat: the thrower turns to the space and winds up, the orb arcs
+   * through the air and lands with a pop, the camera glides along with it,
+   * then the seat goes back to its roll. State already changed in useItem;
+   * this is presentation on the sim clock (no rng).
+   */
+  const throwOrb = (pid: number, key: string, res: UseItemResult): void => {
+    const def = ITEM_DEFS[key];
+    const space = res.placedOn;
+    if (!def?.places || space === undefined) {
+      itemBeat(pid, res);
+      return;
+    }
+    S.itemResolving = true;
+    S.netDice = false;
+    rollButton.setEnabled(false);
+    itemBar.innerHTML = "";
+    dice.hide();
+    const from = charPos(pid);
+    const to = board.spaceWorldPos(space);
+    const ch = chars[pid];
+    ch?.setFacing(Math.atan2(to.x - from.x, to.z - from.z));
+    ch?.anim.jump();
+    audio.sfx.play("jump");
+    const orb = createOrbMesh(def.places, 0.28);
+    (board.group.parent ?? board.group).add(orb);
+    orb.position.copy(from).add(new THREE.Vector3(0, 1.4, 0));
+    orb.visible = false;
+    ceremony.aimCamera(from.clone().lerp(to, 0.5));
+    hud.showBanner(res.label, { durationMs: 1100 });
+    const dist = from.distanceTo(to);
+    S.orbThrow = {
+      t: 0,
+      landed: false,
+      update: (dt: number): boolean => {
+        const run = S.orbThrow!;
+        run.t += dt;
+        const WIND = 0.32;
+        const FLIGHT = 0.75 + Math.min(0.5, dist * 0.03);
+        if (run.t < WIND) return true;
+        orb.visible = true;
+        const u = Math.min(1, (run.t - WIND) / FLIGHT);
+        const start = from.clone().add(new THREE.Vector3(0, 1.4, 0));
+        const end = to.clone().add(new THREE.Vector3(0, 0.55, 0));
+        orb.position.lerpVectors(start, end, u);
+        orb.position.y += Math.sin(Math.PI * u) * (2.2 + dist * 0.12);
+        orb.rotation.x = run.t * 9;
+        if (u < 1) {
+          ceremony.aimCamera(orb.position.clone().setY(to.y));
+          return true;
+        }
+        if (!run.landed) {
+          run.landed = true;
+          audio.sfx.play("pop");
+          board.highlight(space);
+          board.react(space, "hop");
+          const sc = projectToScreen(end);
+          if (sc) ceremony.sparkle(sc.x, sc.y, 14, orbColor(def.places!));
+          ui.toast(res.message, { durationMs: 2000 });
+          ceremony.aimCamera(to);
+          orb.visible = false;
+        }
+        return run.t < WIND + FLIGHT + 0.9;
+      },
+      done: () => {
+        disposeOrbMesh(orb);
+        S.orbThrow = null;
+        ceremony.aimCamera(null);
+        ch?.anim.idle();
+        ch?.setFacing(0);
+        pause(0.5, () => returnToPreRoll(pid));
+      },
+    };
   };
 
   const openTargetPicker = (pid: number, key: string): void => {
@@ -1890,6 +2147,17 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   const useItemPressed = (pid: number, key: string): void => {
     if (S.phase !== "dice" || S.rolling || S.itemResolving || match.itemUsedThisTurn) return;
+    if (ITEM_DEFS[key]?.places) {
+      const aim = decisions.aim(pid);
+      if (aim === "picker") {
+        openOrbAim(pid, key);
+        return;
+      }
+      if (aim === "wait") return;
+      publishLocal(pid, { kind: "item", playerId: pid, key });
+      finishBarUse(pid, key, useItem(pid, key));
+      return;
+    }
     if (TARGET_PICK.has(key)) {
       const aim = decisions.aim(pid);
       if (aim === "picker") {
@@ -2186,7 +2454,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const toastShop = (decision: ShopDecision): void => {
     const def = ITEM_DEFS[decision.key];
     const label = def?.name ?? decision.key;
-    ui.toast(decision.placedOn !== undefined ? `Set ${label}!` : `Bought ${label}!`, { durationMs: 1500 });
+    ui.toast(`Bought ${label}!`, { durationMs: 1500 });
   };
 
   /**
@@ -2578,6 +2846,12 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       return;
     }
 
+    if (S.orbAim) S.orbAim.update(dt);
+    if (S.orbThrow) {
+      if (!S.orbThrow.update(dt)) S.orbThrow.done();
+      return;
+    }
+
     // A Hidden Block is a staged beat too; remote hit counts arrive via pumpNet.
     if (S.blockRun) {
       updateBlock(dt);
@@ -2785,6 +3059,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     S.poisonPopup = null;
     S.poisonAutoCommit = null;
     if (S.blockRun) endBlock(S.blockRun);
+    S.orbAim?.cancel();
+    S.orbAim = null;
+    S.orbThrow = null;
     S.netBlock = null;
     liveLoop = null;
   };

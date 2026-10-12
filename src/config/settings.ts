@@ -82,6 +82,7 @@ export const settings = {
   minigameWinCoins: 10, // base minigame winner payout, before pack bonus and the host multiplier
   minigameCoinMultiplier: 1, // host scale (1, 2, 3, or 4); live value is persisted in localStorage
   stampJackpot: 30, // coins when a player completes the 3-stamp set
+  orbThrowRange: 7, // an orb lands within this many steps of the thrower (either way along the paths)
   squeezeCoins: 2, // Carnival Squeeze: coins for each player on a shared landing space
   pityLastTurns: 5, // Fizzy Barker visits last place while this many turns remain
   bonusStars: 2, // end-of-match bonus stars (minigame star + coin star)
