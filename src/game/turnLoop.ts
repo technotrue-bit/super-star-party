@@ -3029,10 +3029,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     ceremony.holdCamera(look.clone().add(new THREE.Vector3(0, 8.5, 10.5)), look, 40);
     board.highlight(idx);
     audio.sfx.play("happening.magic");
-    hud.showBanner("THE STAR IS HERE!", { durationMs: 1800 });
+    // High priority: it shows while the camera is on the star, not after
+    // the coins banner has played out.
+    hud.showBanner("THE STAR IS HERE!", { durationMs: 2200, priority: "high" });
     const name = activeBoard().spaces[idx]?.name;
-    if (name) ui.toast(`The Grand Prize Balloon starts at ${name}. Go get it!`, { durationMs: 2400 });
-    pause(2.4, () => {
+    if (name) ui.toast(`The Grand Prize Balloon starts at ${name}. Go get it!`, { durationMs: 2800 });
+    // ~1 s to glide across the board, then a good look before turn 1.
+    pause(3.2, () => {
       ceremony.releaseCamera();
       then();
     });

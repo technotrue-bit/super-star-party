@@ -146,6 +146,8 @@ function smoothDampV(cur: THREE.Vector3, target: THREE.Vector3, vel: THREE.Vecto
 /** Seconds the follow camera takes to settle: steady by default, gentler when aiming. */
 const CAM_SETTLE = 0.36;
 const CAM_SETTLE_SOFT = 0.75;
+/** Settle time toward a ceremony hold ("THE STAR IS HERE!"): there in about a second. */
+const CAM_SETTLE_HOLD = 0.4;
 /** Final smoothing over swoops and punches (s): short, so shots still read. */
 const CAM_OUTPUT_SMOOTH = 0.22;
 
@@ -1246,6 +1248,10 @@ const boardScreenImpl: BoardScreenState & Screen = {
             );
         // Orb aim / throw: frame the target instead (the turn loop glides it).
         if (this._camAim) playerPos.copy(this._camAim);
+        // A ceremony hold ("THE STAR IS HERE!", a star buy) frames its look
+        // point from the same angle as play, so the camera glides over to it
+        // and back instead of ignoring it or swinging round the board.
+        if (this._camHold) playerPos.copy(this._cam.look).setY(this._cam.look.y - 2);
 
         idealPos = playerPos.clone();
         idealPos.y += 18; // high angle
@@ -1275,9 +1281,12 @@ const boardScreenImpl: BoardScreenState & Screen = {
       // One critically damped spring for position AND look target, with the
       // same settle time, so the camera glides without tilting or overshoot.
       // Aiming / throwing an orb settles more gently still.
-      const soft = this._camAim != null || (this._camSoftT ?? 0) > 0;
+      if (this._camHold) this._camSoftT = 1.2; // glide to the held spot, and back after release
+      const soft = this._camAim != null || this._camHold != null || (this._camSoftT ?? 0) > 0;
       if (!this._camAim && (this._camSoftT ?? 0) > 0) this._camSoftT = Math.max(0, (this._camSoftT ?? 0) - dt);
-      const settle = soft ? CAM_SETTLE_SOFT : CAM_SETTLE;
+      // A ceremony hold arrives promptly (the beat is short); aiming and the
+      // glide back afterwards stay gentle.
+      const settle = this._camHold ? CAM_SETTLE_HOLD : soft ? CAM_SETTLE_SOFT : CAM_SETTLE;
       this._followVel ??= new THREE.Vector3();
       this._lookVel ??= new THREE.Vector3();
       smoothDampV(this._followPos, idealPos, this._followVel, settle, dt);
