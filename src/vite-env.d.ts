@@ -11,3 +11,6 @@ interface ImportMetaEnv {
    */
   readonly VITE_SSP_TEST?: string;
 }
+
+/** Short commit id of this build (vite.config.ts), shown on the title screen. */
+declare const __BUILD_ID__: string;

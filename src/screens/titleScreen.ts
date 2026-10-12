@@ -406,6 +406,16 @@ const titleImpl: TitleState & Screen = {
     for (const b of this._buttons) menu.appendChild(b.el);
     stage.appendChild(menu);
 
+    // Which build this is, so a playtester can tell a fresh deploy from a cached one.
+    const build = document.createElement("div");
+    build.className = "ssp-title-build";
+    build.dataset.sspBuild = __BUILD_ID__;
+    build.textContent = `build ${__BUILD_ID__}`;
+    build.style.cssText =
+      "position:absolute;right:10px;bottom:calc(8px + env(safe-area-inset-bottom,0px));font:600 11px Fredoka,sans-serif;" +
+      "color:rgba(255,246,229,0.65);letter-spacing:.5px;pointer-events:none;";
+    stage.appendChild(build);
+
     // Initial highlight
     this._applyHighlight();
 

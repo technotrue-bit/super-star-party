@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
 import { defineConfig, type Plugin } from "vite";
 
 /**
@@ -22,10 +23,24 @@ function bvhThreeFacade(): Plugin {
   };
 }
 
+/** Short commit id for the on-screen build tag (Vercel sets the env var; local builds ask git). */
+function buildId(): string {
+  const fromEnv = process.env.VERCEL_GIT_COMMIT_SHA;
+  if (fromEnv) return fromEnv.slice(0, 7);
+  try {
+    return execSync("git rev-parse --short=7 HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    return "dev";
+  }
+}
+
 // SUPER STAR PARTY — dev server config.
 // Port 5177 (strict) so it never collides with other local projects.
 export default defineConfig({
   base: "./",
+  define: {
+    __BUILD_ID__: JSON.stringify(buildId()),
+  },
   plugins: [bvhThreeFacade()],
   optimizeDeps: {
     // Serve the package as source so the facade alias applies in dev too.
