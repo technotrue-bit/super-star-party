@@ -167,12 +167,15 @@ try {
     }
     await p.close();
     const spaces = new Set(seen.spaces);
-    forkInfo.forEach((f, k) => {
-      if (f.path.some((s) => spaces.has(s))) taken[k].branch = true;
-      if (f.skipped.some((s) => spaces.has(s))) taken[k].ring = true;
+    const lanes = forkInfo.map((f, k) => {
+      const branch = f.path.some((s) => spaces.has(s));
+      const ring = f.skipped.some((s) => spaces.has(s));
+      if (branch) taken[k].branch = true;
+      if (ring) taken[k].ring = true;
+      return `fork ${f.fork} ${branch ? "B" : "-"}${ring ? "R" : "-"}`;
     });
     const badBalloon = seen.balloons.filter((b) => !ps.includes(b) && !seen.tugged.includes(b));
-    console.log(`    seed ${seed}: reached turn ${seen.turn}${finale ? " (finale)" : ""} in ${Math.round((Date.now() - t0) / 1000)}s, ${spaces.size} spaces stood on, balloon at [${seen.balloons.join(",")}]${seen.tugged.length ? ` (Balloon Tug to ${seen.tugged.join(",")})` : ""}`);
+    console.log(`    seed ${seed}: reached turn ${seen.turn}${finale ? " (finale)" : ""} in ${Math.round((Date.now() - t0) / 1000)}s, ${spaces.size} spaces stood on, balloon at [${seen.balloons.join(",")}]${seen.tugged.length ? ` (Balloon Tug to ${seen.tugged.join(",")})` : ""}, lanes ${lanes.join(", ")}`);
     check(seen.boards.length === 1 && seen.boards[0] === "downtown", `seed ${seed}: match.boardId stays downtown (${seen.boards.join(",")})`);
     check(seen.turn >= Math.min(RUN_TURNS, 3) || finale, `seed ${seed}: match progressed (turn ${seen.turn})`);
     check([...spaces].every((s) => Number.isInteger(s) && s >= 0 && s < n), `seed ${seed}: tokens only on valid spaces`);
