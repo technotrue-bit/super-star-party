@@ -1,6 +1,6 @@
 {
  "finale": true,
- "url": "http://127.0.0.1:5173/?seed=2&screen=board&autoplay=1&audio=0&speed=4&board=carnival",
+ "url": "http://127.0.0.1:5177/?seed=2&screen=board&autoplay=1&audio=0&speed=4&board=carnival",
  "turns": [
   {
    "turn": 1,
@@ -12,17 +12,17 @@
   },
   {
    "turn": 2,
-   "hash": "469a1d10",
+   "hash": "126bfd74",
    "coins": [
-    4,
-    4,
-    5,
+    2,
+    13,
+    10,
     13
    ],
    "spaces": [
     6,
-    6,
-    5,
+    1,
+    3,
     4
    ],
    "balloon": 35,
@@ -30,164 +30,164 @@
   },
   {
    "turn": 3,
-   "hash": "d198ad79",
+   "hash": "f2c4cb2e",
    "coins": [
-    7,
-    9,
-    10,
-    41
+    5,
+    43,
+    2,
+    13
    ],
    "spaces": [
     37,
     32,
-    32,
-    34
+    6,
+    32
    ],
    "balloon": 35,
    "boardId": "fizzy-fairground"
   },
   {
    "turn": 4,
-   "hash": "828959c2",
+   "hash": "33836907",
    "coins": [
-    37,
-    6,
-    43,
-    24
+    2,
+    40,
+    29,
+    6
    ],
    "spaces": [
-    38,
+    43,
     33,
-    34,
+    36,
     37
    ],
-   "balloon": 42,
+   "balloon": 26,
    "boardId": "fizzy-fairground"
   },
   {
    "turn": 5,
-   "hash": "7ff799ef",
+   "hash": "8f7cc0a6",
    "coins": [
-    13,
-    11,
-    8,
-    27
+    1,
+    41,
+    31,
+    6
    ],
    "spaces": [
-    28,
-    39,
-    39,
-    42
+    33,
+    36,
+    20,
+    26
    ],
-   "balloon": 30,
+   "balloon": 23,
    "boardId": "fizzy-fairground"
   },
   {
    "turn": 6,
-   "hash": "b8df2b18",
+   "hash": "eaa600aa",
    "coins": [
-    6,
-    0,
-    11,
-    30
+    4,
+    44,
+    26,
+    9
    ],
    "spaces": [
-    34,
-    29,
-    28,
-    30
+    39,
+    42,
+    22,
+    1
    ],
-   "balloon": 15,
+   "balloon": 23,
    "boardId": "fizzy-fairground"
   },
   {
    "turn": 7,
-   "hash": "fda1fbe1",
+   "hash": "71e46888",
    "coins": [
-    9,
-    3,
-    10,
-    29
+    6,
+    36,
+    6,
+    1
    ],
    "spaces": [
-    18,
-    15,
-    33,
-    33
+    29,
+    43,
+    27,
+    6
    ],
-   "balloon": 15,
+   "balloon": 36,
    "boardId": "fizzy-fairground"
   },
   {
    "turn": 8,
-   "hash": "407061f4",
+   "hash": "18f51a05",
    "coins": [
-    6,
-    0,
-    13,
-    29
+    3,
+    23,
+    10,
+    14
    ],
    "spaces": [
-    26,
-    16,
-    35,
-    43
+    19,
+    33,
+    1,
+    34
    ],
-   "balloon": 15,
+   "balloon": 6,
    "boardId": "fizzy-fairground"
   },
   {
    "turn": 9,
-   "hash": "065b5aca",
+   "hash": "8e870c02",
    "coins": [
-    36,
     0,
-    18,
-    31
+    20,
+    10,
+    17
    ],
    "spaces": [
-    17,
-    27,
-    37,
+    23,
+    19,
+    3,
     37
    ],
-   "balloon": 16,
+   "balloon": 6,
    "boardId": "fizzy-fairground"
   },
   {
    "turn": 10,
-   "hash": "5c52aa17",
+   "hash": "6078d902",
    "coins": [
-    39,
     3,
-    18,
-    28
+    22,
+    5,
+    19
    ],
    "spaces": [
     1,
-    0,
-    38,
-    26
+    27,
+    5,
+    27
    ],
-   "balloon": 13,
+   "balloon": 6,
    "boardId": "fizzy-fairground"
   },
   {
    "turn": 11,
-   "hash": "aacd5c88",
+   "hash": "a942a618",
    "coins": [
-    42,
-    5,
-    17,
-    28
+    35,
+    27,
+    8,
+    22
    ],
    "spaces": [
-    4,
-    18,
-    20,
-    3
+    0,
+    0,
+    35,
+    4
    ],
-   "balloon": 13,
+   "balloon": 6,
    "boardId": "fizzy-fairground"
   }
  ],
@@ -210,77 +210,62 @@
   {
    "event": "turn:start",
    "turn": 1,
-   "draws": 7
+   "draws": 8
   },
   {
    "event": "turn:start",
    "turn": 1,
-   "draws": 9
+   "draws": 11
   },
   {
    "event": "minigame:start",
    "turn": 2,
-   "draws": 18
+   "draws": 20
   },
   {
    "event": "minigame:end",
    "turn": 2,
-   "draws": 18
+   "draws": 20
   },
   {
    "event": "match:start",
    "turn": 2,
-   "draws": 18
+   "draws": 20
   },
   {
    "event": "turn:start",
    "turn": 2,
-   "draws": 18
+   "draws": 20
   },
   {
    "event": "turn:start",
    "turn": 2,
-   "draws": 19
+   "draws": 24
   },
   {
    "event": "turn:start",
    "turn": 2,
-   "draws": 21
+   "draws": 27
   },
   {
    "event": "turn:start",
    "turn": 2,
-   "draws": 23
+   "draws": 30
   },
   {
    "event": "minigame:start",
    "turn": 3,
-   "draws": 32
+   "draws": 39
   },
   {
    "event": "minigame:end",
    "turn": 3,
-   "draws": 32
+   "draws": 39
   },
   {
    "event": "match:start",
    "turn": 3,
-   "draws": 32
-  },
-  {
-   "event": "turn:start",
-   "turn": 3,
-   "draws": 32
-  },
-  {
-   "event": "turn:start",
-   "turn": 3,
-   "draws": 34
-  },
-  {
-   "event": "turn:start",
-   "turn": 3,
-   "draws": 37
+   "draws": 39
   },
   {
    "event": "turn:start",
@@ -289,159 +274,189 @@
   },
   {
    "event": "turn:start",
-   "turn": 4,
-   "draws": 47
+   "turn": 3,
+   "draws": 40
+  },
+  {
+   "event": "turn:start",
+   "turn": 3,
+   "draws": 44
+  },
+  {
+   "event": "turn:start",
+   "turn": 3,
+   "draws": 46
   },
   {
    "event": "turn:start",
    "turn": 4,
-   "draws": 49
+   "draws": 54
   },
   {
    "event": "turn:start",
    "turn": 4,
-   "draws": 51
+   "draws": 55
   },
   {
    "event": "turn:start",
    "turn": 4,
-   "draws": 53
+   "draws": 59
+  },
+  {
+   "event": "turn:start",
+   "turn": 4,
+   "draws": 61
   },
   {
    "event": "turn:start",
    "turn": 5,
-   "draws": 62
+   "draws": 71
   },
   {
    "event": "turn:start",
    "turn": 5,
-   "draws": 64
+   "draws": 73
   },
   {
    "event": "turn:start",
    "turn": 5,
-   "draws": 66
+   "draws": 76
   },
   {
    "event": "turn:start",
    "turn": 5,
-   "draws": 69
+   "draws": 79
   },
   {
    "event": "turn:start",
    "turn": 6,
-   "draws": 77
+   "draws": 89
   },
   {
    "event": "turn:start",
    "turn": 6,
-   "draws": 78
+   "draws": 92
   },
   {
    "event": "turn:start",
    "turn": 6,
-   "draws": 80
-  },
-  {
-   "event": "turn:start",
-   "turn": 6,
-   "draws": 86
-  },
-  {
-   "event": "turn:start",
-   "turn": 7,
    "draws": 94
   },
   {
    "event": "turn:start",
-   "turn": 7,
-   "draws": 95
-  },
-  {
-   "event": "turn:start",
-   "turn": 7,
-   "draws": 99
-  },
-  {
-   "event": "turn:start",
-   "turn": 7,
-   "draws": 103
+   "turn": 6,
+   "draws": 96
   },
   {
    "event": "minigame:start",
-   "turn": 8,
-   "draws": 112
+   "turn": 7,
+   "draws": 107
   },
   {
    "event": "minigame:end",
-   "turn": 8,
-   "draws": 112
+   "turn": 7,
+   "draws": 107
   },
   {
    "event": "match:start",
-   "turn": 8,
-   "draws": 112
+   "turn": 7,
+   "draws": 107
   },
   {
    "event": "turn:start",
-   "turn": 8,
-   "draws": 112
+   "turn": 7,
+   "draws": 107
   },
   {
    "event": "turn:start",
-   "turn": 8,
-   "draws": 113
+   "turn": 7,
+   "draws": 111
   },
   {
    "event": "turn:start",
-   "turn": 8,
-   "draws": 116
+   "turn": 7,
+   "draws": 114
   },
   {
    "event": "turn:start",
-   "turn": 8,
+   "turn": 7,
    "draws": 121
   },
   {
    "event": "turn:start",
-   "turn": 9,
-   "draws": 129
-  },
-  {
-   "event": "turn:start",
-   "turn": 9,
+   "turn": 8,
    "draws": 130
   },
   {
    "event": "turn:start",
-   "turn": 9,
-   "draws": 132
+   "turn": 8,
+   "draws": 131
+  },
+  {
+   "event": "turn:start",
+   "turn": 8,
+   "draws": 134
+  },
+  {
+   "event": "turn:start",
+   "turn": 8,
+   "draws": 139
   },
   {
    "event": "turn:start",
    "turn": 9,
-   "draws": 135
+   "draws": 147
+  },
+  {
+   "event": "turn:start",
+   "turn": 9,
+   "draws": 149
+  },
+  {
+   "event": "turn:start",
+   "turn": 9,
+   "draws": 151
+  },
+  {
+   "event": "turn:start",
+   "turn": 9,
+   "draws": 156
+  },
+  {
+   "event": "minigame:start",
+   "turn": 10,
+   "draws": 165
+  },
+  {
+   "event": "minigame:end",
+   "turn": 10,
+   "draws": 165
+  },
+  {
+   "event": "match:start",
+   "turn": 10,
+   "draws": 165
   },
   {
    "event": "turn:start",
    "turn": 10,
-   "draws": 145
+   "draws": 165
   },
   {
    "event": "turn:start",
    "turn": 10,
-   "draws": 146
+   "draws": 167
   },
   {
    "event": "turn:start",
    "turn": 10,
-   "draws": 148
+   "draws": 171
   },
   {
    "event": "turn:start",
    "turn": 10,
-   "draws": 154
+   "draws": 174
   }
  ],
- "ms": 967345
+ "ms": 377947
 }
