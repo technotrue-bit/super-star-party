@@ -29,6 +29,7 @@ import { palette, hex } from "../../config/palette";
 import { isAutoplay } from "../../core/debug";
 import { celGradient } from "../../characters/cel";
 import { audio } from "../../audio/audioEngine";
+import { buildDuelEnvironment, type DuelEnvironment } from "./environment";
 
 const FIXED_DT = 1 / 60;
 const MAX_STEPS_PER_FRAME = 12;
@@ -111,6 +112,8 @@ interface QuickDrawState {
   corks: Cork[];
   sparks: { mesh: THREE.Mesh; vel: THREE.Vector3; life: number }[];
   log: string[];
+  /** The fairground around the stage (presentation only). */
+  env: DuelEnvironment;
 }
 
 let round: QuickDrawState | null = null;
@@ -134,7 +137,28 @@ function inked(geo: THREE.BufferGeometry, color: string, ink = 1.07): THREE.Grou
 
 function makeArena(root: THREE.Group): void {
   // Stage disk with a candy-striped skirt.
-  const stage = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.8, 0.3, 48), toon(palette.tentCream));
+  // The stage top is a carnival sunburst: alternating cream and sand wedges.
+  const burst = document.createElement("canvas");
+  burst.width = burst.height = 256;
+  const bctx = burst.getContext("2d");
+  if (bctx) {
+    for (let i = 0; i < 20; i++) {
+      bctx.beginPath();
+      bctx.moveTo(128, 128);
+      bctx.arc(128, 128, 182, (i / 20) * Math.PI * 2, ((i + 1) / 20) * Math.PI * 2);
+      bctx.closePath();
+      bctx.fillStyle = i % 2 === 0 ? palette.tentCream : palette.sand;
+      bctx.fill();
+    }
+    bctx.beginPath();
+    bctx.arc(128, 128, 30, 0, Math.PI * 2);
+    bctx.fillStyle = palette.sun;
+    bctx.fill();
+  }
+  const burstTex = new THREE.CanvasTexture(burst);
+  burstTex.colorSpace = THREE.SRGBColorSpace;
+  const stageTop = new THREE.MeshToonMaterial({ map: burstTex, gradientMap: celGradient });
+  const stage = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.8, 0.3, 48), [toon(palette.woodDark), stageTop, toon(palette.woodDark)]);
   stage.position.y = -0.15;
   stage.receiveShadow = true;
   root.add(stage);
@@ -170,12 +194,6 @@ function makeArena(root: THREE.Group): void {
     ring.position.set(side * DUEL_X, 0.07, 0.25);
     root.add(ring);
   }
-  // Ground around the stage.
-  const lawn = new THREE.Mesh(new THREE.CircleGeometry(22, 48), toon(palette.grassA));
-  lawn.rotation.x = -Math.PI / 2;
-  lawn.position.y = -0.3;
-  lawn.receiveShadow = true;
-  root.add(lawn);
   // Bunting along the back.
   const flags = 13;
   for (let i = 0; i < flags; i++) {
@@ -364,6 +382,7 @@ function scorePoint(st: QuickDrawState, winner: Duelist, reactSteps: number | nu
   st.ctx.characters[winner.id]?.anim.cheer();
   st.ctx.characters[loser.id]?.anim.sad();
   for (const id of st.watchers) st.ctx.characters[id]?.anim.cheer();
+  st.env.cheer(winner.score >= WIN_POINTS);
   st.log.push(`r${st.round} point ${winner.id}${reactSteps !== null ? ` in ${reactSteps}` : " (foul)"} -> ${st.duel.map((d) => d.score).join(":")}`);
   if (winner.score >= WIN_POINTS) endMatch(st, winner);
   else {
@@ -630,6 +649,7 @@ const quickDraw: Minigame = {
       humanTap: false, round: 0, winner: null, finished: false, postT: 0,
       sign: { canvas, tex, state: null, detail: "" }, board, boardKick: 0,
       corks: [], sparks: [], log: [],
+      env: buildDuelEnvironment(root),
     };
     round = st;
     startRound(st);
@@ -677,6 +697,7 @@ const quickDraw: Minigame = {
     if (steps >= MAX_STEPS_PER_FRAME && st.simTime >= FIXED_DT) st.simTime = 0;
     for (const d of st.duel) st.ctx.hud.score(d.id, d.score);
     updateVisuals(st, dt, st.step * FIXED_DT);
+    st.env.update(st.step * FIXED_DT, dt);
     publishDebug(st);
   },
 
@@ -684,6 +705,7 @@ const quickDraw: Minigame = {
     const st = round;
     if (!st) return;
     for (const d of st.duel) d.gun.removeFromParent();
+    st.env.dispose();
     st.root.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (!mesh.isMesh) return;
