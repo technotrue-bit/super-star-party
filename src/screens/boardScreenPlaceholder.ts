@@ -146,6 +146,15 @@ function smoothDampV(cur: THREE.Vector3, target: THREE.Vector3, vel: THREE.Vecto
 /** Seconds the follow camera takes to settle: steady by default, gentler when aiming. */
 const CAM_SETTLE = 0.36;
 const CAM_SETTLE_SOFT = 0.75;
+/** Tighter settle while a token walks, so the camera keeps up (the lead covers the rest). */
+const CAM_SETTLE_MOVE = 0.26;
+/** Seconds of averaged walking velocity the camera aims ahead (≈ the total smoothing lag). */
+const CAM_LEAD_TIME = 0.48;
+/** Velocity averaging window (s): spans a couple of hops, so no per-hop bob. */
+const CAM_LEAD_AVG = 0.3;
+/** Lead never more than this (world units), and a per-frame jump above CAM_LEAD_JUMP is a teleport. */
+const CAM_LEAD_MAX = 4;
+const CAM_LEAD_JUMP = 2.5;
 /** Settle time toward a ceremony hold ("THE STAR IS HERE!"): there in about a second. */
 const CAM_SETTLE_HOLD = 0.4;
 /** Final smoothing over swoops and punches (s): short, so shots still read. */
@@ -316,6 +325,10 @@ interface BoardScreenState {
   _lookVel?: THREE.Vector3;
   /** Final camera after swoops and punches, lightly smoothed (and its velocities). */
   _outPos?: THREE.Vector3;
+  /** Walk lead: last token position, its player, and averaged velocity. */
+  _tokPrev?: THREE.Vector3;
+  _tokPid?: number;
+  _tokVel?: THREE.Vector3;
   _outLook?: THREE.Vector3;
   _outVel?: THREE.Vector3;
   _outLookVel?: THREE.Vector3;
@@ -1246,6 +1259,28 @@ const boardScreenImpl: BoardScreenState & Screen = {
           : (this._board?.spaceWorldPos(match.players[currentPid]?.space ?? 0) ?? new THREE.Vector3()).add(
               new THREE.Vector3(off[0], 0, off[1]),
             );
+        // Lead the walker: a smoothed camera trails a moving target by about
+        // speed x settle time, which left a walking character near the screen
+        // edge. Aim ahead along its averaged velocity (over a few hops, so the
+        // camera does not bob per hop) to cancel that lag. A teleport or a new
+        // player is a jump, not a velocity.
+        this._tokVel ??= new THREE.Vector3();
+        if (token) {
+          const jumped =
+            !this._tokPrev || this._tokPid !== currentPid || this._tokPrev.distanceToSquared(token) > CAM_LEAD_JUMP ** 2;
+          if (jumped || dt <= 0) {
+            this._tokVel.set(0, 0, 0);
+          } else {
+            const raw = token.clone().sub(this._tokPrev!).divideScalar(dt);
+            raw.y = 0;
+            this._tokVel.lerp(raw, 1 - Math.exp(-dt / CAM_LEAD_AVG));
+          }
+          (this._tokPrev ??= new THREE.Vector3()).copy(token);
+          this._tokPid = currentPid;
+          const lead = this._tokVel.clone().multiplyScalar(CAM_LEAD_TIME);
+          if (lead.length() > CAM_LEAD_MAX) lead.setLength(CAM_LEAD_MAX);
+          playerPos.add(lead);
+        }
         // Orb aim / throw: frame the target instead (the turn loop glides it).
         if (this._camAim) playerPos.copy(this._camAim);
         // A ceremony hold ("THE STAR IS HERE!", a star buy) frames its look
@@ -1286,7 +1321,14 @@ const boardScreenImpl: BoardScreenState & Screen = {
       if (!this._camAim && (this._camSoftT ?? 0) > 0) this._camSoftT = Math.max(0, (this._camSoftT ?? 0) - dt);
       // A ceremony hold arrives promptly (the beat is short); aiming and the
       // glide back afterwards stay gentle.
-      const settle = this._camHold ? CAM_SETTLE_HOLD : soft ? CAM_SETTLE_SOFT : CAM_SETTLE;
+      const walking = phase === "moving" && !this._camAim && !this._camHold;
+      const settle = this._camHold
+        ? CAM_SETTLE_HOLD
+        : walking
+          ? CAM_SETTLE_MOVE
+          : soft
+            ? CAM_SETTLE_SOFT
+            : CAM_SETTLE;
       this._followVel ??= new THREE.Vector3();
       this._lookVel ??= new THREE.Vector3();
       smoothDampV(this._followPos, idealPos, this._followVel, settle, dt);
