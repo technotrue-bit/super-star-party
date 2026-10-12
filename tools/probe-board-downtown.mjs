@@ -15,11 +15,11 @@
  * spots valid/unique/never start-fork-rejoin-shop, prizeStart is a prize spot,
  * carnival-style type mix (2 shops, 2 grumpus, 3 stamps, 2 minigame balloons).
  *
- * Part 3 (Downtown runtime): autoplays seed 7 on Downtown and checks boardId,
+ * Part 3 (Downtown runtime): autoplays each seed on Downtown and checks boardId,
  * that tokens only stand on valid spaces, the balloon only sits on prize spots
  * (or on a space a Balloon Tug pulled it to),
  * and that both forks were taken both ways (a branch tile and a skipped ring
- * tile seen) across the seeds in SSP_DT_SEEDS (default "7,4"), zero page errors.
+ * tile seen) across the seeds in SSP_DT_SEEDS (default "4,5"), zero page errors.
  *
  *   SSP_URL=http://127.0.0.1:5197 node tools/probe-board-downtown.mjs
  *   SSP_SKIP_GOLDEN=1 skips part 1.
@@ -30,10 +30,11 @@ import { dirname, resolve } from "node:path";
 
 const BASE = (process.env.SSP_URL ?? "http://127.0.0.1:5177").replace(/\/$/, "");
 const ROOT = resolve(dirname(new URL(import.meta.url).pathname), "..");
-// Seed 4 takes both forks both ways under the MP-style opening (distinct
-// order blocks, starting coins dealt after the order). Seed 2 no longer sends
-// anyone down the Riverside Gate branch.
-const SEEDS = (process.env.SSP_DT_SEEDS ?? "7,4").split(",").map(Number);
+// With Hidden Blocks and carried orbs (Downtown rev 3), seed 4 takes Market
+// Gate both ways and seed 5 takes Riverside Gate both ways. Seed 7 no longer
+// sends anyone down the Riverside branch. The per-seed "lanes" line shows
+// which seeds cover what when a rule change shifts the rng again.
+const SEEDS = (process.env.SSP_DT_SEEDS ?? "4,5").split(",").map(Number);
 const RUN_TURNS = Number(process.env.SSP_DT_TURNS ?? 10);
 const CAP_MS = 420000;
 const fails = [];
