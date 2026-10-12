@@ -203,7 +203,7 @@ export const settings = {
     shotQueue: 2, // queued shots waiting behind the active one (oldest dropped)
     shotMaxWait: 1.2, // board seconds a queued shot may wait while the camera is free
     shotMaxAge: 5, // board seconds from trigger to start, however long a hold/punch lasted
-    shotCancelTime: 0.25, // fade back to the follow camera when a punch or hold cuts in
+    shotCancelTime: 0.6, // eased fade back to the follow camera when a punch or hold cuts in
     // Crowd (lively/crowd.ts): two bleachers of Fizzlings beside the tents.
     crowd: true,
     crowdPerBleacher: 16,
