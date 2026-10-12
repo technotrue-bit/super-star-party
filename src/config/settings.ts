@@ -80,6 +80,8 @@ export const settings = {
   coinBlockMaxHits: 20, // coins the block can hold
   coinBlockCpuHits: [6, 14] as readonly [number, number], // CPU hits, drawn inclusive
   minigameWinCoins: 10, // base minigame winner payout, before pack bonus and the host multiplier
+  // Free-for-all minigames pay by place (1st, 2nd, 3rd, 4th), before the pack bonus and host multiplier.
+  minigamePlaceCoins: [10, 6, 3, 0] as readonly number[],
   minigameCoinMultiplier: 1, // host scale (1, 2, 3, or 4); live value is persisted in localStorage
   stampJackpot: 30, // coins when a player completes the 3-stamp set
   orbThrowRange: 7, // an orb lands within this many steps of the thrower (either way along the paths)

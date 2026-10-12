@@ -42,7 +42,7 @@ import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
 import { characterColor } from "../characters/roster";
 import { createCharacter, type Character } from "../characters/characterFactory";
-import { awardMinigameResult, playerCoins } from "../game/economy";
+import { awardMinigameResult, playerCoins, resolveMinigameCoinWinners } from "../game/economy";
 import { isAutoplay } from "../core/debug";
 import {
   armTapCooldown,
@@ -1422,11 +1422,14 @@ const minigameScreenImpl: MgScreenState & Screen = {
 
     const ranking = this._ranking ?? [];
     const mg = this._minigame;
-    // Team coinWinners each get the full pot. Free-for-all pays ranking[0].
+    // Team coinWinners each get the full pot. Free-for-all pays by place
+    // (10 / 6 / 3 / 0 before bonuses); the headline still names the winner(s).
+    const winnerIds = resolveMinigameCoinWinners(ranking, this._coinWinners);
     const awards = awardMinigameResult(ranking, this._coinWinners);
     const winner = ranking[0] ?? awards[0]?.playerId ?? match.players[0]?.id ?? 0;
     const payout = awards.find((a) => a.playerId === winner)?.coins ?? awards[0]?.coins ?? 0;
-    const paidIds = awards.map((a) => a.playerId);
+    const paidIds = winnerIds.length > 0 ? winnerIds : awards.map((a) => a.playerId);
+    const coinsById = new Map(awards.map((a) => [a.playerId, a.coins]));
 
     bus.emit("minigame:end", { id: mg?.id ?? "?", winner, coins: payout });
 
@@ -1470,6 +1473,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
       winner,
       coins: payout,
       paidIds,
+      coinsById,
       minigameName: mg?.name ?? "MINIGAME",
       scores: this._hud?.scores(),
       unit: this._hud?.unitText(),
@@ -1654,7 +1658,13 @@ export async function showMinigamePreview(
       ? `<div data-mg-win style="background:${palette.sun};color:${palette.ink};border-radius:12px;padding:7px 10px;font-size:16px;font-weight:700;line-height:1.25;margin-bottom:10px;">🏆 ${escapeHtml(rules.win)}</div>`
       : "";
     const prize = coins !== undefined
-      ? `<div style="color:${palette.cream};opacity:0.85;font-size:14px;margin-bottom:12px;">Winner takes <b style="color:${palette.sun}">${coins} coins</b></div>`
+      ? (() => {
+          // `coins` is first place's pot; the other places scale with it (10 / 6 / 3 / 0).
+          const k = coins / (settings.minigamePlaceCoins[0] || 1);
+          const [, c2, c3] = settings.minigamePlaceCoins.map((c) => Math.round(c * k));
+          const b = (n: number): string => `<b style="color:${palette.sun}">${n}</b>`;
+          return `<div style="color:${palette.cream};opacity:0.85;font-size:14px;margin-bottom:12px;">1st ${b(coins)} · 2nd ${b(c2)} · 3rd ${b(c3)} coins <span style="opacity:0.8">(team wins: ${coins} each)</span></div>`;
+        })()
       : `<div style="height:4px"></div>`;
     root.innerHTML = `
       <div style="background:${palette.ink};border:5px solid ${palette.cream};border-radius:20px;padding:18px 16px;width:min(92vw, 430px);max-height:calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px);overflow-y:auto;box-sizing:border-box;text-align:center;box-shadow:0 8px 0 ${palette.ink};">

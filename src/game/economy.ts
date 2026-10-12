@@ -195,9 +195,19 @@ export function minigameCoinAward(pack?: string | null): number {
   return settings.minigameWinCoins * getMinigameCoinMultiplier() * packOwnerMultiplier(used);
 }
 
+/**
+ * Coins a free-for-all place pays right now: `settings.minigamePlaceCoins`
+ * for that place (0 = first) × host multiplier × pack-owner multiplier.
+ */
+export function minigamePlaceAward(place: number, pack?: string | null): number {
+  const used = pack === undefined ? match.lastMinigamePack : pack;
+  const base = settings.minigamePlaceCoins[place] ?? 0;
+  return base * getMinigameCoinMultiplier() * packOwnerMultiplier(used);
+}
+
 export interface MinigameAward {
   playerId: number;
-  /** Coins actually added. Each winner receives the full scaled pot. */
+  /** Coins actually added (a team winner's full pot, or a free-for-all place's share). */
   coins: number;
   /** minigameWins after this payout. */
   wins: number;
@@ -245,11 +255,30 @@ export function minigamePayout(winnerIds: number | number[]): void {
 }
 
 /**
- * Pay the winning side and give each of them one minigame win.
- * This is the results-screen payout: team lists pay every teammate the full
- * pot, and a free-for-all (no coin-winner list) pays ranking[0] only.
+ * Pay a minigame and give the winners one minigame win each.
+ * Team result (`coinWinners` listed): every teammate on the winning side gets
+ * the full pot. Free-for-all: coins by place from `settings.minigamePlaceCoins`
+ * (10 / 6 / 3 / 0 before bonuses); only first place gains a minigame win.
+ * Returns everyone who was paid (or won), in ranking order.
  */
 export function awardMinigameResult(ranking: number[], coinWinners?: number[]): MinigameAward[] {
+  const team = coinWinners && uniqueRealPlayers(coinWinners).length > 0;
+  if (!team) {
+    const order = uniqueRealPlayers(ranking);
+    const awards: MinigameAward[] = [];
+    order.forEach((id, place) => {
+      const p = match.players[id];
+      if (!p) return;
+      const coins = minigamePlaceAward(place);
+      const before = playerCoins(id);
+      if (coins > 0) addCoins(id, coins, { silent: true });
+      if (place === 0) p.minigameWins += 1;
+      if (coins > 0 || place === 0) {
+        awards.push({ playerId: id, coins: playerCoins(id) - before, wins: p.minigameWins });
+      }
+    });
+    return awards;
+  }
   const ids = resolveMinigameCoinWinners(ranking, coinWinners);
   const before = new Map(ids.map((id) => [id, playerCoins(id)]));
   minigamePayout(ids);

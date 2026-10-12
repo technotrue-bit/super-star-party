@@ -189,8 +189,10 @@ export function startResultsCeremony(opts: {
   ranking: number[];
   winner: number;
   coins: number;
-  /** Everyone who received `coins`. Defaults to the single first-place id. */
+  /** The winner(s) the headline names. Defaults to the single first-place id. */
   paidIds?: number[];
+  /** Coins each player received (free-for-all places differ). Absent: every paidId got `coins`. */
+  coinsById?: Map<number, number>;
   minigameName: string;
   /** Minigame objects hidden while the results scene shows (restored on destroy). */
   hide?: THREE.Object3D[];
@@ -378,12 +380,13 @@ export function startResultsCeremony(opts: {
       scoreEl.dataset.sspScore = String(score);
       row.appendChild(scoreEl);
     }
-    if (paid.has(ordered[i])) {
+    const got = opts.coinsById ? (opts.coinsById.get(ordered[i]) ?? 0) : paid.has(ordered[i]) ? coins : 0;
+    if (got > 0) {
       const coinEl = document.createElement("span");
-      coinEl.textContent = `+${coins}c`;
+      coinEl.textContent = `+${got}c`;
       coinEl.style.cssText = `margin-left:8px;white-space:nowrap;color:${palette.sunDeep};text-shadow:0 1px 0 ${palette.ink};`;
       row.appendChild(coinEl);
-      row.dataset.sspPaid = String(coins);
+      row.dataset.sspPaid = String(got);
     }
     cardEl.appendChild(row);
   }

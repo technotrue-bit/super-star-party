@@ -300,10 +300,10 @@ export function mountPackPicker(opts?: { card?: boolean }): PackPickerHandle {
 
     const note = document.createElement("p");
     note.className = "ssp-pack-picker__note";
-    const base = settings.minigameWinCoins * mult;
+    const [c1, c2, c3] = settings.minigamePlaceCoins.map((c) => c * mult);
     note.textContent = opts?.card
-      ? `Win pays ${base} coins, then the pack bonus.`
-      : `A win pays ${base} coins before the pack bonus. One owner of the dealt pack doubles that. Two, three, or four owners pay ×2, ×3, or ×4. A pack you switch off never comes up.`;
+      ? `1st ${c1}, 2nd ${c2}, 3rd ${c3} coins, then the pack bonus.`
+      : `Places pay ${c1} / ${c2} / ${c3} coins (1st / 2nd / 3rd; team wins pay ${c1} each) before the pack bonus. One owner of the dealt pack doubles that. Two, three, or four owners pay ×2, ×3, or ×4. A pack you switch off never comes up.`;
     root.appendChild(note);
   };
 
@@ -419,7 +419,8 @@ export function mountMatchSettings(): PackPickerHandle {
 
     const note = document.createElement("p");
     note.className = "ssp-ms__note";
-    note.textContent = `Winners earn ${settings.minigameWinCoins} coins × bonus`;
+    const [c1, c2, c3] = settings.minigamePlaceCoins;
+    note.textContent = `1st ${c1} · 2nd ${c2} · 3rd ${c3} coins × bonus`;
 
     const boards = mountBoardPicker({ compact: true });
     root.append(title, boards.el, mixLabel, tiles, rot, coins, note);
