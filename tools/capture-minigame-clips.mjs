@@ -77,12 +77,20 @@ for (const id of IDS.filter((x) => !only || only.includes(x))) {
     });
     if (!live) throw new Error("never reached play");
     // A beat into play so there is action on screen from frame one.
-    await page.evaluate(() => window.__SSP__.advance(45));
-    const frames = Math.round(CLIP_SEC * FPS);
-    for (let f = 0; f < frames; f++) {
-      await page.evaluate((n) => window.__SSP__.advance(n), STEP);
-      await page.screenshot({ path: join(dir, `${String(f).padStart(3, "0")}.png`) });
+    await page.evaluate(() => window.__SSP__.advance(15));
+    // Record while the game is live; a quick game (a CPU race, a short chart)
+    // can end before CLIP_SEC, and its results podium is not gameplay.
+    const want = Math.round(CLIP_SEC * FPS);
+    let frames = 0;
+    for (; frames < want; frames++) {
+      const live = await page.evaluate((n) => {
+        window.__SSP__.advance(n);
+        return document.body.dataset.mgPhase === "play";
+      }, STEP);
+      if (!live) break;
+      await page.screenshot({ path: join(dir, `${String(frames).padStart(3, "0")}.png`) });
     }
+    if (frames < 12) throw new Error(`only ${frames} frames of play`);
     const py = `
 import glob, sys
 from PIL import Image
@@ -94,7 +102,7 @@ def crop(im):
     return im.crop((x, y, x + cw, y + ch))
 frames = [crop(Image.open(f).convert("RGB")).resize((400, 250), Image.LANCZOS) for f in files]
 frames[0].save(sys.argv[2], save_all=True, append_images=frames[1:], duration=int(1000 / ${FPS}), loop=0, quality=62, method=4)
-frames[len(frames) // 2].save(sys.argv[3], quality=78)
+frames[len(frames) * 2 // 5].save(sys.argv[3], quality=78)
 `;
     const enc = spawnSync("python3", ["-c", py, dir, join(OUT, `${id}.webp`), join(OUT, `${id}-thumb.webp`)], { encoding: "utf8" });
     if (enc.status !== 0) throw new Error(`encode failed: ${enc.stderr.slice(0, 300)}`);

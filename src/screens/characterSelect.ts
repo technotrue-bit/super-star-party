@@ -27,6 +27,7 @@ import { screens } from "./screenManager";
 import { onViewportChange, viewportSize } from "../ui/viewport";
 import { mountMatchSettings } from "../ui/packPicker";
 import { setSelectBoundsReader, type SelectBounds, type SelectRect } from "../core/debug";
+import { isFreeplay } from "../game/freeplay";
 
 const SLOT_COUNT = roster.length;
 
@@ -384,6 +385,12 @@ const characterSelectImpl: SelectScreenState & Screen = {
     okBtn.el.classList.add("ssp-sel-start");
     this._startEl = okBtn.el;
 
+    // Minigame free play: no board or match rules to set, and START reads NEXT.
+    if (isFreeplay()) {
+      settingsCard.style.display = "none";
+      okBtn.setLabel("NEXT ▶");
+      okBtn.el.setAttribute("aria-label", "Next: pick a minigame");
+    }
     side.append(plate, cardRow, settingsCard, okBtn.el);
     stage.append(topBar, slot, side);
 
@@ -603,6 +610,12 @@ const characterSelectImpl: SelectScreenState & Screen = {
 
     setOnlineMatch(false);
     startMatch(kinds, names, 10, urlSeed, controllers);
+    if (isFreeplay()) {
+      // The match only seats the four players for the minigames.
+      audio.sfx.play("pop");
+      screens.goto("minigames");
+      return;
+    }
     audio.sfx.play("fanfare.win");
     screens.goto("board");
   },

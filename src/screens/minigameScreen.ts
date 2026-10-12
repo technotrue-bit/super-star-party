@@ -29,6 +29,7 @@
  * genre. Countdown and results advance on dt. performance.now only times
  * the coin-count tween. Gameplay does not call Math.random.
  */
+import { isFreeplay } from "../game/freeplay";
 import * as THREE from "three";
 import { world } from "../main";
 import { palette, hex } from "../config/palette";
@@ -878,6 +879,11 @@ function tickTeach(self: MgScreenState, dt: number): void {
 // and go straight to building the arena so the player "jumps in" after the click.
 let skipPreScreen = false;
 
+/** Where a minigame hands back to: the board, or the menu in free play. */
+function homeScreen(): string {
+  return isFreeplay() ? "minigames" : "board";
+}
+
 export function skipNextMinigamePreScreen(): void {
   skipPreScreen = true;
 }
@@ -961,7 +967,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
       entry = minigameEntry(forced) ?? { id: forced, name: forced };
     }
     if (!entry || match.players.length === 0) {
-      screens.goto("board");
+      screens.goto(homeScreen());
       return;
     }
     if (isContactMinigame(entry.id)) void loadRapier();
@@ -991,7 +997,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
       )
       .then((started) => {
       if (!started) {
-        screens.goto("board");
+        screens.goto(homeScreen());
         return;
       }
       buildArenaAndStart();
@@ -1207,7 +1213,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
         }
         if (!self._active) return;
         if (!mg) {
-          screens.goto("board");
+          screens.goto(homeScreen());
           return;
         }
         self._minigame = mg;
@@ -1401,7 +1407,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
             this._present();
           } else if (this._ceremony?.isDone() && !this._ceremonyDone) {
             this._ceremonyDone = true;
-            screens.goto("board");
+            screens.goto(homeScreen());
             return;
           }
         }

@@ -123,6 +123,8 @@ Published names are original to the Fizzy Fairground. The MP7 labels below are d
 
    The spawn, the prize and a CPU's hit count all come from the match rng at fixed points, so every peer sees the same block. Online, a human's hit count is relayed as a `block` choice (assist seats relay `auto` and take the CPU count). `window.__forcedBlock = "star" | "item" | "coins" | "dice"` forces the next blue landing's block. The new draw changes seeded matches, so the carnival rev is 4, Downtown's is 3, and `tools/golden/carnival-seed7.json` / `carnival-seed2.json` were re-recorded. Logic: `src/game/hiddenBlocks.ts`. Prop: `src/board/hiddenBlockProp.ts`.
 
+10. **Minigame free play** — **Done**: MINIGAMES on the title opens character select (no board or match rules; START reads NEXT), then the minigame menu: a picture card per game, grouped by pack, with its format. A card opens the ready screen, MP7-style: a short looping clip of the game in action, how to win and the controls, and the four players lined up on a stage. PLAY sends them leaping up into the game, which then runs as normal (practice, GO, play, results) and returns to the menu. The pictures and clips in `public/minigames/` are recorded by `tools/capture-minigame-clips.mjs` (four CPUs, fixed-step play); re-run it after changing how a minigame looks. Free play lives in `src/game/freeplay.ts`, `src/screens/minigameMenu.ts` and `src/screens/minigameReady.ts`.
+
 These keep the MP7 structure 100% faithful while making the game feel like *our* bright, mischievous carnival.
 
 ## Immediate Next Steps (small pieces)

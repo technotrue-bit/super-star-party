@@ -11,6 +11,7 @@
  * Everything visual comes from the palette + UI kit; no hand-rolled buttons
  * or off-palette colors. Music uses only the existing "title" track id.
  */
+import { setFreeplay } from "../game/freeplay";
 import * as THREE from "three";
 import { palette, hex } from "../config/palette";
 import { ui } from "../ui/kit";
@@ -251,6 +252,7 @@ interface TitleState {
   _applyHighlight: () => void;
   _goPlay: () => void;
   _goHowTo: () => void;
+  _goMinigames: () => void;
   _openSettings: () => void;
   _showSettingsPanel: () => void;
   _sliderRow: (label: string, initial: number, apply: (v: number) => void) => HTMLDivElement;
@@ -264,6 +266,8 @@ const titleImpl: TitleState & Screen = {
   id: "title",
 
   enter() {
+    // Back at the title: neither mode is chosen yet.
+    setFreeplay(false);
     injectTitleStyles();
     ui.clearScreen();
     setOnlineMatch(false);
@@ -356,6 +360,17 @@ const titleImpl: TitleState & Screen = {
     });
     playBtn.el.classList.add("ssp-title-btn");
 
+    const gamesBtn = ui.button({
+      label: "MINIGAMES",
+      kind: "primary",
+      size: "lg",
+      onClick: () => this._goMinigames(),
+      sound: "pop",
+      ariaLabel: "Minigames — just play the minigames",
+    });
+    gamesBtn.el.classList.add("ssp-title-btn");
+    gamesBtn.el.dataset.sspMenu = "minigames";
+
     const friendsBtn = ui.button({
       label: "WITH FRIENDS",
       kind: "primary",
@@ -387,7 +402,7 @@ const titleImpl: TitleState & Screen = {
     });
     setBtn.el.classList.add("ssp-title-btn");
 
-    this._buttons = [playBtn, friendsBtn, howBtn, setBtn];
+    this._buttons = [playBtn, gamesBtn, friendsBtn, howBtn, setBtn];
     for (const b of this._buttons) menu.appendChild(b.el);
     stage.appendChild(menu);
 
@@ -466,11 +481,19 @@ const titleImpl: TitleState & Screen = {
 
   /* ---- actions ---- */
   _goPlay() {
+    setFreeplay(false);
     audio.sfx.play("fanfare.win");
     ui.confettiBurst(window.innerWidth / 2, window.innerHeight * 0.4, {
       sound: null,
       count: 80,
     });
+    screens.goto("select");
+  },
+
+  /** Minigame free play: pick a hero, then a minigame. */
+  _goMinigames() {
+    setFreeplay(true);
+    audio.sfx.play("pop");
     screens.goto("select");
   },
 

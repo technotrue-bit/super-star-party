@@ -104,6 +104,8 @@ function boot(): void {
     import("./screens/friendsScreen").then((m) => screens.register(m.friendsScreen)),
     import("./screens/howToPlay").then((m) => screens.register(m.howToPlay)),
     import("./screens/matchFinale").then((m) => screens.register(m.matchFinale)),
+    import("./screens/minigameMenu").then((m) => screens.register(m.minigameMenuScreen)),
+    import("./screens/minigameReady").then((m) => screens.register(m.minigameReadyScreen)),
   ];
   void Promise.all(screenImports).then(() => {
     screens.goto(screen);
