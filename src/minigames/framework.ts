@@ -324,8 +324,11 @@ export interface MinigameHud {
  * a phone shows `touch`, a keyboard player sees `keys`.
  */
 export interface MinigameRules {
-  /** "ffa" free-for-all, "1v3", "2v2". */
-  format: "ffa" | "1v3" | "2v2";
+  /**
+   * "ffa" free-for-all, "1v3", "2v2", or "1v1" (a duel: two of the four
+   * play, the other two watch; free play only, never dealt by the roulette).
+   */
+  format: "ffa" | "1v3" | "2v2" | "1v1";
   /** How long / how it ends: "30 seconds", "Race to the cake", "Last one standing". */
   length: string;
   /** How you win, one line. */

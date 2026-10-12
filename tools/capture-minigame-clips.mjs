@@ -35,6 +35,7 @@ const IDS = [
   "coin_grab",
   "pipe_puzzle",
   "push_of_war",
+  "quick_draw",
 ];
 const only = process.env.SSP_ONLY ? process.env.SSP_ONLY.split(",") : null;
 

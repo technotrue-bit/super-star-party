@@ -45,6 +45,7 @@ Every game has a START card with its format (free-for-all / 1 vs 3), its length,
 - **Memory Match**: memorize 12 cards for 3.5 s, then play 5 rounds of "find the twin". Right +1, fastest right +2.
 - **Pipe Puzzle**: everyone races on identical 4×4 puzzles. Tap a pipe to turn it clockwise. Each puzzle you link scores one and brings up the next.
 - **Push of War**: 1 vs 3 mash. A solo tap pushes 2.3× a trio tap, and the solo gets a surge every 20 taps. Push the crate into the other team's goal, or have it in their half at the 10 s buzzer.
+- **Cork Quick-Draw** (1 vs 1 duel, Sideshow pack): two duelists with cork popguns and a balloon each; the other two watch. The sign reads READY… and flips to FIRE! after 1.0–2.4 s; the first to tap pops the rival's balloon. 40% of rounds flash a decoy WAIT! first, and a tap before FIRE! gives the rival the point. First to 3 (24 s cap: leader wins, a tie goes to the fastest draw). CPUs draw in 0.24–0.50 s and bite on a decoy 1 time in 6. Duels are free-play only: the roulette never deals a 1v1 (`DUEL_MINIGAMES` in `registry.ts`), and they could later power the Dueling Glove and Duel Orb.
 
 ### Items
 **Done** for this slice. Dice stay outcome-first: the face is chosen first (character die, or `__forcedDice`), and dash / poison change the movement total afterward. The total never drops below 1. CPUs and `__SSP__.autoplay(true)` use one legal pre-roll item per turn, chosen with `rng` (`pickAutoItem`). A manual human gets the item bar and, for aimed items, a touch picker. Poison is not in that pre-roll draw.

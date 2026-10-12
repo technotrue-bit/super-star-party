@@ -1631,6 +1631,7 @@ const FORMAT_LABEL: Record<MinigameRules["format"], string> = {
   ffa: "FREE-FOR-ALL",
   "1v3": "1 VS 3",
   "2v2": "2 VS 2",
+  "1v1": "1 VS 1",
 };
 
 /**

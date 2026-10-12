@@ -158,8 +158,18 @@ export function tryPickMinigame(
   return take(available[0]);
 }
 
-/** Contact minigames stay off the online path. Solo still deals them. */
+/**
+ * 1-vs-1 duels: two of the four players, so a board round never deals one.
+ * They are played from the MINIGAMES menu.
+ */
+export const DUEL_MINIGAMES: ReadonlySet<string> = new Set(["quick_draw"]);
+
+/**
+ * What the roulette may deal: never a duel, and contact minigames stay off
+ * the online path (solo still deals them).
+ */
 function dealableOnline(id: string): boolean {
+  if (DUEL_MINIGAMES.has(id)) return false;
   return !(onlineMatch() && isContactMinigame(id));
 }
 

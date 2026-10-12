@@ -52,7 +52,7 @@ function injectStyles(): void {
   document.head.appendChild(s);
 }
 
-const FORMAT_LABEL: Record<string, string> = { ffa: "4-PLAYER", "1v3": "1 VS 3", "2v2": "2 VS 2" };
+const FORMAT_LABEL: Record<string, string> = { ffa: "4-PLAYER", "1v3": "1 VS 3", "2v2": "2 VS 2", "1v1": "1 VS 1" };
 
 interface MenuState {
   _root?: HTMLElement;
