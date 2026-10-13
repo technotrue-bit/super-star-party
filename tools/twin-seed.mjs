@@ -6,11 +6,13 @@ const boardQuery = process.env.SSP_BOARD ? `&board=${process.env.SSP_BOARD}` : "
 const URL = `${BASE}/?seed=7&screen=board&autoplay=1&audio=0&speed=4${boardQuery}`;
 const TURNS = 9;
 // A GitHub runner once matched turns 1–8 inside a 300s cap. On the current
-// build a runner closed turn 5 at ~484s, so nine minutes ran out before turn 6
-// and turn 9 needs more time still. Twelve minutes lets all nine turns finish.
+// build a runner closed turn 5 at ~484s, so nine minutes ran out before turn 6.
+// Twelve minutes was not enough on a slower runner either: turn 7 closed at
+// ~684s and turn 8 was still running at the cap. Sixteen minutes lets all nine
+// turns finish on a slow runner. The match is the same, only slower.
 // Speed stays 4: past five sim steps per frame, a faster speed does not shorten
 // the minigames.
-const CAP_MS = 720000;
+const CAP_MS = 960000;
 
 async function play(page, label) {
   const errors = [];
