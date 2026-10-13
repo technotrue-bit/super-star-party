@@ -15,7 +15,10 @@ const TURNS = Number(process.env.SSP_TURNS ?? 6);
 const board = process.env.SSP_BOARD ? `&board=${process.env.SSP_BOARD}` : "";
 const SEED = Number(process.env.SSP_SEED ?? 7);
 const URL = `${BASE}/?seed=${SEED}&screen=board&autoplay=1&audio=0&speed=4${board}`;
-const CAP_MS = 480000;
+// Wall-clock cap for one replay. Eight minutes was not enough on a slower
+// CI runner: turn 11 and the finale were still running at the cap. The replay
+// itself is unchanged; only the time it may take goes up.
+const CAP_MS = 720000;
 
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true })).newPage();
