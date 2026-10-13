@@ -22,6 +22,7 @@ import { activeBoard } from "../board/registry";
 import { addCoins } from "./economy";
 import { canPlaceTrap, placeTrap } from "./traps";
 import { settings } from "../config/settings";
+import { cpuSlips } from "./cpuPlay";
 import { shopStockAt, shopVisitLog } from "./shopStock";
 import type { TrapKind } from "../core/game";
 
@@ -543,6 +544,8 @@ function pickShopPurchase(playerId: number, player: PlayerState, stock: readonly
     candidates.push(key);
   }
   if (candidates.length === 0) return null;
+  // A Relaxed computer sometimes leaves the stall without buying.
+  if (cpuSlips()) return null;
   const key = rng.pick(candidates);
   const def = ITEM_DEFS[key];
   if (!def || !buyItem(playerId, key)) return null;
@@ -649,6 +652,8 @@ export function canUseItem(playerId: number, key: string): boolean {
  * No held item means no rng draw.
  */
 export function pickAutoItem(playerId: number): string | null {
+  // A Relaxed computer sometimes forgets its item this turn.
+  if (cpuSlips()) return null;
   const choices: string[] = [];
   for (const key of ITEM_ORDER) {
     if (key === "poison_mushroom") continue;
