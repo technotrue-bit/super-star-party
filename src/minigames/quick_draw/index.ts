@@ -22,7 +22,7 @@
  * measured in steps. Telemetry: window.__QUICKDRAW__.
  */
 import * as THREE from "three";
-import { isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
+import { cpuSkill, isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
 import { registerMinigame } from "../registry";
 import { box as frameBox, frameMinigame } from "../framing";
 import { palette, hex } from "../../config/palette";
@@ -338,8 +338,9 @@ function startRound(st: QuickDrawState): void {
   const decoyAt = st.roundStart + secs(0.35) + Math.floor(rng() * Math.max(1, st.fireStep - st.roundStart - secs(0.35 + DECOY_SHOW + 0.25)));
   st.decoyStep = decoy && st.fireStep - st.roundStart > secs(DECOY_SHOW + 0.9) ? decoyAt : -1;
   for (const d of st.duel) {
-    d.cpuFireStep = st.fireStep + secs(CPU_REACT_MIN + rng() * (CPU_REACT_MAX - CPU_REACT_MIN));
-    const bite = rng() < CPU_DECOY_BITE;
+    const skill = cpuSkill();
+    d.cpuFireStep = st.fireStep + secs((CPU_REACT_MIN + rng() * (CPU_REACT_MAX - CPU_REACT_MIN)) / skill);
+    const bite = rng() < CPU_DECOY_BITE / skill;
     d.cpuFoulStep = d.cpu && bite && st.decoyStep >= 0 ? st.decoyStep + secs(0.12 + rng() * 0.15) : -1;
     if (!d.cpu || !bite || st.decoyStep < 0) rng(); // keep the draw count fixed
     d.balloon.visible = true;

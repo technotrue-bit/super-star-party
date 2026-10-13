@@ -53,9 +53,21 @@ import type * as THREE from "three";
 import type { Character } from "../characters/characterFactory";
 import type { SeatController } from "../core/seat";
 import { assertMinigameHowTos, registerMinigame, type MinigameEntry } from "./registry";
+import { match } from "../core/game";
+import { cpuSkillOf } from "../config/cpuLevel";
 import { MINIGAME_MODULES } from "./index";
 
 export type { MinigameEntry }; // pending-entry hand-off uses registry entries
+
+/**
+ * How sharp the computer players are this match (1 = the tuned Normal game,
+ * above 1 faster and more accurate, below 1 slower). Minigames scale their
+ * CPU tuning by this. It only reads the match, so it is the same on every
+ * peer of an online room.
+ */
+export function cpuSkill(): number {
+  return cpuSkillOf(match.cpuLevel ?? "normal");
+}
 
 export type MinigameGenre =
   | "survival"

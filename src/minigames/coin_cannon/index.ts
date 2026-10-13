@@ -25,6 +25,7 @@
 import * as THREE from "three";
 import {
   automatedSeatIds,
+  cpuSkill,
   isPracticeBeat,
   localPlayerIndex,
   type Minigame,
@@ -917,11 +918,12 @@ const coinCannon: Minigame = {
   setup(ctx: MinigameContext): void {
     // ---- every gameplay draw, in a fixed order ----
     const schedule = makeSchedule(ctx.rng);
+    const skill = cpuSkill();
     const plans = ctx.players.map(() => {
       const m = CPU_M_MIN + ctx.rng() * (CPU_M_MAX - CPU_M_MIN);
       return schedule.map((b) => {
-        const skip = ctx.rng() < CPU_SKIP;
-        const err = normal(ctx.rng) * CPU_SD * m;
+        const skip = ctx.rng() < CPU_SKIP / skill;
+        const err = (normal(ctx.rng) * CPU_SD * m) / skill;
         return skip ? null : b.arrive - FLIGHT + err;
       });
     });

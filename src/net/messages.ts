@@ -1,4 +1,5 @@
 import type { BoardId, BoardRule } from "../board/registry";
+import type { CpuLevel } from "../config/cpuLevel";
 import type { CoinMultiplier, MinigamePackId } from "../minigames/packRules";
 
 export interface SeatSlot {
@@ -20,6 +21,8 @@ export interface MatchSetup {
   seats: SeatSlot[];
   /** Board the host resolved ("random" already picked). Absent (old host) = the carnival. */
   board?: BoardId;
+  /** The host's CPU level, so every phone plays the same computer players. Absent = Normal. */
+  cpuLevel?: CpuLevel;
 }
 
 export interface OfficialMinigame {

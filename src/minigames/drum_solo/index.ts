@@ -21,7 +21,7 @@
  * ctx.rng only. Ring motion and judging are pure functions of ctx.time.
  */
 import * as THREE from "three";
-import { automatedSeatIds, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
+import { automatedSeatIds, cpuSkill, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import { registerMinigame } from "../registry";
 import { box as frameBox, frameMinigame } from "../framing";
 import { viewportSize } from "../../ui/viewport";
@@ -690,8 +690,9 @@ const drumSolo: Minigame = {
        strike time per note (fixed order: lanes asc, notes asc) ---- */
     const cpuLanes = automatedSeatIds(ctx.players, st.humanCpu);
     for (const lane of cpuLanes) {
-      const sd = CPU_SD[0] + ctx.rng() * (CPU_SD[1] - CPU_SD[0]);
-      const lapse = CPU_LAPSE[0] + ctx.rng() * (CPU_LAPSE[1] - CPU_LAPSE[0]);
+      const skill = cpuSkill();
+      const sd = (CPU_SD[0] + ctx.rng() * (CPU_SD[1] - CPU_SD[0])) / skill;
+      const lapse = (CPU_LAPSE[0] + ctx.rng() * (CPU_LAPSE[1] - CPU_LAPSE[0])) / skill;
       for (const ring of st.rings) {
         if (ring.lane !== lane) continue;
         if (ctx.rng() < lapse) continue; // zones out: no strike, a miss

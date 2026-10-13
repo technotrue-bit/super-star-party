@@ -16,7 +16,7 @@
  * to this integrator) when the WASM chunk has loaded. Telemetry: window.__POW__.
  */
 import * as THREE from "three";
-import { isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
+import { cpuSkill, isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
 import { registerMinigame } from "../registry";
 import { box as frameBox, frameMinigame } from "../framing";
 import { palette, hex } from "../../config/palette";
@@ -1079,7 +1079,7 @@ const pushOfWar: Minigame = {
     // CPU tappers: each seat gets its own pace for this round.
     for (const p of players) {
       const [lo, hi] = p.side === "solo" ? CPU_SOLO_RATE : CPU_TRIO_RATE;
-      p.baseRate = lo + prng() * (hi - lo);
+      p.baseRate = (lo + prng() * (hi - lo)) * cpuSkill();
       p.rate = p.baseRate;
       p.nextTap = 0.15 + prng() * 0.3;
     }

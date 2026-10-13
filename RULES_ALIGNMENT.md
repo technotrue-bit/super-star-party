@@ -128,6 +128,8 @@ Published names are original to the Fizzy Fairground. The MP7 labels below are d
 
 11. **Learning the game** — **Done**: one plain-language guide (`src/ui/rulesGuide.ts`) is the How to Play screen and the pause menu's rules page, with the board's real space pictures and numbers read from settings, so the two can't drift. One-time beginner tips (`src/ui/tips.ts`) slide in the first time the local player meets something: their first roll, each space type, the shop, the Grand Prize Balloon offer, a Hidden Block, a fork, a group hug, their first item, aiming an orb, minigame time and the last 5 rounds. Tips never block play, hide after 7 s or on a tap, show once per device, are off under autoplay, and can be switched off or reset from the pause menu's rules page.
 
+12. **CPU difficulty** — **Done**: one setting, CPU rivals: Relaxed, Normal or Challenge (`src/config/cpuLevel.ts`), on the Match Settings card (title, select and pause). It is part of the match like the board and coin bonus: the choice is saved for the next match, a match in progress keeps its level, and an online room's host choice travels in the setup so every phone runs the same CPUs. `cpuSkill()` (0.7 / 1 / 1.3) scales the CPU's speed and accuracy in Balloon Pop, Quick-Draw, Push of War, Drum Solo, Coin Cannon and Memory Match by dividing or multiplying their tuning constants, keeping the same random draws. Normal is exactly the tuned game. Board-game CPU decisions (items, stars, shops) are not scaled yet.
+
 These keep the MP7 structure 100% faithful while making the game feel like *our* bright, mischievous carnival.
 
 ## Immediate Next Steps (small pieces)

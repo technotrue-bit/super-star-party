@@ -21,7 +21,7 @@
  * the next step. ctx.rng only.
  */
 import * as THREE from "three";
-import { automatedSeatIds, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
+import { automatedSeatIds, cpuSkill, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import { isAutoplay } from "../../core/debug";
 import { registerMinigame } from "../registry";
 import { box as frameBox, frameMinigame } from "../framing";
@@ -889,7 +889,7 @@ const balloonPop: Minigame = {
     // ---- per-player state (id = playerId = column index) ----
     ctx.players.forEach((p, i) => {
       // CPU accuracy drawn once per player at setup (deterministic order)
-      const accuracy = CPU_ACCURACY + (ctx.rng() - 0.5) * CPU_ACCURACY_SPREAD;
+      const accuracy = Math.min(0.98, (CPU_ACCURACY + (ctx.rng() - 0.5) * CPU_ACCURACY_SPREAD) * cpuSkill());
       st.players.push({
         id: p.id,
         x: L.colX[i],
