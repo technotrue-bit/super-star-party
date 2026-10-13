@@ -39,6 +39,8 @@ try {
         prev = m.turn;
         const c = JSON.parse(JSON.stringify(m));
         delete c.boardId;
+        // A rule setting, not gameplay state: a CPU level leaves Normal's play untouched.
+        delete c.cpuLevel;
         for (const p of c.players) p.controller = p.controller === "cpu" ? "cpu" : "local";
         log.push({ turn: m.turn, hash: fnv(JSON.stringify(c)), coins: m.players.map((p) => p.coins), spaces: m.players.map((p) => p.space), balloon: m.starBalloonPos, boardId: m.boardId ?? null });
       }
