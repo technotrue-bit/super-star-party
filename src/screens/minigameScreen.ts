@@ -524,6 +524,23 @@ function cancelHudCoinsTween(): void {
 
 type MgPhase = "vs-splash" | "countdown" | "practice" | "go" | "play" | "results";
 
+/**
+ * What the `__SSP__.mgProbe()` debug hook reads. Written by the screen,
+ * never read by gameplay. `inputs` is filled by the hidden control_lab game
+ * and emptied at the start of every round.
+ */
+export const mgProbeState: {
+  phase: string;
+  id: string | null;
+  ranking: number[] | null;
+  inputs: string[];
+} = { phase: "", id: null, ranking: null, inputs: [] };
+
+function markPhase(phase: MgPhase): void {
+  document.body.dataset.mgPhase = phase;
+  mgProbeState.phase = phase;
+}
+
 interface MgScreenState {
   _active?: boolean;
   _minigame?: Minigame;
@@ -830,7 +847,7 @@ function beginPractice(self: MgScreenState): void {
   self._practiceT = 0;
   self._practiceKey = null;
   self._practiceKeyT = 0;
-  document.body.dataset.mgPhase = "practice";
+  markPhase("practice");
   snapshotPose(self);
   ensureMarker(self);
   applyTeach(self);
@@ -861,7 +878,7 @@ function beginGo(self: MgScreenState): void {
   self._phase = "go";
   self._goT = 0;
   self._practiceKey = null;
-  document.body.dataset.mgPhase = "go";
+  markPhase("go");
   showGo(self);
 }
 
@@ -956,6 +973,8 @@ const minigameScreenImpl: MgScreenState & Screen = {
     this._presented = false;
     this._finished = false;
     this._coinWinners = undefined;
+    mgProbeState.ranking = null;
+    mgProbeState.inputs.length = 0;
 
     // Robustness: no pending entry (or no live match) -> straight back to
     // the board; the turn loop's resume path continues the round.
@@ -973,6 +992,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
     if (isContactMinigame(entry.id)) void loadRapier();
 
     this._active = true;
+    mgProbeState.id = entry.id;
     var self = this;
     console.log('[minigameScreen] enter, skipPreScreen=', skipPreScreen, 'entry=', entry);
 
@@ -1251,6 +1271,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
             (self as any)._finished = true;
             (self as any)._ranking = ranking;
             (self as any)._coinWinners = coinWinners;
+            mgProbeState.ranking = [...ranking];
           },
           input: {
             pointer: (x, y, down) => {},
@@ -1275,7 +1296,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
         self._vsSkip = false;
         buildVsSplash(self, mg.name, themeColor);
         self._phase = "vs-splash";
-        document.body.dataset.mgPhase = "vs-splash";
+        markPhase("vs-splash");
         self._countdownT = 0;
         self._tick = -1;
       };
@@ -1300,7 +1321,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           this._vsTimer = undefined;
           if (skipPracticeBeat()) {
             this._phase = "countdown";
-            document.body.dataset.mgPhase = "countdown";
+            markPhase("countdown");
             this._countdownT = 0;
             this._tick = -1;
           } else {
@@ -1377,6 +1398,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           if (!this._finished && (this._playT ?? 0) > settings.minigameTimeLimit) {
             this._finished = true;
             this._ranking = forcedRanking(this);
+            mgProbeState.ranking = [...this._ranking];
             this._coinWinners = undefined;
             if (cpuPlayout() && isHost()) {
               publishMinigame({
@@ -1391,7 +1413,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
         }
         if (this._finished && this._ranking) {
           this._phase = "results";
-          document.body.dataset.mgPhase = "results";
+          markPhase("results");
           this._touch?.hide();
           this._resultsT = 0.6; // short winner-reveal beat
         }
@@ -1498,7 +1520,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
 
   _beginPlay() {
     this._phase = "play";
-    document.body.dataset.mgPhase = "play";
+    markPhase("play");
     setPracticeBeat(false);
     this._playT = 0;
     ensureMarker(this);
@@ -1601,6 +1623,8 @@ const minigameScreenImpl: MgScreenState & Screen = {
     this._bursts = undefined;
     this._pose = undefined;
     delete document.body.dataset.mgPhase;
+    mgProbeState.phase = "";
+    mgProbeState.id = null;
     if (this._onPointerDown) window.removeEventListener("pointerdown", this._onPointerDown);
     if (this._onPointerMove) window.removeEventListener("pointermove", this._onPointerMove);
     if (this._onPointerUp) {

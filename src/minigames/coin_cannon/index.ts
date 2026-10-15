@@ -166,7 +166,6 @@ interface State {
   t: number;
   endAt: number; // sim time to finish at (-1 = not yet)
   finished: boolean;
-  shake: number;
   camBase: [number, number, number];
   camLook: [number, number, number];
   cosRng: () => number;
@@ -711,7 +710,6 @@ function resolveCoin(st: State, c: Coin): void {
     if (mine) st.ctx.playSfx("crowd.ooh", { volume: 0.5 });
     burst(st, at, hex(palette.sun), 10, 3.2, 0.5, 7, 0.08);
     burst(st, at, hex(palette.white), 6, 2.6, 0.45, 6, 0.06);
-    if (mine) st.shake = Math.min(0.25, st.shake + 0.1);
   } else {
     st.ctx.playSfx("coin.gain", { volume: mine ? 0.75 : 0.3 });
     burst(st, at, hex(palette.sun), 7, 2.6, 0.45, 7, 0.07);
@@ -883,14 +881,9 @@ function render(st: State, dt: number): void {
   for (const r of st.rollers) r.rotation.y += dt * 4;
   if (st.youFrame) st.youFrame.opacity = 0.35 + 0.6 * pulse;
 
-  st.shake = Math.max(0, st.shake - dt * 0.9);
+  // The camera stays on its framed pose: no shake, no input-driven motion.
   const cam = st.ctx.camera;
-  const a = st.shake;
-  cam.position.set(
-    st.camBase[0] + (a > 0 ? Math.sin(st.t * 57) * a : 0),
-    st.camBase[1] + (a > 0 ? Math.cos(st.t * 43) * a : 0),
-    st.camBase[2] + (a > 0 ? Math.sin(st.t * 61) * a : 0),
-  );
+  cam.position.set(st.camBase[0], st.camBase[1], st.camBase[2]);
   cam.lookAt(st.camLook[0], st.camLook[1], st.camLook[2]);
   updateParticles(st, dt);
 }
@@ -955,7 +948,6 @@ const coinCannon: Minigame = {
       t: 0,
       endAt: -1,
       finished: false,
-      shake: 0,
       camBase: [0, 12, 12],
       camLook: [0, 0, 0],
       cosRng,
