@@ -532,7 +532,7 @@ export async function registerAllMinigames(): Promise<void> {
     if (!howTo) {
       throw new Error(`[minigames] '${mg.id}' is missing howTo (controls and how to win)`);
     }
-    registerMinigame({ id: mg.id, name: mg.name, description: howTo, rules: mg.rules, hidden: mg.hidden });
+    registerMinigame({ id: mg.id, name: mg.name, description: howTo, rules: mg.rules, hidden: mg.hidden, pad: mg.pad });
   }
   assertMinigameHowTos();
 }

@@ -163,7 +163,7 @@ export function buildRulesGuide(): HTMLElement {
     const { el, body } = section("🎮", palette.berry, "MINIGAMES");
     body.append(
       html("p", `When a Minigame Balloon gets popped, everyone plays a minigame at the end of the round.`, "ssp-guide__lead"),
-      html("ul", `<li>Each minigame shows how to play and lets you <b>practice</b> before GO.</li><li>Prizes: <b>1st ${c1}</b>, <b>2nd ${c2}</b>, <b>3rd ${c3}</b> coins (team games: ${c1} each for the winners).</li>`),
+      html("ul", `<li>Each minigame shows how to play and lets you <b>practice</b> before GO.</li><li>Some games use a new control: <b>HOLD</b> a button to charge and let go to throw, <b>SWIPE</b> to flick, tap <b>two buttons</b>, spin a <b>wheel</b>, or <b>draw</b> a path. On a keyboard: Space, arrows, Z and X, Q and E, or the mouse.</li><li>Prizes: <b>1st ${c1}</b>, <b>2nd ${c2}</b>, <b>3rd ${c3}</b> coins (team games: ${c1} each for the winners).</li>`),
       html("p", `Just want to play minigames? Pick <b>MINIGAMES</b> on the title screen.`, "ssp-guide__tip"),
     );
     root.appendChild(el);

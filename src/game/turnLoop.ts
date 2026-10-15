@@ -2733,6 +2733,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     const desc = (mg as { description?: string }).description || getMinigameDescription(mg.id, mg.name);
     const me = match.players.findIndex((p) => p.controller === "local");
     if (me >= 0) bus.emit("tip:moment", { id: "minigame", player: me });
+    // A game with a new control teaches it once, the first time it comes up.
+    if (me >= 0 && mg.pad) bus.emit("tip:moment", { id: `pad-${mg.pad}`, player: me });
     showMinigamePreview(mg.name, desc, mg.rules, coins).then((started) => {
       console.log('[turnLoop] pre-screen resolved started=', started);
       if (!started) {

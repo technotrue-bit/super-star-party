@@ -63,7 +63,7 @@ import {
 } from "../minigames/framework";
 import { minigameDescription, minigameEntry } from "../minigames/registry";
 import { createScoreHud, type ScoreHud } from "../minigames/scoreHud";
-import type { MinigameRules } from "../minigames/framework";
+import type { MinigameInput, MinigamePad, MinigameRules } from "../minigames/framework";
 import { prefersTouchControls } from "../ui/touchPad";
 import { isContactMinigame, loadRapier } from "../physics/contact";
 import { cpuPlayout, onlineMatch, partyAssist, setCpuPlayout } from "../net/mode";
@@ -118,10 +118,82 @@ function injectMinigameStyles(): void {
 .ssp-mg-practice {
   position: fixed; left: 50%; top: calc(14px + env(safe-area-inset-top, 0px));
   transform: translateX(-50%); z-index: 77; pointer-events: none;
-  padding: 6px 14px; border-radius: 999px; white-space: nowrap;
+  padding: 6px 14px; border-radius: 999px; width: max-content; max-width: min(94vw, 460px);
   background: ${palette.sun}; color: ${palette.ink};
   border: 3px solid ${palette.ink}; box-shadow: 0 4px 0 ${palette.ink};
   font-family: Fredoka, sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 0.02em;
+  text-align: center; line-height: 1.25;
+}
+.ssp-mg-practice--done { background: ${palette.mint}; }
+/* A cream fingertip that shows the move on the phone pad. */
+.ssp-mg-demo {
+  position: fixed; z-index: 76; pointer-events: none;
+  width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%;
+  background: ${palette.cream}; border: 4px solid ${palette.ink};
+  box-shadow: 0 3px 0 ${palette.ink}; opacity: 0.92;
+}
+.ssp-mg-demo--hold, .ssp-mg-demo--twin, .ssp-mg-demo--twin2, .ssp-mg-demo--dial { margin: 0; }
+.ssp-mg-demo--hold {
+  right: calc(57px + env(safe-area-inset-right, 0px)); bottom: calc(67px + env(safe-area-inset-bottom, 0px));
+  animation: sspDemoHold 1.8s ease-in-out infinite;
+}
+@keyframes sspDemoHold {
+  0%, 12% { transform: scale(1.25); }
+  20%, 62% { transform: scale(0.85); box-shadow: 0 1px 0 ${palette.ink}; }
+  74%, 100% { transform: scale(1.25) translateY(-10px); }
+}
+.ssp-mg-demo--swipe {
+  left: 50%; top: 62%;
+  animation: sspDemoSwipe 1.4s ease-in infinite;
+}
+@keyframes sspDemoSwipe {
+  0% { transform: translateY(70px); opacity: 0; }
+  15% { opacity: 0.92; }
+  80% { transform: translateY(-190px); opacity: 0.92; }
+  100% { transform: translateY(-230px); opacity: 0; }
+}
+.ssp-mg-demo--twin {
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px)); left: calc(52px + env(safe-area-inset-left, 0px));
+  animation: sspDemoTwinA 1.6s ease-in-out infinite;
+}
+@keyframes sspDemoTwinA {
+  0%, 40% { transform: scale(1.2); opacity: 0.92; }
+  10%, 20% { transform: scale(0.8); }
+  50% { transform: scale(1.2); opacity: 0; }
+  100% { transform: scale(1.2); opacity: 0; }
+}
+.ssp-mg-demo--twin2 {
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px)); right: calc(52px + env(safe-area-inset-right, 0px));
+  animation: sspDemoTwinB 1.6s ease-in-out infinite;
+}
+@keyframes sspDemoTwinB {
+  0%, 50% { transform: scale(1.2); opacity: 0; }
+  60%, 70% { transform: scale(0.8); opacity: 0.92; }
+  80%, 95% { transform: scale(1.2); opacity: 0.92; }
+  100% { transform: scale(1.2); opacity: 0; }
+}
+.ssp-mg-demo--dial {
+  right: calc(80px + env(safe-area-inset-right, 0px)); bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+  animation: sspDemoDial 1.8s linear infinite;
+}
+@keyframes sspDemoDial {
+  from { transform: rotate(0deg) translateY(-62px) rotate(0deg); }
+  to { transform: rotate(360deg) translateY(-62px) rotate(-360deg); }
+}
+.ssp-mg-demo--draw {
+  left: 50%; top: 52%;
+  animation: sspDemoDraw 2s ease-in-out infinite;
+}
+@keyframes sspDemoDraw {
+  0% { transform: translate(-90px, 40px); opacity: 0; }
+  10% { opacity: 0.92; }
+  30% { transform: translate(-40px, -50px); }
+  55% { transform: translate(20px, 30px); }
+  80% { transform: translate(90px, -40px); opacity: 0.92; }
+  100% { transform: translate(100px, -30px); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ssp-mg-demo { animation: none !important; }
 }
 .ssp-seat-tags { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 74; pointer-events: none; }
 .ssp-seat {
@@ -575,6 +647,12 @@ interface MgScreenState {
   _touch?: TouchPad;
   _hud?: ScoreHud;
   _practiceEl?: HTMLDivElement;
+  /** The pad lesson: keys feeding the practice recorder, and what it has seen. */
+  _practiceKeys?: PadKeys;
+  _practiceLearn?: PracticeLearn;
+  /** Seconds since the lesson was learned (undefined while it is not). */
+  _practiceDoneT?: number;
+  _demoEls?: HTMLDivElement[];
   _goalEl?: HTMLDivElement;
   _seatTags?: SeatTags;
   _seatMark?: THREE.Group;
@@ -617,6 +695,72 @@ const GOAL_HOLD = 4.2;
 /** Autoplay, party assist, and online rooms skip the lesson so timing stays put. */
 function skipPracticeBeat(): boolean {
   return isAutoplay() || partyAssist() || onlineMatch() || cpuPlayout();
+}
+
+/** What the player must do once to learn a pad. */
+const PRACTICE_DIAL_RAD = Math.PI;
+/** How long "NICE!" shows once the lesson is learned, in seconds. */
+const PRACTICE_NICE_SEC = 0.5;
+
+/** The practice prompt for a control pad (a tap or steer game keeps the generic one). */
+function padPrompt(mg: Minigame): string | null {
+  switch (mg.pad) {
+    case "hold":
+      return "HOLD to charge, LET GO to throw";
+    case "swipe":
+      return "SWIPE to flick";
+    case "twin":
+      return `Tap ${mg.padLabels?.a ?? "A"} and ${mg.padLabels?.b ?? "B"}`;
+    case "dial":
+      return "Spin the WHEEL";
+    case "draw":
+      return "DRAW a path";
+    default:
+      return null;
+  }
+}
+
+/** Pad calls seen in practice. A pad is learned when its action is done once. */
+interface PracticeLearn {
+  calls: Required<Pick<MinigameInput, "hold" | "swipe" | "button" | "dial" | "draw">>;
+}
+
+function createPracticeLearn(pad: MinigamePad, onLearned: () => void): PracticeLearn {
+  let learned = false;
+  const learn = (): void => {
+    if (learned) return;
+    learned = true;
+    onLearned();
+  };
+  const twin = { a: false, b: false };
+  let turned = 0;
+  return {
+    calls: {
+      // Press and let go.
+      hold: (down) => {
+        if (pad === "hold" && !down) learn();
+      },
+      swipe: () => {
+        if (pad === "swipe") learn();
+      },
+      // Both buttons, each pressed once, in either order.
+      button: (which, down) => {
+        if (pad !== "twin" || !down) return;
+        twin[which] = true;
+        if (twin.a && twin.b) learn();
+      },
+      // Half a turn either way.
+      dial: (deltaRad) => {
+        if (pad !== "dial") return;
+        turned += Math.abs(deltaRad);
+        if (turned >= PRACTICE_DIAL_RAD) learn();
+      },
+      // One stroke, lifted.
+      draw: (phase) => {
+        if (pad === "draw" && phase === "end") learn();
+      },
+    },
+  };
 }
 
 function teachKeys(mg: Minigame): string {
@@ -855,11 +999,23 @@ function beginPractice(self: MgScreenState): void {
   self._practiceT = 0;
   self._practiceKey = null;
   self._practiceKeyT = 0;
+  self._practiceDoneT = undefined;
+  self._practiceKeys = undefined;
+  self._practiceLearn = undefined;
   markPhase("practice");
   snapshotPose(self);
   ensureMarker(self);
   applyTeach(self);
   self._touch?.show();
+  const pad = self._minigame?.pad;
+  if (pad) {
+    // A pad game has no TAP to try. Its own keys feed a recorder here, never the
+    // game, and doing the action once ends the beat.
+    const learn = createPracticeLearn(pad, () => learnedPractice(self));
+    self._practiceLearn = learn;
+    self._practiceKeys = createPadKeys(pad, () => learn.calls, undefined, self._minigame?.holdMax);
+    showDemo(self, pad);
+  }
   // A visible "practice" label with its own countdown, so GO never comes
   // out of nowhere.
   const badge = document.createElement("div");
@@ -874,16 +1030,59 @@ function tickPracticeBadge(self: MgScreenState): void {
   const el = self._practiceEl;
   if (!el) return;
   const left = Math.max(1, Math.ceil(PRACTICE_SEC - (self._practiceT ?? 0)));
-  const text = `PRACTICE! Try the controls · ${left}`;
+  const prompt = self._minigame ? padPrompt(self._minigame) : null;
+  const text = self._practiceDoneT !== undefined
+    ? "NICE! Got it"
+    : `PRACTICE! ${prompt ?? "Try the controls"} · ${left}`;
   if (el.textContent !== text) el.textContent = text;
+}
+
+/** A fingertip that plays the move on the phone pad. Touch phones only. */
+function showDemo(self: MgScreenState, pad: MinigamePad): void {
+  hideDemo(self);
+  if (!prefersTouchControls()) return;
+  const kinds = pad === "twin" ? ["twin", "twin2"] : [pad];
+  self._demoEls = kinds.map((kind) => {
+    const el = document.createElement("div");
+    el.className = `ssp-mg-demo ssp-mg-demo--${kind}`;
+    el.dataset.mgDemo = pad;
+    document.body.appendChild(el);
+    return el;
+  });
+}
+
+function hideDemo(self: MgScreenState): void {
+  for (const el of self._demoEls ?? []) el.remove();
+  self._demoEls = undefined;
+}
+
+/** The player did the action once: say so, then move on to GO after a beat. */
+function learnedPractice(self: MgScreenState): void {
+  if (self._phase !== "practice" || self._practiceDoneT !== undefined) return;
+  self._practiceDoneT = 0;
+  hideDemo(self);
+  const badge = self._practiceEl;
+  if (badge) {
+    badge.dataset.mgPracticeDone = "1";
+    badge.classList.add("ssp-mg-practice--done");
+  }
+  tickPracticeBadge(self);
+  spawnBurst(self);
+  localSeat(self).char?.anim.jump();
 }
 
 function beginGo(self: MgScreenState): void {
   setPracticeBeat(false);
+  hideDemo(self);
   self._practiceEl?.remove();
   self._practiceEl = undefined;
   restorePose(self);
   self._phase = "go";
+  // After the phase moves on, so a key still down ends quietly instead of "learning".
+  self._practiceKeys?.release();
+  self._practiceKeys = undefined;
+  self._practiceLearn = undefined;
+  self._practiceDoneT = undefined;
   self._goT = 0;
   self._practiceKey = null;
   markPhase("go");
@@ -1155,6 +1354,11 @@ const minigameScreenImpl: MgScreenState & Screen = {
           const [x, y] = px(e);
           if (self._minigame?.pad === "draw") self._padKeys?.stroke("start", x, y);
           else self._ctx?.input.pointer(x, y, true);
+        } else if (self._phase === "practice") {
+          if (self._minigame?.pad === "draw") {
+            const [x, y] = px(e);
+            self._practiceKeys?.stroke("start", x, y);
+          }
         } else if (self._phase === "vs-splash") {
           self._vsSkip = true;
         }
@@ -1167,6 +1371,9 @@ const minigameScreenImpl: MgScreenState & Screen = {
           const [x, y] = px(e);
           if (self._minigame?.pad === "draw") self._padKeys?.stroke("move", x, y);
           else self._ctx?.input.drag?.(x, y);
+        } else if (self._phase === "practice" && (e.buttons & 1) && self._minigame?.pad === "draw") {
+          const [x, y] = px(e);
+          self._practiceKeys?.stroke("move", x, y);
         }
       };
       self._onPointerUp = (e) => {
@@ -1175,6 +1382,9 @@ const minigameScreenImpl: MgScreenState & Screen = {
           const [x, y] = px(e);
           if (self._minigame?.pad === "draw") self._padKeys?.stroke("end", x, y);
           else self._ctx?.input.pointer(x, y, false);
+        } else if (self._phase === "practice" && self._minigame?.pad === "draw") {
+          const [x, y] = px(e);
+          self._practiceKeys?.stroke("end", x, y);
         }
       };
 
@@ -1188,6 +1398,16 @@ const minigameScreenImpl: MgScreenState & Screen = {
           if (self._padKeys.keyDown(e.key, e.repeat, e.timeStamp)) e.preventDefault();
           const steerAction = self._minigame?.steer ? keyAction(e.key) : null;
           if (steerAction && steerAction !== "confirm") self._ctx.input.key(steerAction);
+          return;
+        }
+        // The lesson for a control pad reads the same keys as play, but into the recorder.
+        if (self._phase === "practice" && self._practiceKeys?.keyDown(e.key, e.repeat, e.timeStamp)) {
+          e.preventDefault();
+          const dir = self._minigame?.steer ? keyDirFrom(keyAction(e.key) ?? "") : null;
+          if (dir) {
+            self._practiceKey = dir;
+            self._practiceKeyT = 0;
+          }
           return;
         }
         const action = keyAction(e.key);
@@ -1220,8 +1440,12 @@ const minigameScreenImpl: MgScreenState & Screen = {
       // Space comes up, or when alt-tab swallows the keyup.
       self._onKeyUp = (e: KeyboardEvent) => {
         if (self._padKeys?.keyUp(e.key, e.timeStamp) && self._phase === "play") e.preventDefault();
+        if (self._practiceKeys?.keyUp(e.key, e.timeStamp) && self._phase === "practice") e.preventDefault();
       };
-      self._onBlur = () => self._padKeys?.release();
+      self._onBlur = () => {
+        self._padKeys?.release();
+        self._practiceKeys?.release();
+      };
       window.addEventListener("keyup", self._onKeyUp);
       window.addEventListener("blur", self._onBlur);
 
@@ -1254,24 +1478,46 @@ const minigameScreenImpl: MgScreenState & Screen = {
         onPad: (() => {
           const open = { hold: false, a: false, b: false, draw: false };
           const playing = (): boolean => self._phase === "play" && !!self._ctx;
+          // In the practice beat the same calls feed the lesson recorder, never the game.
+          const teaching = (): PracticeLearn["calls"] | null =>
+            self._phase === "practice" ? self._practiceLearn?.calls ?? null : null;
           return {
             hold: (down, heldSec) => {
+              const lesson = teaching();
+              if (lesson) {
+                lesson.hold(down, heldSec);
+                return;
+              }
               if (down ? !playing() : !open.hold) return;
               open.hold = down;
               self._ctx?.input.hold?.(down, heldSec);
             },
             swipe: (dx, dy, power) => {
-              if (playing()) self._ctx?.input.swipe?.(dx, dy, power);
+              const lesson = teaching();
+              if (lesson) lesson.swipe(dx, dy, power);
+              else if (playing()) self._ctx?.input.swipe?.(dx, dy, power);
             },
             button: (which, down) => {
+              const lesson = teaching();
+              if (lesson) {
+                lesson.button(which, down);
+                return;
+              }
               if (down ? !playing() : !open[which]) return;
               open[which] = down;
               self._ctx?.input.button?.(which, down);
             },
             dial: (deltaRad) => {
-              if (playing()) self._ctx?.input.dial?.(deltaRad);
+              const lesson = teaching();
+              if (lesson) lesson.dial(deltaRad);
+              else if (playing()) self._ctx?.input.dial?.(deltaRad);
             },
             draw: (phase, x, y) => {
+              const lesson = teaching();
+              if (lesson) {
+                lesson.draw(phase, x, y);
+                return;
+              }
               if (phase === "start" ? !playing() : !open.draw) return;
               open.draw = phase !== "end";
               self._padKeys?.stroke(phase, x, y);
@@ -1397,8 +1643,10 @@ const minigameScreenImpl: MgScreenState & Screen = {
         this._practiceT = (this._practiceT ?? 0) + dt;
         tickPracticeMove(this, dt);
         tickTeach(this, dt);
+        this._practiceKeys?.tick(dt);
+        if (this._practiceDoneT !== undefined) this._practiceDoneT += dt;
         tickPracticeBadge(this);
-        if ((this._practiceT ?? 0) >= PRACTICE_SEC) beginGo(this);
+        if ((this._practiceT ?? 0) >= PRACTICE_SEC || (this._practiceDoneT ?? 0) >= PRACTICE_NICE_SEC) beginGo(this);
         break;
       }
       case "go": {
@@ -1681,6 +1929,11 @@ const minigameScreenImpl: MgScreenState & Screen = {
     this._hud = undefined;
     this._practiceEl?.remove();
     this._practiceEl = undefined;
+    this._practiceKeys?.release();
+    this._practiceKeys = undefined;
+    this._practiceLearn = undefined;
+    this._practiceDoneT = undefined;
+    hideDemo(this);
     this._seatTags?.destroy();
     this._seatTags = undefined;
     this._seatMark = undefined;

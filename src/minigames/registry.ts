@@ -38,6 +38,8 @@ export interface MinigameEntry {
   rules?: import("./framework").MinigameRules;
   /** Kept out of the free-play menu and the roulette (copied from the module). */
   hidden?: boolean;
+  /** The control pad the game uses, if any (copied from the module; drives the control tips). */
+  pad?: import("./framework").MinigamePad;
 }
 
 const REGISTRY: MinigameEntry[] = [];
@@ -65,6 +67,7 @@ export function registerMinigame(entry: MinigameEntry): void {
     if (entry.description) existing.description = entry.description;
     if (entry.rules) existing.rules = entry.rules;
     if (entry.hidden !== undefined) existing.hidden = entry.hidden;
+    if (entry.pad !== undefined) existing.pad = entry.pad;
     return;
   }
   REGISTRY.push({ ...entry, pack });

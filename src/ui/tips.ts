@@ -32,7 +32,12 @@ export type TipId =
   | "item-bar"
   | "orb-aim"
   | "last5"
-  | "minigame";
+  | "minigame"
+  | "pad-hold"
+  | "pad-swipe"
+  | "pad-twin"
+  | "pad-dial"
+  | "pad-draw";
 
 interface Tip {
   icon: string;
@@ -75,6 +80,16 @@ function tipText(id: TipId): Tip {
       return { icon: "⏰", title: "Last 5 rounds!", text: "Time is running out. Grab stars now! Last place gets a free item each turn." };
     case "minigame":
       return { icon: "🎮", title: "Minigame time!", text: "Read the card, try the controls during PRACTICE, then go! 1st, 2nd and 3rd all win coins." };
+    case "pad-hold":
+      return { icon: "👇", title: "HOLD to charge", text: "Press and hold the big button to fill the ring, then LET GO to throw. Keyboard: hold Space." };
+    case "pad-swipe":
+      return { icon: "👆", title: "SWIPE to flick", text: "Flick your finger across the screen. A faster swipe is a harder throw. Keyboard: an arrow aims, hold Space for power, let go." };
+    case "pad-twin":
+      return { icon: "🔘", title: "Two buttons", text: "Tap the two buttons, one under each thumb. Keyboard: Z and X." };
+    case "pad-dial":
+      return { icon: "🎡", title: "Spin the WHEEL", text: "Drag your thumb around the wheel. Keep it turning! Keyboard: Q and E." };
+    case "pad-draw":
+      return { icon: "✏️", title: "DRAW a path", text: "Drag your finger to draw. Lift to finish. Keyboard: drag the mouse, or hold Space and use the arrows." };
   }
 }
 
