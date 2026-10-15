@@ -16,7 +16,7 @@
  *   node tools/probe-fork-walk.mjs [--ci]
  *   SSP_URL (default http://127.0.0.1:5177)   SSP_SHOTS=<dir> (ignored with --ci)
  *
- * Exits 1 on any FAIL or page error. --ci drops the EXACT follow-up, MULTI and shots, self-fails > 90 s.
+ * Exits 1 on any FAIL or page error. --ci drops the EXACT follow-up, MULTI and shots, self-fails > 240 s.
  */
 import { chromium } from "@playwright/test";
 import fs from "node:fs";
@@ -39,7 +39,9 @@ function check(name, ok, detail = "") {
 const note = (m) => console.log(`NOTE ${m}`);
 
 {
-  const cap = CI ? 90 : 240;
+  // Shared CI runners and software GL run this 2-3x slower than a desktop; the cases
+  // wait on turns to come round, so a tight cap fails slow machines, not the game.
+  const cap = CI ? 240 : 360;
   setTimeout(() => {
     console.log(`FAIL budget  run exceeded ${cap} s (t+${secs()}s)`);
     process.exit(1);
@@ -172,7 +174,7 @@ async function forceRoll2(page, seat, space, a, b) {
   return press();
 }
 /** Queue a grant for the next human turn:start, wait for the item button, return the seat (or -1). */
-async function grantWait(page, tg, items, key, ms = 40000) {
+async function grantWait(page, tg, items, key, ms = 120000) {
   // A human turn that already began has missed its announce beat: spend it on a 1-pip roll so the
   // grant lands on the next human turn instead of waiting behind an idle seat.
   const e0 = await last(page);
@@ -256,7 +258,7 @@ async function driveWalk(page, seat, picks, shotName, ms = 30000) {
   }
   return -1;
 }
-async function waitCpuDone(page, ms = 60000) {
+async function waitCpuDone(page, ms = 120000) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
     const r = await page.evaluate(() => {
@@ -471,7 +473,7 @@ function forkScenarios(board, G, B) {
       // placed on the fork during its announce beat, so no seat rotation is waited for.
       const tg = `${board}-exact-fork`;
       await page.evaluate(([t, p]) => window.__GRANTQ.push({ tag: t, kind: "human", place: p }), [tg, f]);
-      const placed = await page.waitForFunction((t) => !!window.__GRANTED[t], tg, { timeout: 40000, polling: 60 }).then(() => true, () => false);
+      const placed = await page.waitForFunction((t) => !!window.__GRANTED[t], tg, { timeout: 120000, polling: 60 }).then(() => true, () => false);
       const seat2 = placed ? await waitHumanDice(page, 20000).catch(() => -1) : -1;
       if (seat2 < 0) return check(tag("EXACT next turn lane popup"), false, `placed ${placed}, no human dice phase within 20 s`);
       const here = (await last(page)).sp;
@@ -622,10 +624,10 @@ function itemScenarios(board, G, B) {
   const cpuItem = (name, key, verify) => async (page) => {
     const tg = `${board}-${name}`;
     await page.evaluate(([t, k]) => window.__GRANTQ.push({ tag: t, kind: "cpu", items: [k] }), [tg, key]);
-    const g = await page.waitForFunction((t) => window.__GRANTED[t] ?? null, tg, { timeout: 60000, polling: 60 }).then((h) => h.jsonValue(), () => null);
+    const g = await page.waitForFunction((t) => window.__GRANTED[t] ?? null, tg, { timeout: 150000, polling: 60 }).then((h) => h.jsonValue(), () => null);
     if (!g) return check(tag(name), false, `cpu grant never applied ${JSON.stringify(await page.evaluate(() => ({ q: window.__GRANTQ, g: window.__GRANTED, last: window.__LAST, ts: window.__SSP__.phaseLog().filter((x) => x.event === "turn:start").length })))}`);
     if (g.before.length) return note(`${tag(name)} cpu bag was not empty (${g.before}); item pick is random, skipped`);
-    const done = await page.waitForFunction(([s, a]) => window.__LAST.f > a + 5 && window.__LAST.cur !== s, [g.cur, g.f], { timeout: 45000, polling: 60 }).then(() => true, () => false);
+    const done = await page.waitForFunction(([s, a]) => window.__LAST.f > a + 5 && window.__LAST.cur !== s, [g.cur, g.f], { timeout: 90000, polling: 60 }).then(() => true, () => false);
     await sleep(150);
     const { all, segs } = await segments(page, g.f, g.cur);
     const next = await last(page);
@@ -709,7 +711,7 @@ try {
 }
 for (const e of errors) check("pageerror", false, e);
 const total = (Date.now() - t0) / 1000;
-if (total > 60) note(`slow: ${total.toFixed(0)} s (target < 60 s)`);
+if (total > 120) note(`slow: ${total.toFixed(0)} s (target < 120 s)`);
 console.log(`== FORK section total t+${total.toFixed(0)}s`);
 console.log(fails ? `FAILED (${fails})` : "ALL PASS");
 process.exit(fails ? 1 : 0);
