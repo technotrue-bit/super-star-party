@@ -1705,7 +1705,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           this._seatTags?.tick();
           // Safety net: a minigame that never calls finish must not hang
           // the match. Deterministic fallback ranking (player id order).
-          if (!this._finished && (this._playT ?? 0) > settings.minigameTimeLimit) {
+          if (!this._finished && (this._playT ?? 0) > (this._minigame?.timeLimit ?? settings.minigameTimeLimit)) {
             this._finished = true;
             this._ranking = forcedRanking(this);
             mgProbeState.ranking = [...this._ranking];

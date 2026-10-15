@@ -9,6 +9,7 @@
 //
 //   node tools/capture-minigame-clips.mjs            (every minigame)
 //   SSP_ONLY=coin_grab,drum_solo node tools/capture-minigame-clips.mjs
+//   node tools/capture-minigame-clips.mjs slingshot_summit        (ids as arguments)
 //
 // SSP_URL picks the dev server (default http://127.0.0.1:5177).
 import { chromium } from "@playwright/test";
@@ -36,8 +37,9 @@ const IDS = [
   "pipe_puzzle",
   "push_of_war",
   "quick_draw",
+  "slingshot_summit",
 ];
-const only = process.env.SSP_ONLY ? process.env.SSP_ONLY.split(",") : null;
+const only = process.env.SSP_ONLY ? process.env.SSP_ONLY.split(",") : process.argv.length > 2 ? process.argv.slice(2) : null;
 
 mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch({ args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });

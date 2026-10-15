@@ -424,6 +424,12 @@ export interface Minigame {
   /** Longest useful hold for the `hold` pad, in seconds. Default 1.5. */
   holdMax?: number;
   /**
+   * Safety net: the screen force-finishes a round that is still running after
+   * this many seconds of play. Default `settings.minigameTimeLimit` (30 s).
+   * A game that runs longer sets it a little past its own clock.
+   */
+  timeLimit?: number;
+  /**
    * Kept out of the MINIGAMES menu and the roulette. Reachable only by
    * `?minigame=<id>` (test rigs such as control_lab).
    */

@@ -68,6 +68,7 @@ export const PACK_OF_MINIGAME: Record<string, MinigamePackId> = {
   cake_dash: "bigtop",
   balloon_pop: "bigtop",
   coin_grab: "bigtop",
+  slingshot_summit: "midway",
 };
 
 export const LS_MINIGAME_PACKS = "ssp.minigamePacks";
