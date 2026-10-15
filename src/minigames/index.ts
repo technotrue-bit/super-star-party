@@ -31,6 +31,7 @@ export const MINIGAME_MODULES: Array<() => Promise<Minigame>> = [
   // ---- Fifty: Wave 1 ----
   () => import("./slingshot_summit/index").then((m) => m.loadSlingshotSummit()),
   () => import("./pie_flick/index").then((m) => m.loadPieFlick()),
+  () => import("./row_rumble/index").then((m) => m.loadRowRumble()),
   // ---- Hidden test rigs (never in the menu or the roulette) ----
   () => import("./control_lab/index").then((m) => m.loadControlLab()),
 ];

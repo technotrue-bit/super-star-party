@@ -39,6 +39,7 @@ const IDS = [
   "quick_draw",
   "slingshot_summit",
   "pie_flick",
+  "row_rumble",
 ];
 const only = process.env.SSP_ONLY ? process.env.SSP_ONLY.split(",") : process.argv.length > 2 ? process.argv.slice(2) : null;
 
