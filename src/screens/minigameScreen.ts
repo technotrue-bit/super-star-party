@@ -671,6 +671,9 @@ function applyTeach(self: MgScreenState): void {
     repeat: mg.tapRepeat === true,
     grid: mg.steerGrid === true,
     touchVerb: mg.tapOnTouch !== false,
+    pad: mg.pad,
+    padLabels: mg.padLabels,
+    holdMax: mg.holdMax,
   });
 }
 
@@ -1244,6 +1247,37 @@ const minigameScreenImpl: MgScreenState & Screen = {
         onAction: () => {
           teachTap(self);
         },
+        // The phone pads. A press only counts in play; its release always gets
+        // through, so a finger that lifts after the round moved on cannot leave
+        // a hold or a button stuck in the game. The window handlers skip
+        // everything on .ssp-touch, so nothing here fires twice.
+        onPad: (() => {
+          const open = { hold: false, a: false, b: false, draw: false };
+          const playing = (): boolean => self._phase === "play" && !!self._ctx;
+          return {
+            hold: (down, heldSec) => {
+              if (down ? !playing() : !open.hold) return;
+              open.hold = down;
+              self._ctx?.input.hold?.(down, heldSec);
+            },
+            swipe: (dx, dy, power) => {
+              if (playing()) self._ctx?.input.swipe?.(dx, dy, power);
+            },
+            button: (which, down) => {
+              if (down ? !playing() : !open[which]) return;
+              open[which] = down;
+              self._ctx?.input.button?.(which, down);
+            },
+            dial: (deltaRad) => {
+              if (playing()) self._ctx?.input.dial?.(deltaRad);
+            },
+            draw: (phase, x, y) => {
+              if (phase === "start" ? !playing() : !open.draw) return;
+              open.draw = phase !== "end";
+              self._padKeys?.stroke(phase, x, y);
+            },
+          };
+        })(),
       });
 
       // ---- wire minigame and start (VS splash etc) ----

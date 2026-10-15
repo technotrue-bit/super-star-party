@@ -3,9 +3,9 @@
  *
  * Not a game: it never shows in the MINIGAMES menu or the roulette and is
  * reached only with `?minigame=control_lab&pad=<hold|swipe|twin|dial|draw>`
- * (default hold). It records every input call as a short string into
- * `__SSP__.mgProbe().inputs`, so probes can check the keyboard and touch
- * mappings without a real game in the way. After 30 s it finishes with the
+ * (default hold); `&steer=1` also keeps the MOVE stick. It records every
+ * input call as a short string into `__SSP__.mgProbe().inputs`, so probes can
+ * check the keyboard and touch mappings without a real game in the way. After 30 s it finishes with the
  * ranking [0, 1, 2, 3].
  *
  *   hold:1:0.00   hold:0:0.80      press, release (seconds held)
@@ -19,8 +19,10 @@
  *
  * Determinism: draws no rng; the clock is the dt it is handed.
  */
+import * as THREE from "three";
 import type { Minigame, MinigameContext, MinigamePad } from "../framework";
 import { registerMinigame } from "../registry";
+import { box as frameBox, frameMinigame } from "../framing";
 import { mgProbeState } from "../../screens/minigameScreen";
 
 const LAB_SECONDS = 30;
@@ -35,6 +37,11 @@ interface LabTelemetry {
 function padFromUrl(): MinigamePad {
   const asked = new URLSearchParams(window.location.search).get("pad");
   return PADS.find((p) => p === asked) ?? "hold";
+}
+
+/** `&steer=1` keeps the MOVE stick next to the pad, for the multi-finger cases. */
+function steerFromUrl(): boolean {
+  return new URLSearchParams(window.location.search).get("steer") === "1";
 }
 
 function createControlLab(): Minigame {
@@ -57,7 +64,7 @@ function createControlLab(): Minigame {
     howTo: "A test rig for the controls. It records every press, swipe, turn and stroke.",
     goal: "Try the controls",
     tap: null,
-    steer: false,
+    steer: steerFromUrl(),
     rules: {
       format: "ffa",
       length: "30 seconds",
@@ -68,6 +75,12 @@ function createControlLab(): Minigame {
 
     setup(ctx: MinigameContext): void {
       ctxRef = ctx;
+      // A fixed camera that refits on rotation, so probes can see a reframe.
+      frameMinigame(ctx.camera, {
+        box: frameBox([-6, 0, -4], [6, 3, 6.5]),
+        dir: new THREE.Vector3(0, 6, 10),
+        fov: 50,
+      });
       time = 0;
       done = false;
       const telemetry: LabTelemetry = { dialSum: 0 };
