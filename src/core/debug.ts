@@ -12,6 +12,7 @@ import { screens } from "../screens/screenManager";
 import { world } from "../main";
 import { openShop } from "../screens/shopScreen";
 import { resetWipeRotation } from "../ui/transitions";
+import { screenLockInstalled } from "../ui/screenLock";
 import { awardMinigameResult, minigameCoinAward, minigamePayout, playerCoins, type MinigameAward } from "../game/economy";
 import {
   buyItem,
@@ -124,6 +125,8 @@ export interface SSPDebug {
   autoplay(on: boolean): void;
   rollDice(face: number): void;
   seed(n: number): void;
+  /** True once the page screen lock (no pinch, double-tap zoom or scroll) is installed. */
+  screenLockInstalled(): boolean;
   reset(): void;
   audioLevels(): { rms: number; peak: number };
   /**
@@ -511,6 +514,9 @@ export function installDebugAPI(): void {
     rollDice(face: number) {
       // Wave 2: route to the turn-loop's forced-dice hook.
       (window as unknown as { __forcedDice?: number }).__forcedDice = face;
+    },
+    screenLockInstalled() {
+      return screenLockInstalled();
     },
     seed(n: number) {
       rng.reset(n);

@@ -14,6 +14,7 @@ import { installDebugAPI, tickFrame, tickRender, instrumentRenderer, autoplayTic
 import { bus } from "./core/events";
 import { audio, unlock } from "./audio/audioEngine";
 import { fitAppToViewport, onViewportChange, viewportSize } from "./ui/viewport";
+import { installScreenLock } from "./ui/screenLock";
 import { installPostFx, renderPostFx, resizePostFx } from "./render/postFx";
 
 export const world = {
@@ -24,6 +25,7 @@ export const world = {
 };
 
 function boot(): void {
+  installScreenLock();
   const container = document.getElementById("app")!;
 
   const renderer = new THREE.WebGLRenderer({
