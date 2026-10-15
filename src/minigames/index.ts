@@ -30,6 +30,7 @@ export const MINIGAME_MODULES: Array<() => Promise<Minigame>> = [
   () => import("./quick_draw/index").then((m) => m.loadQuickDraw()),
   // ---- Fifty: Wave 1 ----
   () => import("./slingshot_summit/index").then((m) => m.loadSlingshotSummit()),
+  () => import("./pie_flick/index").then((m) => m.loadPieFlick()),
   // ---- Hidden test rigs (never in the menu or the roulette) ----
   () => import("./control_lab/index").then((m) => m.loadControlLab()),
 ];
