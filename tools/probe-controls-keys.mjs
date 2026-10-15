@@ -94,6 +94,18 @@ async function check(pad, page) {
     await page.waitForTimeout(150);
     const c = (await inputs(page)).slice(2);
     if (c.length !== 2) return `keyup after blur added input: ${JSON.stringify(c)}`;
+    // A long hold is reported at the holdMax cap (default 1.5 s), not the raw time.
+    const before = (await inputs(page)).length;
+    await page.keyboard.down("Space");
+    await page.waitForTimeout(2500);
+    await page.keyboard.up("Space");
+    await page.waitForTimeout(150);
+    const d = (await inputs(page)).slice(before);
+    const dm = d.length === 2 && /^hold:0:(\d+\.\d\d)$/.exec(d[1]);
+    if (!dm) return `long hold gave ${JSON.stringify(d)}`;
+    const longReal = await heldFor(page, " ");
+    if (longReal < 2) return `rig held Space only ${longReal.toFixed(2)} s, cannot test the cap`;
+    if (Number(dm[1]) > 1.5) return `Space held ${longReal.toFixed(2)} s reported ${dm[1]}, over the 1.50 cap`;
     return null;
   }
   if (pad === "swipe") {

@@ -314,7 +314,8 @@ export interface MinigameInput {
   stick?(x: number, y: number): void;
   /**
    * Hold-and-release pad (`pad: "hold"`). down=true when the press starts
-   * (heldSec 0), down=false when it ends (heldSec = how long it was held).
+   * (heldSec 0), down=false when it ends (heldSec = how long it was held,
+   * capped at the game's holdMax, default 1.5 s).
    * A lost window or a cancelled touch also ends the hold with down=false.
    */
   hold?(down: boolean, heldSec: number): void;

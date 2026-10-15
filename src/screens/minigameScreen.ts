@@ -1263,7 +1263,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           return;
         }
         self._minigame = mg;
-        self._padKeys = mg.pad ? createPadKeys(mg.pad, () => self._ctx?.input) : undefined;
+        self._padKeys = mg.pad ? createPadKeys(mg.pad, () => self._ctx?.input, undefined, mg.holdMax) : undefined;
 
         const ctx: MinigameContext = {
           players: match.players.map(p => ({

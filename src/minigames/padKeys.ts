@@ -5,7 +5,8 @@
  * feeds it key presses, window blur, and a per-frame tick. It turns them
  * into the pad calls on `MinigameInput` (hold, swipe, button, dial, draw).
  *
- *   hold   Space down / up. A blur ends the hold, so it never charges forever.
+ *   hold   Space down / up. The release reports heldSec capped at holdMax.
+ *          A blur ends the hold, so it never charges forever.
  *   swipe  an arrow (or WASD) picks the direction, Space held is the power
  *          (held seconds / 1 s, clamped 0..1), release throws it.
  *   twin   Z or Left = A, X or Right = B.
@@ -21,6 +22,8 @@
  */
 import type { MinigameInput, MinigamePad } from "./framework";
 
+/** Longest hold the `hold` pad reports, in seconds, when a game sets no holdMax. */
+export const DEFAULT_HOLD_MAX = 1.5;
 /** Keyboard dial speed, in full turns per second. */
 export const DIAL_TURNS_PER_SEC = 1.5;
 /** A swipe on the keyboard reaches full power after this many seconds of Space. */
@@ -76,6 +79,7 @@ export function createPadKeys(
   pad: MinigamePad,
   input: () => PadCalls | undefined,
   now: () => number = () => performance.now(),
+  holdMax: number = DEFAULT_HOLD_MAX,
 ): PadKeys {
   /** Space (or Enter) is down since this time, else null. */
   let spaceAt: number | null = null;
@@ -128,7 +132,7 @@ export function createPadKeys(
     if (spaceAt === null) return;
     const heldSec = Math.max(0, (at - spaceAt) / 1000);
     spaceAt = null;
-    if (pad === "hold") input()?.hold?.(false, heldSec);
+    if (pad === "hold") input()?.hold?.(false, Math.min(heldSec, holdMax));
     else if (pad === "swipe") input()?.swipe?.(aim.x, aim.y, clamp01(heldSec / SWIPE_FULL_HOLD));
     else if (pad === "draw" && penDown) {
       penDown = false;
