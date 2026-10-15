@@ -840,6 +840,7 @@ function publish(st: State): void {
     finished: st.finished,
     tFinish: st.finished ? st.resultAt : null,
     scores: st.lanes.map((l) => l.points),
+    aims: st.lanes.map((l) => Math.round(l.aim * 1000) / 1000),
     fives: st.lanes.map((l) => l.fives),
     threes: st.lanes.map((l) => l.threes),
     ones: st.lanes.map((l) => l.ones),
@@ -959,6 +960,9 @@ const slingshotSummit: Minigame = {
     ctx.input.stick = (x) => {
       const human = st.human;
       if (!human) return;
+      // The phone stick also sends left/right key() calls every frame it is pushed. Those are
+      // not arrow presses: once the stick is live it owns the aim, and the key fallback resets.
+      human.aimKey = 0;
       const m = Math.abs(x);
       human.aimStick = m < STICK_DEAD ? 0 : Math.sign(x) * Math.min(1, (m - STICK_DEAD) / (1 - STICK_DEAD));
     };

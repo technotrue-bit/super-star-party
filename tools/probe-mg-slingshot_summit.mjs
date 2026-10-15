@@ -99,7 +99,71 @@ async function humanShot() {
   return { tel, errors };
 }
 
+/**
+ * A phone round: the real touch stick (CDP touch events on .ssp-stick). The pad also sends
+ * left/right key() calls every frame while the stick is pushed, which must not leave the aim
+ * stuck at an extreme once the thumb eases off or lifts.
+ */
+async function touchAim() {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 1 });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e).slice(0, 200)));
+  const cdp = await ctx.newCDPSession(page);
+  await page.goto(`${BASE}/?seed=7&audio=0&minigame=${ID}`, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await page.waitForFunction(() => !!window.__SSP__, null, { timeout: 20000 });
+  await page.evaluate(() => {
+    window.__SSP__.seed(7);
+    window.__SSP__.startMatch(["pip", "bounce", "glimmer", "tusk"], ["Pip", "Bounce", "Glimmer", "Tusk"]);
+  });
+  for (let i = 0; i < 100; i++) {
+    if (await page.evaluate((id) => (window.__SSP__.state().minigameRules?.catalog ?? []).some((m) => m.id === id), ID)) break;
+    await page.waitForTimeout(300);
+  }
+  await page.evaluate(() => window.__SSP__.goto("minigame"));
+  let phase = "";
+  for (let i = 0; i < 400 && phase !== "play"; i++) {
+    phase = await page.evaluate(() => window.__SSP__.mgProbe().phase);
+    if (phase === "play") break;
+    if (phase === "") await page.getByText("START MINI GAME").click({ timeout: 300 }).catch(() => {});
+    await page.evaluate(() => window.__SSP__.advance(30));
+    await page.waitForTimeout(30);
+  }
+  if (phase !== "play") fail(`touch: never reached play (phase=${phase || "none"})`);
+  const stick = await page.evaluate(() => {
+    const r = document.querySelector(".ssp-touch .ssp-stick")?.getBoundingClientRect();
+    return r && r.width ? { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width } : null;
+  });
+  if (!stick) fail("touch: no MOVE stick on a steer + hold game");
+  const aim = () => page.evaluate(() => window.__SLINGSHOT__.aims[0]);
+  const touch = (type, x, y) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y, id: 1 }] });
+  await touch("touchStart", stick.x, stick.y);
+  await touch("touchMove", stick.x + stick.w * 0.14, stick.y);
+  // Push right for about a second of game time (the touch pad sends steer calls every frame).
+  for (let i = 0; i < 6; i++) {
+    await page.evaluate(() => window.__SSP__.advance(10));
+    await page.waitForTimeout(120);
+  }
+  const during = await aim();
+  await touch("touchEnd", 0, 0);
+  await page.evaluate(() => window.__SSP__.advance(90));
+  const after = await aim();
+  await page.close();
+  await ctx.close();
+  return { during, after, errors };
+}
+
 const winnerScore = (r) => r.tel?.scores?.[r.ranking[0]] ?? -1;
+const touchRes = await touchAim();
+console.log(`touch stick: aim while pushed right ${touchRes.during}, after release ${touchRes.after}`);
+if (touchRes.errors.length) fail(`page errors (touch): ${touchRes.errors[0]}`);
+if (!(touchRes.during > 0.1 && touchRes.during < 0.85)) fail(`touch stick pushed right gave aim ${touchRes.during}`);
+if (!(Math.abs(touchRes.after) < 0.1)) fail(`aim stayed at ${touchRes.after} after the stick was released (stale key steer)`);
+if (process.env.PROBE_ONLY === "touch") {
+  console.log("PASS touch only");
+  await browser.close();
+  process.exit(0);
+}
 const runs = {};
 for (const [key, level] of [["a", null], ["b", null], ["relaxed", "relaxed"], ["challenge", "challenge"]]) {
   runs[key] = await playRound(level);
@@ -129,8 +193,14 @@ if (!(aim > 0.15 && aim < 0.45)) fail(`three ArrowRight taps made aim ${aim} (wa
 await browser.close();
 
 // The camera must not move because of input (fixed camera, no shake).
-const cam = spawnSync("node", [join(dirname(new URL(import.meta.url).pathname), "probe-camera-lock.mjs"), ID], { encoding: "utf8" });
+// It needs 40 samples in 6 s, which a loaded software-GL box can miss by one: allow one retry.
+const camScript = join(dirname(new URL(import.meta.url).pathname), "probe-camera-lock.mjs");
+let cam = spawnSync("node", [camScript, ID], { encoding: "utf8" });
 process.stdout.write(cam.stdout);
+if (cam.status !== 0 && /only \d+ samples/.test(cam.stdout)) {
+  cam = spawnSync("node", [camScript, ID], { encoding: "utf8" });
+  process.stdout.write(cam.stdout);
+}
 if (cam.status !== 0) fail("camera lock probe failed");
 
 console.log(`PASS ${ID} winner relaxed=${winnerScore(runs.relaxed)} normal=${winnerScore(runs.a)} challenge=${winnerScore(runs.challenge)}`);
