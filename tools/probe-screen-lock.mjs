@@ -87,6 +87,26 @@ for (let k = 0; k < 2; k++) {
 await wait(200);
 await check("double tap");
 
+// The blockers themselves: cancelable synthetic events must come back defaultPrevented.
+const blocked = await page.evaluate(() => {
+  const fire = (ev) => { document.body.dispatchEvent(ev); return ev.defaultPrevented; };
+  const mk = (id, x, y) => new Touch({ identifier: id, target: document.body, clientX: x, clientY: y });
+  const touchmove = (touches) =>
+    new TouchEvent("touchmove", { cancelable: true, bubbles: true, touches, targetTouches: touches, changedTouches: touches });
+  return {
+    gesturestart: fire(new Event("gesturestart", { cancelable: true, bubbles: true })),
+    gesturechange: fire(new Event("gesturechange", { cancelable: true, bubbles: true })),
+    dblclick: fire(new Event("dblclick", { cancelable: true, bubbles: true })),
+    contextmenu: fire(new Event("contextmenu", { cancelable: true, bubbles: true })),
+    twoFingerMove: fire(touchmove([mk(1, 100, 100), mk(2, 200, 200)])),
+    oneFingerMove: fire(touchmove([mk(1, 100, 100)])),
+  };
+});
+for (const k of ["gesturestart", "gesturechange", "dblclick", "contextmenu", "twoFingerMove"]) {
+  if (blocked[k] !== true) fail(`${k} not prevented`);
+}
+if (blocked.oneFingerMove !== false) fail("oneFingerMove was prevented (one finger must stay free)");
+
 const installed = await page.evaluate(() => window.__SSP__.screenLockInstalled?.());
 if (installed !== true) fail("screenLockInstalled");
 
