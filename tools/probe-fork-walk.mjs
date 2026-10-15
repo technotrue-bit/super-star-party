@@ -130,7 +130,7 @@ function installSampler() {
 
 const last = (page) => page.evaluate(() => window.__LAST ?? null);
 
-async function waitHumanDice(page, ms = 90000) {
+async function waitHumanDice(page, ms = 150000) {
   await page.waitForFunction(
     () => {
       const e = window.__LAST;
