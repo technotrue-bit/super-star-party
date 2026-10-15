@@ -11,6 +11,7 @@ import { ui } from "../ui/kit";
 import { audio } from "../audio/audioEngine";
 import { screens, type Screen } from "./screenManager";
 import { loadMinigame } from "../minigames/framework";
+import { minigameEntry } from "../minigames/registry";
 import { packDef, type MinigamePackId } from "../minigames/packRules";
 import {
   freeplayCatalog,
@@ -97,6 +98,7 @@ const minigameMenuImpl: MenuState & Screen = {
     let lastPack = "";
     let grid: HTMLElement | null = null;
     for (const { id, pack } of freeplayCatalog()) {
+      if (minigameEntry(id)?.hidden) continue; // test rigs stay out of the menu
       if (pack !== lastPack) {
         lastPack = pack;
         const head = document.createElement("div");

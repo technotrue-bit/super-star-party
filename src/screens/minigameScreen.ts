@@ -73,6 +73,7 @@ import { screens } from "./screenManager";
 import { startResultsCeremony, type ResultsCeremony } from "./resultsCeremony";
 import { createTouchPad, type TouchPad } from "../ui/touchPad";
 import { onViewportChange } from "../ui/viewport";
+import { createPadKeys, type PadKeys } from "../minigames/padKeys";
 import { clearFraming, makeLawnTexture, makeSkyTexture, reframe } from "../minigames/framing";
 
 /* ------------------------------------------------------------------ */
@@ -567,6 +568,10 @@ interface MgScreenState {
   _onPointerMove?: (e: PointerEvent) => void;
   _onPointerUp?: (e: PointerEvent) => void;
   _onKeyDown?: (e: KeyboardEvent) => void;
+  _onKeyUp?: (e: KeyboardEvent) => void;
+  _onBlur?: () => void;
+  /** Keyboard and mouse mapping for the game's control pad. Unset for tap and steer games. */
+  _padKeys?: PadKeys;
   _touch?: TouchPad;
   _hud?: ScoreHud;
   _practiceEl?: HTMLDivElement;
@@ -1145,7 +1150,8 @@ const minigameScreenImpl: MgScreenState & Screen = {
         if (onPad(e)) return;
         if (self._phase === "play") {
           const [x, y] = px(e);
-          self._ctx?.input.pointer(x, y, true);
+          if (self._minigame?.pad === "draw") self._padKeys?.stroke("start", x, y);
+          else self._ctx?.input.pointer(x, y, true);
         } else if (self._phase === "vs-splash") {
           self._vsSkip = true;
         }
@@ -1156,20 +1162,30 @@ const minigameScreenImpl: MgScreenState & Screen = {
         if (onPad(e)) return;
         if (self._phase === "play" && (e.buttons & 1)) {
           const [x, y] = px(e);
-          self._ctx?.input.drag?.(x, y);
+          if (self._minigame?.pad === "draw") self._padKeys?.stroke("move", x, y);
+          else self._ctx?.input.drag?.(x, y);
         }
       };
       self._onPointerUp = (e) => {
         if (onPad(e)) return;
         if (self._phase === "play") {
           const [x, y] = px(e);
-          self._ctx?.input.pointer(x, y, false);
+          if (self._minigame?.pad === "draw") self._padKeys?.stroke("end", x, y);
+          else self._ctx?.input.pointer(x, y, false);
         }
       };
 
       self._onKeyDown = (e: KeyboardEvent) => {
         if ((e.key === " " || e.key === "Enter") && self._phase === "vs-splash") {
           self._vsSkip = true;
+        }
+        // A control-pad game reads its own keys in play (Space, Z, X, Q, E, arrows).
+        // The old direction key() call only happens when the game also steers.
+        if (self._phase === "play" && self._padKeys && self._ctx) {
+          if (self._padKeys.keyDown(e.key, e.repeat, e.timeStamp)) e.preventDefault();
+          const steerAction = self._minigame?.steer ? keyAction(e.key) : null;
+          if (steerAction && steerAction !== "confirm") self._ctx.input.key(steerAction);
+          return;
         }
         const action = keyAction(e.key);
         if (!action) return;
@@ -1197,6 +1213,14 @@ const minigameScreenImpl: MgScreenState & Screen = {
       window.addEventListener("pointerup", self._onPointerUp);
       window.addEventListener("pointercancel", self._onPointerUp);
       window.addEventListener("keydown", self._onKeyDown);
+      // Releases and a lost window matter to the pads: a hold must end when
+      // Space comes up, or when alt-tab swallows the keyup.
+      self._onKeyUp = (e: KeyboardEvent) => {
+        if (self._padKeys?.keyUp(e.key, e.timeStamp) && self._phase === "play") e.preventDefault();
+      };
+      self._onBlur = () => self._padKeys?.release();
+      window.addEventListener("keyup", self._onKeyUp);
+      window.addEventListener("blur", self._onBlur);
 
       self._touch = createTouchPad({
         onSteer: (action) => {
@@ -1206,6 +1230,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
             return;
           }
           if (self._phase !== "play") return;
+          if (self._minigame?.pad && !self._minigame.steer) return;
           document.body.dataset.sspSteer = action;
           self._ctx?.input.key(action);
         },
@@ -1213,6 +1238,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           self._stickX = x;
           self._stickY = y;
           if (self._phase !== "play") return;
+          if (self._minigame?.pad && !self._minigame.steer) return;
           self._ctx?.input.stick?.(x, y);
         },
         onAction: () => {
@@ -1237,6 +1263,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           return;
         }
         self._minigame = mg;
+        self._padKeys = mg.pad ? createPadKeys(mg.pad, () => self._ctx?.input) : undefined;
 
         const ctx: MinigameContext = {
           players: match.players.map(p => ({
@@ -1391,6 +1418,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
         tickTeach(this, dt);
         if ((this._playT ?? 0) > GOAL_HOLD) this._goalEl?.classList.remove("ssp-mg-goal--on");
         if (!this._finished) {
+          this._padKeys?.tick(dt);
           this._minigame?.update(dt);
           this._seatTags?.tick();
           // Safety net: a minigame that never calls finish must not hang
@@ -1414,6 +1442,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
         if (this._finished && this._ranking) {
           this._phase = "results";
           markPhase("results");
+          this._padKeys?.release();
           this._touch?.hide();
           this._resultsT = 0.6; // short winner-reveal beat
         }
@@ -1521,6 +1550,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
   _beginPlay() {
     this._phase = "play";
     markPhase("play");
+    this._padKeys?.release();
     setPracticeBeat(false);
     this._playT = 0;
     ensureMarker(this);
@@ -1632,12 +1662,17 @@ const minigameScreenImpl: MgScreenState & Screen = {
       window.removeEventListener("pointercancel", this._onPointerUp);
     }
     if (this._onKeyDown) window.removeEventListener("keydown", this._onKeyDown);
+    if (this._onKeyUp) window.removeEventListener("keyup", this._onKeyUp);
+    if (this._onBlur) window.removeEventListener("blur", this._onBlur);
+    this._padKeys = undefined;
     this._touch?.destroy();
     this._touch = undefined;
     this._onPointerDown = undefined;
     this._onPointerMove = undefined;
     this._onPointerUp = undefined;
     this._onKeyDown = undefined;
+    this._onKeyUp = undefined;
+    this._onBlur = undefined;
     this._phase = undefined;
     ui.clearScreen();
     audio.music.stop(0.3);

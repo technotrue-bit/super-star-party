@@ -36,6 +36,8 @@ export interface MinigameEntry {
   description?: string;
   /** START card content, copied from the module (see MinigameRules). */
   rules?: import("./framework").MinigameRules;
+  /** Kept out of the free-play menu and the roulette (copied from the module). */
+  hidden?: boolean;
 }
 
 const REGISTRY: MinigameEntry[] = [];
@@ -62,6 +64,7 @@ export function registerMinigame(entry: MinigameEntry): void {
     existing.pack = pack;
     if (entry.description) existing.description = entry.description;
     if (entry.rules) existing.rules = entry.rules;
+    if (entry.hidden !== undefined) existing.hidden = entry.hidden;
     return;
   }
   REGISTRY.push({ ...entry, pack });
@@ -165,11 +168,12 @@ export function tryPickMinigame(
 export const DUEL_MINIGAMES: ReadonlySet<string> = new Set(["quick_draw"]);
 
 /**
- * What the roulette may deal: never a duel, and contact minigames stay off
+ * What the roulette may deal: never a duel or a hidden test rig, and contact minigames stay off
  * the online path (solo still deals them).
  */
 function dealableOnline(id: string): boolean {
   if (DUEL_MINIGAMES.has(id)) return false;
+  if (REGISTRY.find((e) => e.id === id)?.hidden) return false;
   return !(onlineMatch() && isContactMinigame(id));
 }
 

@@ -28,4 +28,6 @@ export const MINIGAME_MODULES: Array<() => Promise<Minigame>> = [
   () => import("./push_of_war/index").then((m) => m.loadPushOfWar()),
   // ---- 1-vs-1 duels (free play; never dealt by the 4-player roulette) ----
   () => import("./quick_draw/index").then((m) => m.loadQuickDraw()),
+  // ---- Hidden test rigs (never in the menu or the roulette) ----
+  () => import("./control_lab/index").then((m) => m.loadControlLab()),
 ];
