@@ -439,7 +439,27 @@ export function buildModel(kind: CharacterKind): BuiltModel {
       group.add(pumpkin);
       parts.head = pumpkin;
       parts.body = pumpkin;
-      parts.face = buildFace(0.36, 0.04, 0.6, pumpkin);
+      // The face wraps the gourd: a slice of a sphere just outside the rib
+      // crests, squashed like the pumpkin, so it never juts past the outline
+      // from the side the way a flat card would.
+      {
+        const FACE_R = 0.585;
+        const faceW = 1.36; // radians across
+        const faceH = 0.95; // radians tall
+        const faceTilt = 0.04 / 0.9 / FACE_R; // centre a touch above the equator
+        const faceGeo = new THREE.SphereGeometry(
+          FACE_R, 24, 16,
+          Math.PI / 2 - faceW / 2, faceW,
+          Math.PI / 2 - faceTilt - faceH / 2, faceH,
+        );
+        const face = new THREE.Group();
+        face.scale.set(1, 0.9, 1);
+        const fm = addMesh(face, faceGeo, faceMat, [0, 0, 0]);
+        fm.castShadow = false;
+        fm.receiveShadow = false;
+        pumpkin.add(face);
+        parts.face = face;
+      }
       const stemMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: palette.pumpkinStem });
       const stem = new THREE.Group();
       stem.position.set(0, 0.36, 0);

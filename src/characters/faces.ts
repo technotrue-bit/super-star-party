@@ -6,6 +6,8 @@ export interface FaceSpec {
   eyeSize: number;
   /** A little white fang poking down from the smile (Rumble). */
   fang?: boolean;
+  /** Mouth height on the face card. Default SMILE_Y; lower it to clear big eyes. */
+  smileY?: number;
 }
 
 const FACE_WIDTH = 256;
@@ -27,12 +29,12 @@ const CHEEK_COLOR = 'rgba(255, 120, 160, 0.55)';
 const SMILE_Y = 58; // sit under the eyes, inside the face card
 const SMILE_STROKE = 8;
 
-function drawSmile(ctx: CanvasRenderingContext2D, smile: FaceSpec['smile']): void {
+function drawSmile(ctx: CanvasRenderingContext2D, smile: FaceSpec['smile'], mouthY = SMILE_Y): void {
   if (smile === 'open') {
     // Filled half-ellipse: open mouth with darker fill, spanning x 52-76.
     ctx.fillStyle = palette.ink;
     ctx.beginPath();
-    ctx.ellipse(128, SMILE_Y, 24, 14, 0, 0, Math.PI);
+    ctx.ellipse(128, mouthY, 24, 14, 0, 0, Math.PI);
     ctx.closePath();
     ctx.fill();
     return;
@@ -52,19 +54,19 @@ function drawSmile(ctx: CanvasRenderingContext2D, smile: FaceSpec['smile']): voi
   }
 
   ctx.beginPath();
-  ctx.arc(centerX, SMILE_Y, radius, 0, Math.PI);
+  ctx.arc(centerX, mouthY, radius, 0, Math.PI);
   ctx.stroke();
 }
 
-function drawFang(ctx: CanvasRenderingContext2D): void {
+function drawFang(ctx: CanvasRenderingContext2D, mouthY = SMILE_Y): void {
   ctx.fillStyle = palette.white;
   ctx.strokeStyle = palette.ink;
   ctx.lineWidth = 3;
   ctx.lineJoin = 'round';
   ctx.beginPath();
-  ctx.moveTo(140, SMILE_Y + 17);
-  ctx.lineTo(152, SMILE_Y + 13);
-  ctx.lineTo(147, SMILE_Y + 27);
+  ctx.moveTo(140, mouthY + 17);
+  ctx.lineTo(152, mouthY + 13);
+  ctx.lineTo(147, mouthY + 27);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
@@ -126,6 +128,7 @@ export function makeFaceTexture(spec: FaceSpec, expr: Expression = 'normal'): TH
   const lpx = LEFT_EYE_X + PUPIL_OFFSET_X * spec.eyeSize;
   const rpx = RIGHT_EYE_X - PUPIL_OFFSET_X * spec.eyeSize;
   const py = EYE_Y + PUPIL_OFFSET_Y * spec.eyeSize;
+  const my = spec.smileY ?? SMILE_Y;
 
   // Rosy cheeks first, so eyes and mouth sit on top.
   ctx.fillStyle = CHEEK_COLOR;
@@ -141,7 +144,7 @@ export function makeFaceTexture(spec: FaceSpec, expr: Expression = 'normal'): TH
     case 'blink':
       eyeArc(ctx, LEFT_EYE_X, EYE_Y + 6, eyeR * 0.75, false);
       eyeArc(ctx, RIGHT_EYE_X, EYE_Y + 6, eyeR * 0.75, false);
-      drawSmile(ctx, spec.smile);
+      drawSmile(ctx, spec.smile, my);
       break;
     case 'happy':
       // ^ ^ eyes and a big open grin with a tongue.
@@ -149,12 +152,12 @@ export function makeFaceTexture(spec: FaceSpec, expr: Expression = 'normal'): TH
       eyeArc(ctx, RIGHT_EYE_X, EYE_Y, eyeR * 0.8, true);
       ctx.fillStyle = palette.ink;
       ctx.beginPath();
-      ctx.ellipse(128, SMILE_Y + 2, 30, 22, 0, 0, Math.PI);
+      ctx.ellipse(128, my + 2, 30, 22, 0, 0, Math.PI);
       ctx.closePath();
       ctx.fill();
       ctx.fillStyle = palette.candy;
       ctx.beginPath();
-      ctx.ellipse(128, SMILE_Y + 15, 14, 7, 0, 0, Math.PI * 2);
+      ctx.ellipse(128, my + 15, 14, 7, 0, 0, Math.PI * 2);
       ctx.fill();
       break;
     case 'sad': {
@@ -174,7 +177,7 @@ export function makeFaceTexture(spec: FaceSpec, expr: Expression = 'normal'): TH
       ctx.stroke();
       ctx.lineWidth = SMILE_STROKE;
       ctx.beginPath();
-      ctx.arc(128, SMILE_Y + 30, 18, Math.PI * 1.15, Math.PI * 1.85);
+      ctx.arc(128, my + 30, 18, Math.PI * 1.15, Math.PI * 1.85);
       ctx.stroke();
       break;
     }
@@ -186,7 +189,7 @@ export function makeFaceTexture(spec: FaceSpec, expr: Expression = 'normal'): TH
       pupil(ctx, RIGHT_EYE_X, EYE_Y, pupilR * 0.75);
       ctx.fillStyle = palette.ink;
       ctx.beginPath();
-      ctx.ellipse(128, SMILE_Y + 10, 11, 14, 0, 0, Math.PI * 2);
+      ctx.ellipse(128, my + 10, 11, 14, 0, 0, Math.PI * 2);
       ctx.fill();
       break;
     default:
@@ -194,10 +197,10 @@ export function makeFaceTexture(spec: FaceSpec, expr: Expression = 'normal'): TH
       eyeWhite(ctx, RIGHT_EYE_X, EYE_Y, eyeR, eyeR);
       pupil(ctx, lpx, py, pupilR);
       pupil(ctx, rpx, py, pupilR);
-      drawSmile(ctx, spec.smile);
+      drawSmile(ctx, spec.smile, my);
       break;
   }
-  if (spec.fang && (expr === 'normal' || expr === 'blink')) drawFang(ctx);
+  if (spec.fang && (expr === 'normal' || expr === 'blink')) drawFang(ctx, my);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.LinearFilter;
@@ -215,6 +218,7 @@ export const faceSpecs: Record<string, FaceSpec> = {
   tusk: { smile: 'wide', eyeSize: 1.05 },
   mallow: { smile: 'wide', eyeSize: 0.9 },
   rumble: { smile: 'grin', eyeSize: 1.05, fang: true },
-  jack: { smile: 'wide', eyeSize: 1.1 },
+  // The grin sits low so its ends clear the big eyes.
+  jack: { smile: 'grin', eyeSize: 1.0, smileY: 72 },
   wisp: { smile: 'open', eyeSize: 1.25 },
 };
