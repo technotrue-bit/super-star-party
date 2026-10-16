@@ -36,7 +36,9 @@ export const BOARDS: Record<BoardId, BoardEntry> = {
     def: downtown,
     name: "Downtown",
     blurb: "A city Ring Road with Market Street and the Riverside Walk.",
-    rev: 3,
+    // 4: slice 2 (city scenery, Downtown item/giver names). Older clients get
+    // the "update the game" refusal instead of a mismatched board.
+    rev: 4,
   },
 };
 
