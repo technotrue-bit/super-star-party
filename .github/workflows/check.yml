@@ -96,7 +96,11 @@ jobs:
             cat "$RUNNER_TEMP/vite-party.log"
             exit 1
           fi
-          SSP_URL=http://127.0.0.1:5178 SSP_EXPECT_TRANSPORT=server node tools/probe-contact-control.mjs
+          if ! SSP_URL=http://127.0.0.1:5178 SSP_EXPECT_TRANSPORT=server node tools/probe-contact-control.mjs; then
+            echo "--- vite (party-url) log ---"
+            cat "$RUNNER_TEMP/vite-party.log"
+            exit 1
+          fi
 
       - name: Prod build ignores the contact hook
         run: |
