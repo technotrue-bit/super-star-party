@@ -27,7 +27,7 @@ type Rng = () => number;
 
 export const TURN = Math.PI * 2;
 /** Clockwise turns of the crank for the whole climb. */
-export const TOP_TURNS = 64;
+export const TOP_TURNS = 66;
 export const TOP_ANGLE = TOP_TURNS * TURN;
 /** The round is called by height at this game time if nobody has topped the hill (s). */
 export const TIME_CAP = 45;
