@@ -83,6 +83,10 @@ const MAX_PENDING = 2 * TURN;
 /** Half a turn of the crank is one click of the pawl. */
 const CLICK_ANGLE = Math.PI;
 
+const HEX_LAVA = hex(palette.lava);
+const HEX_SUN_DEEP = hex(palette.sunDeep);
+const HEX_INK_SOFT = hex(palette.inkSoft);
+
 const COLOR_OF_HEAT = {
   cool: new THREE.Color(hex(palette.bubble)),
   warm: new THREE.Color(hex(palette.sun)),
@@ -337,9 +341,7 @@ function placeLane(st: State, lane: Lane, dt: number, t: number): void {
   if (band === 3 && Math.sin(t * 24) > 0) tmpColor.lerp(COLOR_OF_HEAT.white, 0.55);
   w.liquidMat.color.copy(tmpColor);
   const blink = band === 3 ? Math.sin(t * 26) > 0 : band === 2 ? Math.sin(t * 12) > 0 : false;
-  if (blink) w.lampMat.color.set(hex(palette.lava));
-  else if (band >= 2) w.lampMat.color.set(hex(palette.sunDeep));
-  else w.lampMat.color.set(hex(palette.inkSoft));
+  w.lampMat.color.setHex(blink ? HEX_LAVA : band >= 2 ? HEX_SUN_DEEP : HEX_INK_SOFT);
   w.haloMat.opacity = band === 3 ? 0.5 + Math.sin(t * 22) * 0.2 : smooth((h - 0.5) / 0.4) * 0.55;
   w.halo.scale.setScalar(1 + (band === 3 ? 0.1 : 0));
 

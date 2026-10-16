@@ -21,7 +21,7 @@ const CSS = `
   width: 172px; font-family: Fredoka, system-ui, sans-serif;
 }
 @media (hover: hover) and (pointer: fine) {
-  .cc-gauge { left: 50%; transform: translateX(-50%); bottom: 84px; width: 240px; }
+  .cc-gauge { bottom: 84px; width: 210px; }
 }
 .cc-gauge__say {
   height: 24px; line-height: 24px; text-align: center; font-size: 17px; font-weight: 700; letter-spacing: 0.05em;

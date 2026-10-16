@@ -63,7 +63,7 @@ async function openRound(level, { autoplay, touch = false }) {
   for (let i = 0; i < 400 && phase !== "play"; i++) {
     phase = await page.evaluate(() => window.__SSP__.mgProbe().phase);
     if (phase === "play") break;
-    if (phase === "") await page.getByText("START MINI GAME").click({ timeout: 300 }).catch(() => {});
+    if (phase === "") await page.getByText("START MINI GAME").click({ timeout: 3000 }).catch(() => {});
     await page.evaluate(() => window.__SSP__.advance(30));
     await page.waitForTimeout(30);
   }
