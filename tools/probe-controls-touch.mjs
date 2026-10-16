@@ -11,6 +11,8 @@
 //   hold + second finger  (steer=1)  touch 2 works the stick and lifts: no extra hold:1, no hold:0
 //                                     until touch 1 lifts
 //   swipe from a pad button (steer=1) a swipe that starts on the stick logs no swipe
+//   hold-through-GO                   a finger put down during the countdown and still down at GO starts
+//                                     the hold at GO (hold:1:0.00 once), and the charge counts from GO
 //   rotate                            844x390 mid-round: the dial still turns the right way and the
 //                                     camera reframes once, then stays fixed
 // Prints PASS touch <case> or FAIL touch <case> ...; exit code 1 on any fail.
@@ -21,7 +23,8 @@ const BASE = "http://127.0.0.1:5177/";
 const browser = await chromium.launch({ args: ["--disable-dev-shm-usage", "--disable-gpu"] });
 let failed = false;
 
-async function boot(query) {
+// `early(page, cdp)` runs once, at the first countdown / practice / go phase, before play begins.
+async function boot(query, early) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
@@ -36,13 +39,19 @@ async function boot(query) {
   await page.evaluate(() => window.__SSP__.goto("minigame"));
   const t0 = Date.now();
   let phase = "";
+  let earlyDone = false;
   while (Date.now() - t0 < 60000) {
     phase = await page.evaluate(() => window.__SSP__.mgProbe().phase);
     if (phase === "play") break;
     if (phase === "vs-splash") await page.keyboard.press("Space");
     else if (phase === "") await page.getByText("START MINI GAME").click({ timeout: 2500 }).catch(() => {});
-    await page.waitForTimeout(150);
+    else if (early && !earlyDone && (phase === "countdown" || phase === "practice" || phase === "go")) {
+      earlyDone = true;
+      await early(page, cdp);
+    }
+    await page.waitForTimeout(early && !earlyDone ? 40 : 150);
   }
+  if (early && !earlyDone) throw new Error("never saw a countdown phase for the early touch");
   if (phase !== "play") throw new Error(`never reached play (phase=${phase || "none"})`);
   // The browser's own pointer timestamps, so timing is judged against events, not wall clock.
   await page.evaluate(() => {
@@ -124,6 +133,51 @@ async function holdCases(page, cdp) {
   await page.waitForTimeout(200);
   const c = (await inputs(page)).slice(n1);
   if (c.length !== 2 || c[0] !== "hold:1:0.00" || !/^hold:0:/.test(c[1])) return `cancelled touch gave ${JSON.stringify(c)}`;
+  return null;
+}
+
+// A finger down on the hold button during the countdown and kept there through GO.
+async function holdEarly(page, cdp) {
+  const b = await centerOf(page, ".ssp-hold");
+  if (!b) throw new Error("no .ssp-hold button during the countdown");
+  await page.evaluate(() => {
+    window.addEventListener("pointerdown", (e) => { window.__pid = e.pointerId; window.__downT = performance.now(); }, true);
+    // When play began, by the page's own clock.
+    new MutationObserver(() => {
+      if (document.body.dataset.mgPhase === "play" && !window.__goT) window.__goT = performance.now();
+    }).observe(document.body, { attributes: true, attributeFilter: ["data-mg-phase"] });
+  });
+  await send(cdp, "touchStart", [P(1, b.x, b.y)], null);
+}
+async function holdThroughGo(page, cdp) {
+  const b = await centerOf(page, ".ssp-hold");
+  if (!b) return "no .ssp-hold button";
+  const mid = await inputs(page);
+  if (JSON.stringify(mid) !== JSON.stringify(["hold:1:0.00"])) return `finger held through GO gave ${JSON.stringify(mid)}, want [hold:1:0.00] once`;
+  // This rig needs ~1 s to deliver a touch event, which would eat the whole check, so lift the
+  // finger with a pointerup raised in the page: the release reaches the pad at once.
+  const t = await page.evaluate(() => {
+    const at = performance.now();
+    document.querySelector(".ssp-hold").dispatchEvent(new PointerEvent("pointerup", { pointerId: window.__pid, bubbles: true }));
+    return { sinceGo: (at - window.__goT) / 1000, sinceDown: (at - window.__downT) / 1000 };
+  });
+  await page.waitForTimeout(100);
+  const end = await inputs(page);
+  const m = end.length === 2 && /^hold:0:(\d+\.\d\d)$/.exec(end[1]);
+  if (!m) return `release after GO gave ${JSON.stringify(end)}`;
+  // The finger was down for the whole countdown (over the 1.5 s cap), so a charge counted from the press would read 1.50:
+  // the charge must count from GO only.
+  if (!(t.sinceDown > 1.6)) return `rig: finger was down only ${t.sinceDown.toFixed(2)} s, cannot tell GO from the press`;
+  if (Math.abs(Number(m[1]) - Math.min(1.5, t.sinceGo)) > 0.15) return `charge ${m[1]} s, want the ${t.sinceGo.toFixed(2)} s since GO (finger down ${t.sinceDown.toFixed(2)} s)`;
+  await send(cdp, "touchEnd", [P(1, b.x, b.y)], null); // the real finger comes up: no extra input
+  await page.waitForTimeout(100);
+  if ((await inputs(page)).length !== 2) return `the real lift after the release added input: ${JSON.stringify(await inputs(page))}`;
+  // A fresh press still works.
+  await send(cdp, "touchStart", [P(2, b.x, b.y)]);
+  await send(cdp, "touchEnd", [P(2, b.x, b.y)], 0.3);
+  await page.waitForTimeout(200);
+  const again = (await inputs(page)).slice(2);
+  if (again.length !== 2 || again[0] !== "hold:1:0.00") return `a press after the pre-charge gave ${JSON.stringify(again)}`;
   return null;
 }
 
@@ -359,14 +413,15 @@ const CASES = [
   ["hold+second-finger", "pad=hold&steer=1", holdSecondFinger],
   ["swipe-from-button", "pad=swipe&steer=1", swipeFromButton],
   ["rotate", "pad=dial", rotate],
+  ["hold-through-GO", "pad=hold", holdThroughGo, holdEarly],
 ];
 
-for (const [name, query, fn] of CASES) {
+for (const [name, query, fn, early] of CASES) {
   if (ONLY.length && !ONLY.includes(name)) continue;
   let why;
   let env;
   try {
-    env = await boot(query);
+    env = await boot(query, early);
     why = await fn(env.page, env.cdp);
   } catch (e) {
     why = `threw ${String(e).slice(0, 200)}`;

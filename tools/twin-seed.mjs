@@ -12,7 +12,10 @@ const TURNS = 9;
 // turns finish on a slow runner. The match is the same, only slower.
 // Speed stays 4: past five sim steps per frame, a faster speed does not shorten
 // the minigames.
-const CAP_MS = 960000;
+// The Wave 1 minigames run 45–52 s (the older ones ~30 s) and one is dealt
+// every round, so a nine-turn match on a slow runner now needs more than 16
+// minutes (turns 1–8 matched at ~886 s, turn 9 was cut off). Same check.
+const CAP_MS = 1440000;
 
 async function play(page, label) {
   const errors = [];
