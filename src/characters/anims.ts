@@ -175,6 +175,7 @@ export function createAnimController(
   let fidgetExpr: Expression | null = null;
 
   const floater = FLOATERS[kind.key];
+  const starArms = kind.key === 'pip';
   let lift = floater?.always ? 1 : 0; // 0 = resting on the ground, 1 = fully afloat
   const trail = parts.trail;
   let trailOn = 0; // 0 = hidden, 1 = the mini pumpkins are fully out
@@ -200,9 +201,14 @@ export function createAnimController(
 
   const fidget = (e: number): void => {
     switch (kind.key) {
-      case 'pip':
-        pose.parts.star[1] = e * TAU * 0.5; // star head spins half a turn
+      case 'pip': {
+        // A twinkle: the crown wiggles and the whole star gives a little spin-wobble.
+        const w = Math.sin(Math.PI * e);
+        pose.parts.antenna[2] = Math.sin(e * TAU * 2) * 0.35 * w;
+        pose.parts.star[2] = Math.sin(e * TAU) * 0.35 * w;
+        pose.y += w * 0.06;
         break;
+      }
       case 'bounce': {
         const arc = Math.sin(Math.PI * e);
         pose.y += arc * 0.18;
@@ -347,7 +353,7 @@ export function createAnimController(
       pose.sy = 1 + s;
       pose.sx = pose.sz = 1 - s * 0.6;
       if (kind.key === 'bounce') pose.rx = p * TAU; // front flip
-      if (kind.key === 'pip') pose.parts.star[1] = p * TAU; // star head spins
+      if (kind.key === 'pip') pose.parts.star[2] = -smoothstep(p) * TAU; // a full cartwheel
       if (kind.key === 'glimmer') pose.yaw = p * TAU; // pirouette
       if (kind.key === 'jack') pose.parts.head[1] = p * TAU; // pumpkin spin
       if (kind.key === 'wisp') pose.rz = Math.sin(p * TAU) * 0.5; // loop-de-sway
@@ -387,7 +393,9 @@ export function createAnimController(
     // Each hero celebrates their own way.
     switch (kind.key) {
       case 'pip':
-        pose.parts.star[1] = t * 5; // star head whirls
+        // Rocks side to side on his tips, crown bobbing along.
+        pose.parts.star[2] = Math.sin(t * 7) * 0.22;
+        pose.parts.antenna[2] = Math.sin(t * 14) * 0.2;
         break;
       case 'bounce':
         pose.y += hop * 0.12; // extra-springy
@@ -467,6 +475,16 @@ export function createAnimController(
       const obj = parts[k];
       const b = partBase[k];
       if (!obj || !b) continue;
+      if (starArms && (k === 'armL' || k === 'armR')) {
+        // Pip's arms are sideways star points: swinging them about x would
+        // only twist them. A raise (rx < 0) sweeps the point up instead,
+        // clamped so it never folds into the crown; a little rx stays for depth.
+        const side = k === 'armR' ? 1 : -1;
+        const [rx, ry, rz] = p.parts[k];
+        const lift = Math.min(0.7, Math.max(-0.5, -rx * 0.4));
+        obj.rotation.set(b.x + rx * 0.15, b.y + ry, b.z + side * lift + rz * 0.3);
+        continue;
+      }
       obj.rotation.set(b.x + p.parts[k][0], b.y + p.parts[k][1], b.z + p.parts[k][2]);
     }
   };

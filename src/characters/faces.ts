@@ -212,7 +212,7 @@ export function makeFaceTexture(spec: FaceSpec, expr: Expression = 'normal'): TH
 }
 
 export const faceSpecs: Record<string, FaceSpec> = {
-  pip: { smile: 'grin', eyeSize: 1 },
+  pip: { smile: 'grin', eyeSize: 1.1, smileY: 74 },
   bounce: { smile: 'open', eyeSize: 1.15 },
   glimmer: { smile: 'half', eyeSize: 0.95 },
   tusk: { smile: 'wide', eyeSize: 1.05 },
