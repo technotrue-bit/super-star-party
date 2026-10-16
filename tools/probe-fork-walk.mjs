@@ -16,7 +16,7 @@
  *   node tools/probe-fork-walk.mjs [--ci]
  *   SSP_URL (default http://127.0.0.1:5177)   SSP_SHOTS=<dir> (ignored with --ci)
  *
- * Exits 1 on any FAIL or page error. --ci drops the EXACT follow-up, MULTI and shots, self-fails > 90 s.
+ * Exits 1 on any FAIL or page error. --ci drops the EXACT follow-up, MULTI and shots, self-fails > 240 s.
  */
 import { chromium } from "@playwright/test";
 import fs from "node:fs";
@@ -39,7 +39,9 @@ function check(name, ok, detail = "") {
 const note = (m) => console.log(`NOTE ${m}`);
 
 {
-  const cap = CI ? 90 : 240;
+  // Shared CI runners and software GL run this 2-3x slower than a desktop; the cases
+  // wait on turns to come round, so a tight cap fails slow machines, not the game.
+  const cap = CI ? 240 : 360;
   setTimeout(() => {
     console.log(`FAIL budget  run exceeded ${cap} s (t+${secs()}s)`);
     process.exit(1);
@@ -128,12 +130,14 @@ function installSampler() {
 
 const last = (page) => page.evaluate(() => window.__LAST ?? null);
 
-async function waitHumanDice(page, ms = 90000) {
+async function waitHumanDice(page, ms = 150000) {
   await page.waitForFunction(
     () => {
       const e = window.__LAST;
       const b = document.querySelector(".ssp-roll-wrap button");
-      return !!e && e.scr === "board" && e.ph === "dice" && (e.cur === 0 || e.cur === 2) && !!b && !b.disabled && getComputedStyle(b).pointerEvents !== "none" &&
+      // match.phase is already "dice" during the turn's announce beat, when the ROLL button is only display:none.
+      // armDice() builds the item bar and shows ROLL together, so "shown" is the game accepting input.
+      return !!e && e.scr === "board" && e.ph === "dice" && (e.cur === 0 || e.cur === 2) && !!b && b.getClientRects().length > 0 && !b.disabled && getComputedStyle(b).pointerEvents !== "none" &&
         parseFloat(getComputedStyle(b.closest(".ssp-roll-wrap")).opacity) > 0.5 && !document.querySelector(".ssp-popup");
     },
     null,
@@ -156,8 +160,10 @@ async function forceRoll(page, seat, space, face) {
 }
 /** Two dice, forced one at a time: rollDice(a), ROLL, wait for ROLL to come back, rollDice(b), ROLL. */
 async function forceRoll2(page, seat, space, a, b) {
+  // Up to ~20 s per die: on a slow runner the between-rolls pause can outlast 6 s, and the die then lands after the
+  // probe has already given up on it (a downtown I-H-DOUBLE run rolled [3,2] and landed right, yet failed on this).
   const press = async () => {
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 130; i++) {
       await page.evaluate(() => document.querySelector(".ssp-roll-wrap button")?.click());
       await sleep(150);
       if (await page.evaluate(() => window.__forcedDice === undefined)) return true;
@@ -172,7 +178,7 @@ async function forceRoll2(page, seat, space, a, b) {
   return press();
 }
 /** Queue a grant for the next human turn:start, wait for the item button, return the seat (or -1). */
-async function grantWait(page, tg, items, key, ms = 40000) {
+async function grantWait(page, tg, items, key, ms = 120000) {
   // A human turn that already began has missed its announce beat: spend it on a 1-pip roll so the
   // grant lands on the next human turn instead of waiting behind an idle seat.
   const e0 = await last(page);
@@ -193,13 +199,24 @@ async function grantWait(page, tg, items, key, ms = 40000) {
     const ee = await last(page);
     if (ee && (ee.scr !== "board" || ee.ph === "minigame")) until = Math.max(until, Date.now() + 15000);
     ok = await page.waitForFunction(
-      ([t, k]) => !!window.__GRANTED[t] && !!document.querySelector(`.ssp-item-bar [data-item-use="${k}"]`) && !document.querySelector(".ssp-popup"),
+      ([t, k]) => {
+        // The item bar is not cleared when ROLL is pressed, so a button alone can be left over from a turn that has
+        // already rolled. It counts only on the granted seat's own pre-roll: that seat is up and ROLL is shown.
+        const g = window.__GRANTED[t];
+        const e = window.__LAST;
+        const roll = document.querySelector(".ssp-roll-wrap button");
+        return !!g && !!e && e.scr === "board" && e.ph === "dice" && e.cur === g.cur && !!roll && roll.getClientRects().length > 0 && !roll.disabled &&
+          !!document.querySelector(`.ssp-item-bar [data-item-use="${k}"]`) && !document.querySelector(".ssp-popup");
+      },
       [tg, key], { timeout: 5000, polling: 60 },
     ).then(() => true, () => false);
     if (!ok && !(await page.evaluate((t) => !!window.__GRANTED[t], tg)) && (await last(page))?.scr === "board") {
       // Still queued: a human turn must have started before the push. Spend it, the grant lands on the next one.
       const seat = await waitHumanDice(page, 1500).catch(() => -1);
-      if (seat >= 0) {
+      // Re-check after the wait: the turn the grant is meant for may have started while we waited. Its ROLL is shown only
+      // once the item bar is built (armDice), by which point the sampler has applied the grant at that turn:start.
+      // Spending it here would burn the very turn the item was granted for.
+      if (seat >= 0 && !(await page.evaluate((t) => !!window.__GRANTED[t], tg))) {
         const sp = await page.evaluate(() => { const b = window.__SSP__.board(); return b.next.findIndex((n, i) => n.length === 1 && b.next[n[0]].length === 1 && i !== b.startIndex); });
         await forceRoll(page, seat, sp, 1);
         await driveWalk(page, seat, ["STAY"], null, 15000);
@@ -256,7 +273,7 @@ async function driveWalk(page, seat, picks, shotName, ms = 30000) {
   }
   return -1;
 }
-async function waitCpuDone(page, ms = 60000) {
+async function waitCpuDone(page, ms = 120000) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
     const r = await page.evaluate(() => {
@@ -471,7 +488,7 @@ function forkScenarios(board, G, B) {
       // placed on the fork during its announce beat, so no seat rotation is waited for.
       const tg = `${board}-exact-fork`;
       await page.evaluate(([t, p]) => window.__GRANTQ.push({ tag: t, kind: "human", place: p }), [tg, f]);
-      const placed = await page.waitForFunction((t) => !!window.__GRANTED[t], tg, { timeout: 40000, polling: 60 }).then(() => true, () => false);
+      const placed = await page.waitForFunction((t) => !!window.__GRANTED[t], tg, { timeout: 120000, polling: 60 }).then(() => true, () => false);
       const seat2 = placed ? await waitHumanDice(page, 20000).catch(() => -1) : -1;
       if (seat2 < 0) return check(tag("EXACT next turn lane popup"), false, `placed ${placed}, no human dice phase within 20 s`);
       const here = (await last(page)).sp;
@@ -615,17 +632,17 @@ function itemScenarios(board, G, B) {
     const ld = (await last(page)).ld;
     const cd = countdownIssues(frames, expectedTotal);
     check(tag(name), ok && barLeft === 0 && lands.length === 1 && lands[0] === expected && cd.length === 0 && (dice.length !== 2 || (ld.length === 2 && sum(ld) === expectedTotal)),
-      `bar buttons after click ${barLeft}, start ${start} dice [${dice}] lastDice [${ld}] lands [${lands}] expected ${expected} ${cd.join("; ")}`);
+      `${ok ? "" : "forced roll not taken in time, "}bar buttons after click ${barLeft}, start ${start} dice [${dice}] lastDice [${ld}] lands [${lands}] expected ${expected} ${cd.join("; ")}`);
   };
 
   /** CPU seat with only `key` in its bag: observe the whole turn. */
   const cpuItem = (name, key, verify) => async (page) => {
     const tg = `${board}-${name}`;
     await page.evaluate(([t, k]) => window.__GRANTQ.push({ tag: t, kind: "cpu", items: [k] }), [tg, key]);
-    const g = await page.waitForFunction((t) => window.__GRANTED[t] ?? null, tg, { timeout: 60000, polling: 60 }).then((h) => h.jsonValue(), () => null);
+    const g = await page.waitForFunction((t) => window.__GRANTED[t] ?? null, tg, { timeout: 150000, polling: 60 }).then((h) => h.jsonValue(), () => null);
     if (!g) return check(tag(name), false, `cpu grant never applied ${JSON.stringify(await page.evaluate(() => ({ q: window.__GRANTQ, g: window.__GRANTED, last: window.__LAST, ts: window.__SSP__.phaseLog().filter((x) => x.event === "turn:start").length })))}`);
     if (g.before.length) return note(`${tag(name)} cpu bag was not empty (${g.before}); item pick is random, skipped`);
-    const done = await page.waitForFunction(([s, a]) => window.__LAST.f > a + 5 && window.__LAST.cur !== s, [g.cur, g.f], { timeout: 45000, polling: 60 }).then(() => true, () => false);
+    const done = await page.waitForFunction(([s, a]) => window.__LAST.f > a + 5 && window.__LAST.cur !== s, [g.cur, g.f], { timeout: 90000, polling: 60 }).then(() => true, () => false);
     await sleep(150);
     const { all, segs } = await segments(page, g.f, g.cur);
     const next = await last(page);
@@ -709,7 +726,7 @@ try {
 }
 for (const e of errors) check("pageerror", false, e);
 const total = (Date.now() - t0) / 1000;
-if (total > 60) note(`slow: ${total.toFixed(0)} s (target < 60 s)`);
+if (total > 120) note(`slow: ${total.toFixed(0)} s (target < 120 s)`);
 console.log(`== FORK section total t+${total.toFixed(0)}s`);
 console.log(fails ? `FAILED (${fails})` : "ALL PASS");
 process.exit(fails ? 1 : 0);

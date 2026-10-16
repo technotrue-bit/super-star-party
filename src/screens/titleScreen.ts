@@ -11,6 +11,7 @@
  * Everything visual comes from the palette + UI kit; no hand-rolled buttons
  * or off-palette colors. Music uses only the existing "title" track id.
  */
+import { setFreeplay } from "../game/freeplay";
 import type { Object3D } from "three";
 import { palette } from "../config/palette";
 import { ui } from "../ui/kit";
@@ -250,6 +251,7 @@ interface TitleState {
   _placeCamera: () => void;
   _goPlay: () => void;
   _goHowTo: () => void;
+  _goMinigames: () => void;
   _openSettings: () => void;
   _showSettingsPanel: () => void;
   _sliderRow: (label: string, initial: number, apply: (v: number) => void) => HTMLDivElement;
@@ -263,6 +265,8 @@ const titleImpl: TitleState & Screen = {
   id: "title",
 
   enter() {
+    // Back at the title: neither mode is chosen yet.
+    setFreeplay(false);
     injectTitleStyles();
     ui.clearScreen();
     setOnlineMatch(false);
@@ -324,6 +328,17 @@ const titleImpl: TitleState & Screen = {
     });
     playBtn.el.classList.add("ssp-title-btn");
 
+    const gamesBtn = ui.button({
+      label: "MINIGAMES",
+      kind: "primary",
+      size: "lg",
+      onClick: () => this._goMinigames(),
+      sound: "pop",
+      ariaLabel: "Minigames — just play the minigames",
+    });
+    gamesBtn.el.classList.add("ssp-title-btn");
+    gamesBtn.el.dataset.sspMenu = "minigames";
+
     const friendsBtn = ui.button({
       label: "WITH FRIENDS",
       kind: "primary",
@@ -355,9 +370,19 @@ const titleImpl: TitleState & Screen = {
     });
     setBtn.el.classList.add("ssp-title-btn");
 
-    this._buttons = [playBtn, friendsBtn, howBtn, setBtn];
+    this._buttons = [playBtn, gamesBtn, friendsBtn, howBtn, setBtn];
     for (const b of this._buttons) menu.appendChild(b.el);
     stage.appendChild(menu);
+
+    // Which build this is, so a playtester can tell a fresh deploy from a cached one.
+    const build = document.createElement("div");
+    build.className = "ssp-title-build";
+    build.dataset.sspBuild = __BUILD_ID__;
+    build.textContent = `build ${__BUILD_ID__}`;
+    build.style.cssText =
+      "position:absolute;right:10px;bottom:calc(8px + env(safe-area-inset-bottom,0px));font:600 11px Fredoka,sans-serif;" +
+      "color:rgba(255,246,229,0.65);letter-spacing:.5px;pointer-events:none;";
+    stage.appendChild(build);
 
     // Initial highlight
     this._applyHighlight();
@@ -442,11 +467,19 @@ const titleImpl: TitleState & Screen = {
 
   /* ---- actions ---- */
   _goPlay() {
+    setFreeplay(false);
     audio.sfx.play("fanfare.win");
     ui.confettiBurst(window.innerWidth / 2, window.innerHeight * 0.4, {
       sound: null,
       count: 80,
     });
+    screens.goto("select");
+  },
+
+  /** Minigame free play: pick a hero, then a minigame. */
+  _goMinigames() {
+    setFreeplay(true);
+    audio.sfx.play("pop");
     screens.goto("select");
   },
 

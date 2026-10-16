@@ -16,7 +16,7 @@
  * to this integrator) when the WASM chunk has loaded. Telemetry: window.__POW__.
  */
 import * as THREE from "three";
-import { isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
+import { cpuSkill, isLocalPlayer, isPracticeBeat, type Minigame, type MinigameContext } from "../framework";
 import { registerMinigame } from "../registry";
 import { box as frameBox, frameMinigame } from "../framing";
 import { palette, hex } from "../../config/palette";
@@ -65,7 +65,6 @@ const CROWD_COOLDOWN = 0.35; /* min seconds between crowd SFX */
 
 /* Finish staging */
 const POST_GAME_TIME = 2.0; /* win ceremony (s): must outlast the 2.2s banner so the celebration plays BEFORE the results card */
-const CAMERA_PUSH_X = 2.6; /* lateral push toward winning side */
 const VIGNETTE_DARKNESS = 0.62;
 
 /* --- Escalation: readable-in-pixels staging (presentation only, NO rng) --- */
@@ -119,8 +118,6 @@ interface PushOfWarState {
   finished: boolean;
   endPath: "solo-win" | "trio-win" | "timeout" | null;
   ranking: number[];
-  shakeT: number;
-  shakeMag: number;
   lurchVelocity: number;
   humanTaps: number;
   lastHumanTapStep: number;
@@ -139,7 +136,6 @@ interface PushOfWarState {
   /* Tension retune + staging state */
   maxAbsCrate: number;
   postGameT: number;
-  camPushDir: number;
   lastIntensity: number;
   recentPushes: number;
   lastCrowdT: number;
@@ -475,12 +471,7 @@ function stepFixed(st: PushOfWarState): void {
 
   if (totalPush > 1.5) {
     spawnDust(st);
-    if (Math.abs(st.lurchVelocity) > 0.0006) {
-      st.shakeT = Math.max(st.shakeT, 0.06);
-      st.shakeMag = Math.max(st.shakeMag, 0.015);
-    }
   }
-  if (st.surgeActive) st.shakeT = Math.max(st.shakeT, 0.04);
 }
 
 /**
@@ -552,7 +543,6 @@ function endGame(st: PushOfWarState, path: "solo-win" | "trio-win" | "timeout"):
   st.ended = true;
 
   /* Camera push-in toward the winning side */
-  st.camPushDir = path === "solo-win" ? 1 : path === "trio-win" ? -1 : 0;
   st.postGameT = 0;
 
   /* Music + crowd climax on the finish */
@@ -576,7 +566,6 @@ function endGame(st: PushOfWarState, path: "solo-win" | "trio-win" | "timeout"):
     else ctx.characters[p.id]?.anim.sad();
   }
 
-  st.shakeT = 0.4; st.shakeMag = 0.12;
   spawnConfetti(st);
   /* Stage the finish: a white flash + the charge ring going full gold so the
    * goal-line / buzzer-beater is readable without reading the banner text. */
@@ -681,30 +670,20 @@ function updateVisuals(st: PushOfWarState, dt: number): void {
 
   const cam = st.ctx.camera;
 
-  /* Post-game camera push-in toward the winning side */
+  /* Post-game ease (0..1): drives the vignette and charge ring, never the camera */
   let pushEased = 0;
   if (st.ended) {
     const p = Math.min(1, st.postGameT / POST_GAME_TIME);
     pushEased = 1 - Math.pow(1 - p, 3); // easeOutCubic
   }
 
-  if (st.shakeT > 0) {
-    st.shakeT -= dt;
-    const s = Math.max(0, st.shakeT) * st.shakeMag * 60;
-    cam.position.x = st.camBase.x + Math.sin(t * 83.7) * s + st.camPushDir * CAMERA_PUSH_X * pushEased;
-    cam.position.y = st.camBase.y + Math.cos(t * 61.3) * s + pushEased;
-    cam.position.z = st.camBase.z - 2.5 * pushEased;
-    /* Always re-aim. The VS-splash intro leaves the camera yawed toward the highlighted
-       player; without this the whole match ran off-axis and the TRIO sat outside the
-       portrait frame (measured: trio projected to x=-148, solo to x=139, both left of the
-       195 centre). Mid-match aim is the court centre, swinging to the winner when pushed. */
-    cam.lookAt(st.camLook.x + st.camPushDir * 4 * pushEased, st.camLook.y - 0.1 * pushEased, st.camLook.z - 0.5 * pushEased);
-  } else {
-    cam.position.x = st.camBase.x + st.camPushDir * CAMERA_PUSH_X * pushEased;
-    cam.position.y = st.camBase.y + pushEased;
-    cam.position.z = st.camBase.z - 2.5 * pushEased;
-    cam.lookAt(st.camLook.x + st.camPushDir * 4 * pushEased, st.camLook.y - 0.1 * pushEased, st.camLook.z - 0.5 * pushEased);
-  }
+  /* Always re-aim. The VS-splash intro leaves the camera yawed toward the highlighted
+     player; without this the whole match ran off-axis and the TRIO sat outside the
+     portrait frame (measured: trio projected to x=-148, solo to x=139, both left of the
+     195 centre). The camera stays on its framed pose for the whole round, the win
+     ceremony included: neither input nor the finish moves it. */
+  cam.position.copy(st.camBase);
+  cam.lookAt(st.camLook);
 
   // Solo aura ring — pulses warm during surges, steady soft-glow otherwise
   if (st.soloAuraRing) {
@@ -944,7 +923,7 @@ const pushOfWar: Minigame = {
     const camLook = new THREE.Vector3(0, 0.5, 0.5);
     /* Fitted to the screen: the court, both teams, the crowd rails and the
        tug meter stay between the HUD and the PUSH pad at any aspect. The
-       finish push-in still rides on camBase/camLook. */
+       camera sits on camBase/camLook for the whole round. */
     frameMinigame(
       cam,
       {
@@ -1061,10 +1040,10 @@ const pushOfWar: Minigame = {
     const st: PushOfWarState = {
       ctx, root, cratePos: 0, soloMeter: 0, surgeTimer: 0, surgeActive: false,
       players, soloId, trioIds, stepIndex: 0, simTime: 0, ended: false, finished: false,
-      endPath: null, ranking: [], shakeT: 0, shakeMag: 0, lurchVelocity: 0,
+      endPath: null, ranking: [], lurchVelocity: 0,
       humanTaps: 0, lastHumanTapStep: -99, coinWinners: [], humanCpu, crate, rope, indicator, dustPool, confettiPool,
       prng, camBase, camLook,
-      maxAbsCrate: 0, postGameT: 0, camPushDir: 1, lastIntensity: BASE_INTENSITY,
+      maxAbsCrate: 0, postGameT: 0, lastIntensity: BASE_INTENSITY,
       recentPushes: 0, lastCrowdT: 0, audioLog: [],
       soloAuraRing, soloTAG: soloTag, vignetteEl,
       crateChargeRing, crowdSilhouettes, surgeFlashEl,
@@ -1079,7 +1058,7 @@ const pushOfWar: Minigame = {
     // CPU tappers: each seat gets its own pace for this round.
     for (const p of players) {
       const [lo, hi] = p.side === "solo" ? CPU_SOLO_RATE : CPU_TRIO_RATE;
-      p.baseRate = lo + prng() * (hi - lo);
+      p.baseRate = (lo + prng() * (hi - lo)) * cpuSkill();
       p.rate = p.baseRate;
       p.nextTap = 0.15 + prng() * 0.3;
     }

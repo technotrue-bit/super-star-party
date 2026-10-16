@@ -36,6 +36,10 @@ export interface MinigameEntry {
   description?: string;
   /** START card content, copied from the module (see MinigameRules). */
   rules?: import("./framework").MinigameRules;
+  /** Kept out of the free-play menu and the roulette (copied from the module). */
+  hidden?: boolean;
+  /** The control pad the game uses, if any (copied from the module; drives the control tips). */
+  pad?: import("./framework").MinigamePad;
 }
 
 const REGISTRY: MinigameEntry[] = [];
@@ -62,6 +66,8 @@ export function registerMinigame(entry: MinigameEntry): void {
     existing.pack = pack;
     if (entry.description) existing.description = entry.description;
     if (entry.rules) existing.rules = entry.rules;
+    if (entry.hidden !== undefined) existing.hidden = entry.hidden;
+    if (entry.pad !== undefined) existing.pad = entry.pad;
     return;
   }
   REGISTRY.push({ ...entry, pack });
@@ -158,8 +164,19 @@ export function tryPickMinigame(
   return take(available[0]);
 }
 
-/** Contact minigames stay off the online path. Solo still deals them. */
+/**
+ * 1-vs-1 duels: two of the four players, so a board round never deals one.
+ * They are played from the MINIGAMES menu.
+ */
+export const DUEL_MINIGAMES: ReadonlySet<string> = new Set(["quick_draw"]);
+
+/**
+ * What the roulette may deal: never a duel or a hidden test rig, and contact minigames stay off
+ * the online path (solo still deals them).
+ */
 function dealableOnline(id: string): boolean {
+  if (DUEL_MINIGAMES.has(id)) return false;
+  if (REGISTRY.find((e) => e.id === id)?.hidden) return false;
   return !(onlineMatch() && isContactMinigame(id));
 }
 

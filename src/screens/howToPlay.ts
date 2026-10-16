@@ -1,16 +1,16 @@
 /**
  * SUPER STAR PARTY — how-to-play screen (id 'howto').
  *
- * A vertical card stack: 6 readable rule cards covering the REAL game
- * mechanics — verified against src/game/*.ts, src/board/boardData.ts and
- * src/items/items.ts. No invented rules. A BACK button returns to title.
+ * The rules, explained simply: the shared guide in src/ui/rulesGuide.ts
+ * (also shown in the pause menu), with the real space pictures. A BACK
+ * button returns to title.
  */
 import { palette } from "../config/palette";
 import { ui } from "../ui/kit";
 import { screens } from "./screenManager";
 import { audio } from "../audio/audioEngine";
 import type { Screen } from "./screenManager";
-import { ITEM_DEFS, ITEM_ORDER } from "../game/items";
+import { buildRulesGuide } from "../ui/rulesGuide";
 
 /* ------------------------------------------------------------------ */
 /*  Scoped stylesheet                                                  */
@@ -187,93 +187,10 @@ const howToImpl: HowToState & Screen = {
     topBar.append(backBtn.el, titleEl);
     stage.appendChild(topBar);
 
-    // Cards
+    // The rules, explained simply (shared with the pause menu).
     const cards = document.createElement("div");
     cards.className = "ssp-howto-cards";
-
-    // Card 1: goal
-    cards.appendChild(
-      this._card(
-        "🎯",
-        palette.sun,
-        "THE GOAL",
-        "Race around the <b>Fizzy Fairground</b> — a 28-space carnival loop. Collect <b>coins</b>, buy <b>stars</b>, grab <b>stamps</b>, and pop <b>minigame balloons</b>. Most stars wins!"
-      )
-    );
-
-    // Card 2: spaces
-    const spaceCard = this._card(
-      "🎲",
-      palette.bubble,
-      "SPACE COLORS",
-      "Roll the die each turn. Land on a space to trigger its effect:"
-    );
-    const spaceChips = document.createElement("div");
-    spaceChips.className = "ssp-howto-card__space";
-    spaceChips.appendChild(this._chip(palette.mint, "+3 coins"));
-    spaceChips.appendChild(this._chip(palette.lava, "−3 coins"));
-    spaceChips.appendChild(this._chip(palette.berry, "Happening!"));
-    spaceChips.appendChild(this._chip(palette.sun, "Prize Balloon — buy stars"));
-    spaceChips.appendChild(this._chip(palette.bubble, "Gumball Shop"));
-    spaceChips.appendChild(this._chip(palette.lavaDeep, "Grumpus!"));
-    spaceChips.appendChild(this._chip(palette.heroPip, "Stamp — collect it"));
-    spaceChips.appendChild(this._chip(palette.candy, "Balloon — pay 5 or 10"));
-    spaceCard.appendChild(spaceChips);
-    cards.appendChild(spaceCard);
-
-    // Card 3: stars
-    cards.appendChild(
-      this._card(
-        "⭐",
-        palette.sun,
-        "COINS & STARS",
-        "Everyone starts with <b>10 coins</b>. Pass or land on the <b>Grand Prize Balloon</b> and buy up to <b>5 stars</b> at <b>10 coins</b> each. If you can't pay for the whole bundle, you get what you can afford and the rest pops away. The balloon then pops and floats to a new spot. Stars decide the winner!"
-      )
-    );
-
-    // Card 4: minigames
-    cards.appendChild(
-      this._card(
-        "🎮",
-        palette.candy,
-        "MINIGAMES",
-        "Pass or land on a <b>Minigame Balloon</b> and you pay its price (<b>5</b> or <b>10</b> coins). If anyone pops one, everybody plays a minigame after the round. No pop, no minigame. The winner earns <b>10 coins or more</b> (the mini-game card shows the prize)."
-      )
-    );
-
-    // Card 5: items
-    const itemCard = this._card(
-      "🍄",
-      palette.mint,
-      "ITEMS & THE GUMBALL SHOP",
-      "Pass or land on a shop space (🛒) to buy. You choose on big touch buttons; computers buy one item they can afford and use one before they roll. Sour Mushroom waits until a rival has rolled. Lucky Card triples your pack's roulette odds and pays +1 on your next blue. In the last 5 turns, Fizzy Barker gives last place one free bag item."
-    );
-    const itemChips = document.createElement("div");
-    itemChips.className = "ssp-howto-card__space";
-    const chipColors = [palette.candy, palette.bubble, palette.sun, palette.mint, palette.tentRed];
-    let chipI = 0;
-    for (const key of ITEM_ORDER) {
-      const def = ITEM_DEFS[key];
-      if (!def || def.places) continue;
-      const late = def.lateGame ? ", last 5 turns" : "";
-      itemChips.appendChild(
-        this._chip(chipColors[chipI % chipColors.length], `${def.icon} ${def.name} — ${def.price} coins${late}`),
-      );
-      chipI += 1;
-    }
-    itemCard.appendChild(itemChips);
-    cards.appendChild(itemCard);
-
-    // Card 6: bonus
-    cards.appendChild(
-      this._card(
-        "🏆",
-        palette.candy,
-        "BONUS STARS",
-        "Stamp spaces hand out a <b>Fizz</b>, <b>Crumb</b>, or <b>Taffy</b> stamp (passing counts). Hold all three and the <b>Carnival Jackpot</b> pays <b>30 coins</b> on the spot — enough to buy a star later that same move. At the end, <b>Mini Star</b> and <b>Coin Star</b> still go to the most minigame wins and the most coins."
-      )
-    );
-
+    cards.appendChild(buildRulesGuide());
     stage.appendChild(cards);
 
     // Bottom back button

@@ -26,4 +26,14 @@ export const MINIGAME_MODULES: Array<() => Promise<Minigame>> = [
   () => import("./pipe_puzzle/index").then((m) => m.loadPipePuzzle()),
   // ---- Wave 4 batch 1 (1-vs-3) ----
   () => import("./push_of_war/index").then((m) => m.loadPushOfWar()),
+  // ---- 1-vs-1 duels (free play; never dealt by the 4-player roulette) ----
+  () => import("./quick_draw/index").then((m) => m.loadQuickDraw()),
+  // ---- Fifty: Wave 1 ----
+  () => import("./slingshot_summit/index").then((m) => m.loadSlingshotSummit()),
+  () => import("./pie_flick/index").then((m) => m.loadPieFlick()),
+  () => import("./row_rumble/index").then((m) => m.loadRowRumble()),
+  () => import("./crank_coaster/index").then((m) => m.loadCrankCoaster()),
+  () => import("./chalk_trails/index").then((m) => m.loadChalkTrails()),
+  // ---- Hidden test rigs (never in the menu or the roulette) ----
+  () => import("./control_lab/index").then((m) => m.loadControlLab()),
 ];

@@ -117,6 +117,9 @@ let height0 = 0;
 let wired = false;
 let last5Done = false;
 
+/** Scales every shot's orbit swing; lower is calmer. */
+const SWING_SCALE = 0.5;
+
 const scratch = new THREE.Vector3();
 const lookTo = new THREE.Vector3();
 
@@ -287,37 +290,33 @@ function stepShots(dt: number, pos: THREE.Vector3, look: THREE.Vector3, blocked:
   }
 
   // Blend weight: ease in over the first 22%, out over the last 30%.
-  const w = smooth(x / 0.22) * (1 - smooth((x - 0.7) / 0.3)) * fade;
+  const w = smooth(x / 0.22) * (1 - smooth((x - 0.7) / 0.3)) * smooth(fade);
   // Orbit arc: the azimuth swings across the shot while the camera closes in
   // (or backs off) and dips (or climbs), so the path is a smooth curve.
   const e = smooth(x);
   const bump = Math.sin(Math.PI * e);
-  const az = az0 + s.swing * e;
-  const d = dist0 * (1 - s.close * bump);
-  const y = height0 * (1 + (s.rise - 1) * bump);
+  // Half the authored swing: the arcs read as a gentle drift, not a whip.
+  const az = az0 + s.swing * SWING_SCALE * e;
+  const d = dist0 * (1 - s.close * 0.7 * bump);
+  const y = height0 * (1 + (s.rise - 1) * 0.7 * bump);
   scratch.set(subject.x + Math.sin(az) * d, subject.y + y, subject.z + Math.cos(az) * d);
   lookTo.set(subject.x, subject.y + s.lookY, subject.z);
   pos.lerp(scratch, w);
   look.lerp(lookTo, w);
 }
 
-/** The board screen's original dice/ceremony punch, unchanged. */
+/** The board screen's dice/ceremony punch: a smooth lean in, hold, and back. */
 function stepPunch(dt: number, pos: THREE.Vector3, look: THREE.Vector3, p: CameraPunch | null): CameraPunch | null {
   if (!p) return null;
   p.t += dt;
+  // Smoothstep in, hold, smoothstep out: no sudden start or stop.
   let k: number;
-  if (p.t < 0.45) {
-    const q = p.t / 0.45;
-    k = 1 - Math.pow(1 - q, 3);
-  } else if (p.t < 1.55) {
-    k = 1;
-  } else {
-    const q = Math.min(1, (p.t - 1.55) / 0.45);
-    k = 1 - (1 - Math.pow(1 - q, 3));
-  }
+  if (p.t < 0.6) k = smooth(p.t / 0.6);
+  else if (p.t < 1.5) k = 1;
+  else k = 1 - smooth((p.t - 1.5) / 0.65);
   pos.lerpVectors(pos, p.pos, k);
   look.lerpVectors(look, p.look, k);
-  return p.t > 2.05 ? null : p;
+  return p.t > 2.15 ? null : p;
 }
 
 /** Probe view of the shot queue. */

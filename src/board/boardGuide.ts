@@ -65,7 +65,7 @@ export function boardGuide(def: BoardDef, totalTurns: number = settings.totalTur
   if (blue !== undefined) {
     stops.push({
       title: "Blue and Red Spaces",
-      body: `Land on a blue space to win ${settings.blueCoin} coins. Land on a red space and you lose ${settings.redCoin}. Simple as that!`,
+      body: `Land on a blue space to win ${settings.blueCoin} coins. Land on a red space and you lose ${settings.redCoin}. And keep an eye on blue spaces: now and then a Hidden Block pops out with a surprise!`,
       focus: { kind: "space", index: blue },
     });
   }

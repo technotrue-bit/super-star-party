@@ -15,7 +15,12 @@ const TURNS = Number(process.env.SSP_TURNS ?? 6);
 const board = process.env.SSP_BOARD ? `&board=${process.env.SSP_BOARD}` : "";
 const SEED = Number(process.env.SSP_SEED ?? 7);
 const URL = `${BASE}/?seed=${SEED}&screen=board&autoplay=1&audio=0&speed=4${board}`;
-const CAP_MS = 480000;
+// Wall-clock cap for one replay. Eight minutes was not enough on a slower
+// CI runner: turn 11 and the finale were still running at the cap. The replay
+// itself is unchanged; only the time it may take goes up.
+// Longer Wave 1 minigames stretch the replay too; twenty minutes keeps the
+// finale inside the cap on a slow runner.
+const CAP_MS = 1200000;
 
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true })).newPage();
@@ -39,6 +44,8 @@ try {
         prev = m.turn;
         const c = JSON.parse(JSON.stringify(m));
         delete c.boardId;
+        // A rule setting, not gameplay state: a CPU level leaves Normal's play untouched.
+        delete c.cpuLevel;
         for (const p of c.players) p.controller = p.controller === "cpu" ? "cpu" : "local";
         log.push({ turn: m.turn, hash: fnv(JSON.stringify(c)), coins: m.players.map((p) => p.coins), spaces: m.players.map((p) => p.space), balloon: m.starBalloonPos, boardId: m.boardId ?? null });
       }

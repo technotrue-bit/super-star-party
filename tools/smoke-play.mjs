@@ -191,7 +191,8 @@ while (Date.now() - t0 < MATCH_CAP_MS) {
       text,
       howVisible: inView(how),
       btnVisible: inView(btn),
-      controls: /tap|drag|hold/i.test(text),
+      // The how-to must name the control. The pad games (Fifty, Wave 1) add swipe, spin and draw.
+      controls: /tap|drag|hold|swipe|spin|draw/i.test(text),
     };
   });
   if (startGate) {

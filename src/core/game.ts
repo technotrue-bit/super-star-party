@@ -3,6 +3,7 @@
  * Wave 2 (turn-loop) owns the full orchestration; this module defines the
  * data model every system reads/writes. Keep fields stable.
  */
+import { isCpuLevel, storedCpuLevel, type CpuLevel } from "../config/cpuLevel";
 import { rng } from "./rng";
 import { settings } from "../config/settings";
 import { defaultSeatController, type SeatController } from "./seat";
@@ -177,6 +178,8 @@ export interface MatchState {
   enabledPacks: MinigamePackId[];
   /** Host coin scale, ×1–×4. Payouts read this, and snapshot() includes it. */
   coinMultiplier: CoinMultiplier;
+  /** How good the computer players are this match (see src/config/cpuLevel.ts). */
+  cpuLevel: CpuLevel;
   /** Pack owned by each local seat. */
   humanPack: MinigamePackId;
   /**
@@ -260,6 +263,7 @@ export const match: MatchState = {
   minigameDice: null,
   enabledPacks: persistedRules.enabledPacks,
   coinMultiplier: persistedRules.coinMultiplier,
+  cpuLevel: storedCpuLevel(),
   humanPack: persistedRules.humanPack,
   playedByPack: blankPlayedByPack(),
   shopStock: {},
@@ -284,7 +288,7 @@ export function startMatch(
   totalTurns = 10,
   seed?: number,
   controllers?: SeatController[],
-  opts: { board?: BoardId } = {},
+  opts: { board?: BoardId; cpuLevel?: CpuLevel } = {},
 ): void {
   // A provided seed is preserved (critic replays, debug API); otherwise a
   // fresh random seed starts a new match.
@@ -295,6 +299,8 @@ export function startMatch(
   // (?board= wins). "random" resolves here, from the seed when one was
   // given, never from the match rng.
   match.boardId = isBoardId(opts.board) ? opts.board : resolveBoardRule(readPersistedRules().board, seed);
+  // The CPU level is part of the match, so every peer of an online room runs the same one.
+  match.cpuLevel = isCpuLevel(opts.cpuLevel) ? opts.cpuLevel : storedCpuLevel();
   match.turn = 1;
   match.totalTurns = totalTurns;
   match.phase = "idle";

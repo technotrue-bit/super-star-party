@@ -189,8 +189,15 @@ export function startResultsCeremony(opts: {
   ranking: number[];
   winner: number;
   coins: number;
-  /** Everyone who received `coins`. Defaults to the single first-place id. */
+  /** The winner(s) the headline names. Defaults to the single first-place id. */
   paidIds?: number[];
+  /** Coins each player received (free-for-all places differ). Absent: every paidId got `coins`. */
+  coinsById?: Map<number, number>;
+  /**
+   * Only these players take the podium and the results card (a 1v1 duel:
+   * winner and loser). Absent: everyone. Hide the others' avatars via `hide`.
+   */
+  podiumIds?: number[];
   minigameName: string;
   /** Minigame objects hidden while the results scene shows (restored on destroy). */
   hide?: THREE.Object3D[];
@@ -230,7 +237,9 @@ export function startResultsCeremony(opts: {
 
   const podium = new THREE.Group();
   podium.name = "results-podium";
-  for (const step of STEPS) {
+  // A duel builds just the 1st and 2nd steps.
+  const stepCount = opts.podiumIds && opts.podiumIds.length > 0 ? Math.min(STEPS.length, opts.podiumIds.length) : STEPS.length;
+  for (const step of STEPS.slice(0, stepCount)) {
     const geo = new THREE.BoxGeometry(step.w, step.h, step.d);
     const mat = new THREE.MeshBasicMaterial({ color: hex(step.color) });
     const mesh = new THREE.Mesh(geo, mat);
@@ -266,8 +275,12 @@ export function startResultsCeremony(opts: {
   }
   const charData: CharData[] = [];
 
-  const ordered = [...ranking];
+  let ordered = [...ranking];
   for (const p of match.players) if (!ordered.includes(p.id)) ordered.push(p.id);
+  if (opts.podiumIds && opts.podiumIds.length > 0) {
+    const only = new Set(opts.podiumIds);
+    ordered = ordered.filter((id) => only.has(id));
+  }
 
   for (let i = 0; i < ordered.length; i++) {
     const pid = ordered[i];
@@ -378,12 +391,13 @@ export function startResultsCeremony(opts: {
       scoreEl.dataset.sspScore = String(score);
       row.appendChild(scoreEl);
     }
-    if (paid.has(ordered[i])) {
+    const got = opts.coinsById ? (opts.coinsById.get(ordered[i]) ?? 0) : paid.has(ordered[i]) ? coins : 0;
+    if (got > 0) {
       const coinEl = document.createElement("span");
-      coinEl.textContent = `+${coins}c`;
+      coinEl.textContent = `+${got}c`;
       coinEl.style.cssText = `margin-left:8px;white-space:nowrap;color:${palette.sunDeep};text-shadow:0 1px 0 ${palette.ink};`;
       row.appendChild(coinEl);
-      row.dataset.sspPaid = String(coins);
+      row.dataset.sspPaid = String(got);
     }
     cardEl.appendChild(row);
   }
