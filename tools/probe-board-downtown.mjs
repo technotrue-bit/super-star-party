@@ -35,6 +35,11 @@ const ROOT = resolve(dirname(new URL(import.meta.url).pathname), "..");
 // sends anyone down the Riverside branch. The per-seed "lanes" line shows
 // which seeds cover what when a rule change shifts the rng again.
 const SEEDS = (process.env.SSP_DT_SEEDS ?? "4,5").split(",").map(Number);
+// Each new minigame in the pool shifts which game is dealt, so which seeds take
+// which lane moves too (Crank Coaster left seeds 4 and 5 off the Riverside
+// branch). When the listed seeds leave a fork lane untaken, try these in turn
+// until both forks are covered both ways.
+const SPARE_SEEDS = (process.env.SSP_DT_SPARE ?? "6,8,9").split(",").filter(Boolean).map(Number);
 const RUN_TURNS = Number(process.env.SSP_DT_TURNS ?? 10);
 const CAP_MS = 420000;
 const fails = [];
@@ -125,7 +130,12 @@ try {
   // ---- Part 3 --------------------------------------------------------------
   console.log(`3. Downtown autoplay (seeds ${SEEDS.join(", ")}, up to ${RUN_TURNS} turns each)`);
   const taken = forkInfo.map(() => ({ branch: false, ring: false }));
-  for (const seed of SEEDS) {
+  const queue = [...SEEDS];
+  const spare = [...SPARE_SEEDS];
+  const covered = () => taken.every((t) => t.branch && t.ring);
+  while (queue.length || (!covered() && spare.length)) {
+    const seed = queue.length ? queue.shift() : spare.shift();
+    if (!SEEDS.includes(seed)) console.log(`    a fork lane is still untaken, trying spare seed ${seed}`);
     const p = await (await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true })).newPage();
     const errs = [];
     p.on("pageerror", (e) => errs.push(String(e).slice(0, 200)));
