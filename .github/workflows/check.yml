@@ -6,7 +6,7 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 110
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,6 +28,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Unit tests
+        run: npx vitest run
+
       - name: No core rng in cosmetic board code
         run: node tools/check-lively-imports.mjs
 
@@ -44,6 +47,18 @@ jobs:
           echo "The game did not listen on port 5177."
           cat "$RUNNER_TEMP/vite.log"
           exit 1
+
+      - name: Screen lock (taps and pads never scroll or zoom the page)
+        run: node tools/probe-screen-lock.mjs
+
+      - name: Pad controls (keyboard)
+        run: node tools/probe-controls-keys.mjs
+
+      - name: Pad controls (touch)
+        run: node tools/probe-controls-touch.mjs
+
+      - name: Minigame camera lock
+        run: node tools/probe-camera-lock.mjs
 
       - name: Twin match
         run: node tools/twin-seed.mjs
