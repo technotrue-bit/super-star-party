@@ -16,6 +16,14 @@ describe("titleOrbitPose", () => {
     expect(p.pos.y).toBeGreaterThan(Math.hypot(p.pos.x - center.x, p.pos.z - center.z));
   });
 
+  it("is a top-down overview: at least 60 degrees above the board", () => {
+    for (const aspect of [1280 / 800, 390 / 844]) {
+      const p = titleOrbitPose(fizzyFairground, 13, aspect, 45);
+      const elev = Math.atan2(p.pos.y, Math.hypot(p.pos.x - center.x, p.pos.z - center.z)) * (180 / Math.PI);
+      expect(elev).toBeGreaterThanOrEqual(60);
+    }
+  });
+
   it("keeps a constant radius and height while it turns, and loops", () => {
     const a = titleOrbitPose(fizzyFairground, 0, 1.6, 45);
     const r0 = Math.hypot(a.pos.x - center.x, a.pos.z - center.z);

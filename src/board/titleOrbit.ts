@@ -8,10 +8,14 @@
 import * as THREE from "three";
 import type { BoardDef } from "./boardData";
 
-/** Seconds for one full turn around the board. */
-export const TITLE_ORBIT_PERIOD = 120;
-/** Camera elevation above the ground plane (radians, ~52deg: looking down). */
-const ELEV = 0.9;
+/** Seconds for one full turn around the board (slow, but the circling reads). */
+export const TITLE_ORBIT_PERIOD = 100;
+/**
+ * Camera elevation above the ground plane (radians, ~66deg): a top-down
+ * overview of the whole island that still keeps enough angle for the tents
+ * and trees to read as 3D while it circles.
+ */
+export const TITLE_ORBIT_ELEV = 1.15;
 /** Landmarks reach ~5u past the space loop; keep them in frame. */
 const SCENERY_PAD = 5.2;
 
@@ -56,8 +60,8 @@ export function titleOrbitPose(
   const dist = (R / Math.sin(half)) * (aspect < 1 ? 0.92 : 0.95);
 
   const yaw = (t / TITLE_ORBIT_PERIOD) * Math.PI * 2;
-  const flat = dist * Math.cos(ELEV);
-  out.pos.set(cx + Math.sin(yaw) * flat, dist * Math.sin(ELEV), cz + Math.cos(yaw) * flat);
+  const flat = dist * Math.cos(TITLE_ORBIT_ELEV);
+  out.pos.set(cx + Math.sin(yaw) * flat, dist * Math.sin(TITLE_ORBIT_ELEV), cz + Math.cos(yaw) * flat);
   out.look.set(cx, 0, cz);
   return out;
 }
