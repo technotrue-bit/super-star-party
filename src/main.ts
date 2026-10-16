@@ -16,6 +16,7 @@ import { audio, unlock } from "./audio/audioEngine";
 import { fitAppToViewport, onViewportChange, viewportSize } from "./ui/viewport";
 import { installScreenLock } from "./ui/screenLock";
 import { installPostFx, renderPostFx, resizePostFx } from "./render/postFx";
+import { warmPortraits } from "./characters/portrait";
 
 export const world = {
   renderer: null as THREE.WebGLRenderer | null,
@@ -157,6 +158,8 @@ function boot(): void {
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+  // Hero face avatars for the HUD and cards, drawn in idle moments.
+  warmPortraits();
 
   console.log(`[SSP] SUPER STAR PARTY booted — seed ${seed}, screen ${screen}`);
 }
