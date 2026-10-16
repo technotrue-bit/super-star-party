@@ -1,8 +1,8 @@
 /**
  * SUPER STAR PARTY — the MP7-grade title screen (Wave 4).
  *
- * A living front door: a slow carnival backdrop (the full Fizzy Fairground
- * board scene behind a hero character on a pedestal), a chunky animated
+ * A living front door: the full Fizzy Fairground board scene seen from above
+ * while the camera slowly orbits it (board/titleOrbit.ts), a chunky animated
  * "SUPER STAR PARTY" wordmark with sparkles, and a three-button menu
  * (PLAY / HOW TO PLAY / SETTINGS) with full keyboard + touch nav, MP7-style
  * hover/press bounce, live audio, persisted settings and a polished scale
@@ -11,16 +11,16 @@
  * Everything visual comes from the palette + UI kit; no hand-rolled buttons
  * or off-palette colors. Music uses only the existing "title" track id.
  */
-import * as THREE from "three";
-import { palette, hex } from "../config/palette";
+import type { Object3D } from "three";
+import { palette } from "../config/palette";
 import { ui } from "../ui/kit";
 import { audio } from "../audio/audioEngine";
 import { settings } from "../config/settings";
 import { world } from "../main";
 import { screens } from "./screenManager";
-import { createCharacter, type Character } from "../characters/characterFactory";
 import { buildBoardScene, type BoardScene } from "../board/boardScene";
 import { fizzyFairground } from "../board/boardData";
+import { titleOrbitPose, type OrbitPose } from "../board/titleOrbit";
 import { getMusicGain, setMusicGain, getSfxGain, setSfxGain } from "../ui/sound";
 import { mountPackPicker } from "../ui/packPicker";
 import { setOnlineMatch } from "../net/mode";
@@ -235,9 +235,7 @@ const LS_SPEED = "ssp.speed";
 
 interface TitleState {
   _board?: BoardScene;
-  _char?: Character;
-  _pedestal?: THREE.Mesh;
-  _floatStar?: THREE.Mesh;
+  _orbit?: OrbitPose;
   _confettiTimer?: number;
   _t?: number;
   _onKeyDown?: (e: KeyboardEvent) => void;
@@ -247,8 +245,9 @@ interface TitleState {
   _highlighted?: number;
   _stage?: HTMLDivElement;
   _settingsOpen?: boolean;
-  _existing?: Set<THREE.Object3D>;
+  _existing?: Set<Object3D>;
   _applyHighlight: () => void;
+  _placeCamera: () => void;
   _goPlay: () => void;
   _goHowTo: () => void;
   _openSettings: () => void;
@@ -276,44 +275,13 @@ const titleImpl: TitleState & Screen = {
     // Snapshot existing scene children so exit() only sweeps what we add.
     this._existing = new Set(world.scene?.children ?? []);
 
-    // ---- camera: low party angle, hero in foreground, carnival behind ----
+    // ---- backdrop: the first board, seen from a slow overhead orbit ----
+    this._board = buildBoardScene(fizzyFairground);
     const cam = world.camera!;
-    cam.position.set(0, 2.6, 7.5);
     cam.fov = 45;
     cam.updateProjectionMatrix();
-    cam.lookAt(0, 1, 0);
-
-    // ---- backdrop: the full Fizzy Fairground carnival ----
-    const board = buildBoardScene(fizzyFairground);
-    this._board = board;
-
-    // ---- hero pedestal + character (Pip, the orange star kid) ----
-    const pedestal = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.7, 0.82, 0.35, 28),
-      new THREE.MeshToonMaterial({ color: hex(palette.ink) })
-    );
-    pedestal.position.set(0, 0.175, 0);
-    pedestal.castShadow = true;
-    pedestal.receiveShadow = true;
-    world.scene?.add(pedestal);
-    this._pedestal = pedestal;
-
-    const char = createCharacter("pip");
-    char.group.position.set(0, 0.35, 0);
-    char.group.scale.setScalar(1.15);
-    char.setFacing(0);
-    char.anim.idle();
-    world.scene?.add(char.group);
-    this._char = char;
-
-    // ---- floating star accent ----
-    const star = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.38, 0),
-      new THREE.MeshToonMaterial({ color: hex(palette.sun) })
-    );
-    star.position.set(2.4, 2.9, -1.5);
-    world.scene?.add(star);
-    this._floatStar = star;
+    this._orbit = undefined;
+    this._placeCamera();
 
     // ---- DOM overlay stage ----
     const stage = document.createElement("div");
@@ -417,10 +385,9 @@ const titleImpl: TitleState & Screen = {
     };
     window.addEventListener("keydown", this._onKeyDown);
 
-    // ---- resize keeps the camera framed ----
+    // ---- resize refits the orbit to the new aspect ----
     this._onResize = () => {
-      const cam2 = world.camera;
-      if (cam2) cam2.lookAt(0, 1, 0);
+      this._placeCamera();
     };
     window.addEventListener("resize", this._onResize);
 
@@ -453,6 +420,15 @@ const titleImpl: TitleState & Screen = {
         { sound: null, count: 28 }
       );
     }, 2400);
+  },
+
+  /* ---- camera: slow overhead orbit (dt-driven, presentation only) ---- */
+  _placeCamera() {
+    const cam = world.camera;
+    if (!cam) return;
+    this._orbit = titleOrbitPose(fizzyFairground, this._t ?? 0, cam.aspect, cam.fov, this._orbit);
+    cam.position.copy(this._orbit.pos);
+    cam.lookAt(this._orbit.look);
   },
 
   /* ---- highlight state ---- */
@@ -632,25 +608,16 @@ const titleImpl: TitleState & Screen = {
       window.removeEventListener("keydown", this._onFirstGesture);
       this._onFirstGesture = undefined;
     }
-    if (this._char) {
-      world.scene?.remove(this._char.group);
-      this._char.dispose();
-      this._char = undefined;
-    }
-    if (this._pedestal) {
-      world.scene?.remove(this._pedestal);
-      this._pedestal.geometry.dispose();
-      (this._pedestal.material as THREE.Material).dispose();
-      this._pedestal = undefined;
-    }
-    if (this._floatStar) {
-      world.scene?.remove(this._floatStar);
-      this._floatStar.geometry.dispose();
-      (this._floatStar.material as THREE.Material).dispose();
-      this._floatStar = undefined;
-    }
     this._board?.dispose();
     this._board = undefined;
+    this._orbit = undefined;
+    // Hand the next screen the close, low pose the title used to leave
+    // behind: hero select inherits it until its own fit runs.
+    const cam = world.camera;
+    if (cam) {
+      cam.position.set(0, 2.6, 7.5);
+      cam.lookAt(0, 1, 0);
+    }
     this._stage?.remove();
     this._stage = undefined;
     this._buttons = undefined;
@@ -661,25 +628,8 @@ const titleImpl: TitleState & Screen = {
   /* ---- per-frame ---- */
   update(dt: number) {
     this._t = (this._t ?? 0) + dt;
-    const t = this._t;
-
-    this._char?.update(dt);
     this._board?.update(dt);
-
-    if (this._floatStar) {
-      this._floatStar.rotation.y += dt * 1.4;
-      this._floatStar.position.y = 2.9 + Math.sin(t * 1.7) * 0.18;
-    }
-
-    const cam = world.camera;
-    if (cam) {
-      const baseY = 2.6;
-      const baseZ = 7.5;
-      cam.position.x = Math.sin(t * 0.11) * 0.5;
-      cam.position.y = baseY + Math.sin(t * 0.19) * 0.06;
-      cam.position.z = baseZ + Math.cos(t * 0.09) * 0.3;
-      cam.lookAt(0, 1 + Math.sin(t * 0.15) * 0.04, 0);
-    }
+    this._placeCamera();
   },
 
   render() {},
