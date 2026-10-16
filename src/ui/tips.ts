@@ -146,8 +146,12 @@ function injectStyles(): void {
   if (document.getElementById(STYLE_ID)) return;
   const s = document.createElement("style");
   s.id = STYLE_ID;
+  // The card sits under the banner band (--ssp-fb-banner-top, two lines of
+  // .ssp-fb-banner text), so "TURN 1" and friends are never covered.
   s.textContent = `
-    .ssp-tip{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 168px);transform:translate(-50%,-14px);opacity:0;
+    .ssp-tip{position:fixed;left:50%;
+      top:calc(var(--ssp-fb-banner-top, calc(env(safe-area-inset-top,0px) + 140px)) + 2.24 * clamp(24px, 5.5vw, 40px) + 12px);
+      transform:translate(-50%,-14px);opacity:0;
       z-index:84;width:min(92vw,360px);box-sizing:border-box;display:flex;gap:10px;align-items:flex-start;
       background:${palette.cream};color:${palette.ink};border:4px solid ${palette.ink};border-radius:16px;
       box-shadow:0 5px 0 ${palette.ink};padding:9px 12px;font-family:Fredoka,sans-serif;cursor:pointer;
