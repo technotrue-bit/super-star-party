@@ -7,6 +7,8 @@
 //   twin  Z down/up then X down/up -> button:a:1, a:0, b:1, b:0
 //   dial  E held 1 s -> about +1.5 turns (sum of the lab's dial deltas); Q -> negative
 //   draw  mouse down, 10 moves, up -> draw:start, >=5 draw:move, draw:end
+// Held through GO (hold and twin): a key pressed during the countdown and still down at GO counts as
+// a fresh press at GO (hold:1:0.00, then the release), and one let go before GO sends nothing.
 // It also checks the lab is absent from the MINIGAMES menu, using the selector the menu really
 // renders (.ssp-mgm__card[data-mg-id=ID]) and proving that selector on balloon_pop.
 // Prints PASS controls <pad> or FAIL controls <pad> ...; exit code 1 on any fail.
@@ -190,6 +192,59 @@ for (const pad of PADS) {
   if (why) failed = true;
   console.log(why ? `FAIL controls ${pad} ${why}` : `PASS controls ${pad}`);
   await page?.close();
+}
+
+// Pre-charging: press during the countdown, keep it down through GO.
+// `release` is "after" (let go once play has begun) or "before" (let go before GO).
+async function heldThroughGo(pad, key, release) {
+  const page = await boot(`${BASE}?seed=7&audio=0&minigame=control_lab&pad=${pad}`);
+  try {
+    await page.evaluate(() => window.__SSP__.goto("minigame"));
+    const t0 = Date.now();
+    let phase = "";
+    let pressed = false;
+    while (Date.now() - t0 < 60000) {
+      phase = await page.evaluate(() => window.__SSP__.mgProbe().phase);
+      if (phase === "play") break;
+      if (phase === "vs-splash") await page.keyboard.press("Space");
+      else if (phase === "") await page.getByText("START MINI GAME").click({ timeout: 2500 }).catch(() => {});
+      else if (!pressed && (phase === "countdown" || phase === "practice" || phase === "go")) {
+        await page.keyboard.down(key);
+        pressed = true;
+        if (release === "before") {
+          await page.waitForTimeout(60);
+          await page.keyboard.up(key);
+        }
+      }
+      await page.waitForTimeout(40);
+    }
+    if (phase !== "play") return `never reached play (phase=${phase || "none"})`;
+    if (!pressed) return "never saw a countdown phase to press in";
+    await page.waitForTimeout(500);
+    const during = await inputs(page);
+    if (release === "before") return during.length === 0 ? null : `key let go before GO still sent ${JSON.stringify(during)}`;
+    const want = pad === "hold" ? "hold:1:0.00" : "button:b:1";
+    if (JSON.stringify(during) !== JSON.stringify([want])) return `held through GO gave ${JSON.stringify(during)}, want [${want}] once`;
+    await page.keyboard.up(key);
+    await page.waitForTimeout(150);
+    const after = await inputs(page);
+    const wantUp = pad === "hold" ? /^hold:0:(\d+\.\d\d)$/ : /^button:b:0$/;
+    if (after.length !== 2 || !wantUp.test(after[1])) return `release after GO gave ${JSON.stringify(after)}`;
+    if (pad === "hold" && Number(wantUp.exec(after[1])[1]) > 1.5) return `charge ${after[1]} counts more than the 0.5-1 s since GO`;
+    return null;
+  } finally {
+    await page.close();
+  }
+}
+for (const [pad, key, release] of [["hold", "Space", "after"], ["hold", "Space", "before"], ["twin", "x", "after"]]) {
+  let why;
+  try {
+    why = await heldThroughGo(pad, key, release);
+  } catch (e) {
+    why = `threw ${String(e).slice(0, 200)}`;
+  }
+  if (why) failed = true;
+  console.log(why ? `FAIL controls held-through-GO ${pad} (${release}) ${why}` : `PASS controls held-through-GO ${pad} (${release})`);
 }
 
 // The lab is hidden: its card must not be in the MINIGAMES menu. The selector is the one the

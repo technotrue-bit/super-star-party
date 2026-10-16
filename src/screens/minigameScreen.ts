@@ -595,6 +595,9 @@ function cancelHudCoinsTween(): void {
 /*  Screen state                                                       */
 /* ------------------------------------------------------------------ */
 
+/** Held-key identity: Shift and caps lock must not split a press from its release. */
+const heldKeyId = (key: string): string => (key === "Enter" ? " " : key.length === 1 ? key.toLowerCase() : key);
+
 type MgPhase = "vs-splash" | "countdown" | "practice" | "go" | "play" | "results";
 
 /**
@@ -644,6 +647,13 @@ interface MgScreenState {
   _onBlur?: () => void;
   /** Keyboard and mouse mapping for the game's control pad. Unset for tap and steer games. */
   _padKeys?: PadKeys;
+  /**
+   * Pad keys physically down before play begins (key, as pressed). A key still
+   * down at GO is fed to the pad as a fresh press (see _beginPlay).
+   */
+  _heldKeys?: Map<string, string>;
+  /** Phone pads: a finger still down at GO starts its hold or button then. */
+  _touchGo?: () => void;
   _touch?: TouchPad;
   _hud?: ScoreHud;
   _practiceEl?: HTMLDivElement;
@@ -1389,6 +1399,10 @@ const minigameScreenImpl: MgScreenState & Screen = {
       };
 
       self._onKeyDown = (e: KeyboardEvent) => {
+        // Remember pad keys held through the countdown: GO treats them as pressed.
+        if (self._phase !== "play" && self._padKeys && !e.repeat) {
+          (self._heldKeys ??= new Map()).set(heldKeyId(e.key), e.key);
+        }
         if ((e.key === " " || e.key === "Enter") && self._phase === "vs-splash") {
           self._vsSkip = true;
         }
@@ -1439,10 +1453,12 @@ const minigameScreenImpl: MgScreenState & Screen = {
       // Releases and a lost window matter to the pads: a hold must end when
       // Space comes up, or when alt-tab swallows the keyup.
       self._onKeyUp = (e: KeyboardEvent) => {
+        self._heldKeys?.delete(heldKeyId(e.key));
         if (self._padKeys?.keyUp(e.key, e.timeStamp) && self._phase === "play") e.preventDefault();
         if (self._practiceKeys?.keyUp(e.key, e.timeStamp) && self._phase === "practice") e.preventDefault();
       };
       self._onBlur = () => {
+        self._heldKeys?.clear();
         self._padKeys?.release();
         self._practiceKeys?.release();
       };
@@ -1477,35 +1493,61 @@ const minigameScreenImpl: MgScreenState & Screen = {
         // everything on .ssp-touch, so nothing here fires twice.
         onPad: (() => {
           const open = { hold: false, a: false, b: false, draw: false };
+          /** The finger is on the pad right now, whether or not the game took the press. */
+          const down = { hold: false, a: false, b: false };
+          /** When a press that started before GO was handed to the game (ms). */
+          const goAt = { hold: 0 };
           const playing = (): boolean => self._phase === "play" && !!self._ctx;
+          // A finger still down when play begins counts as pressing then. The
+          // release path is untouched: it always reaches the game via `open`.
+          self._touchGo = () => {
+            if (!playing()) return;
+            const at = performance.now();
+            if (down.hold && !open.hold) {
+              open.hold = true;
+              goAt.hold = at;
+              self._ctx?.input.hold?.(true, 0);
+            }
+            for (const which of ["a", "b"] as const) {
+              if (down[which] && !open[which]) {
+                open[which] = true;
+                self._ctx?.input.button?.(which, true);
+              }
+            }
+          };
           // In the practice beat the same calls feed the lesson recorder, never the game.
           const teaching = (): PracticeLearn["calls"] | null =>
             self._phase === "practice" ? self._practiceLearn?.calls ?? null : null;
           return {
-            hold: (down, heldSec) => {
+            hold: (isDown, heldSec) => {
+              down.hold = isDown;
               const lesson = teaching();
               if (lesson) {
-                lesson.hold(down, heldSec);
+                lesson.hold(isDown, heldSec);
                 return;
               }
-              if (down ? !playing() : !open.hold) return;
-              open.hold = down;
-              self._ctx?.input.hold?.(down, heldSec);
+              if (isDown ? !playing() : !open.hold) return;
+              open.hold = isDown;
+              // A charge that began before GO counts from GO, as on the keyboard.
+              const sec = !isDown && goAt.hold ? Math.min(heldSec, (performance.now() - goAt.hold) / 1000) : heldSec;
+              if (!isDown) goAt.hold = 0;
+              self._ctx?.input.hold?.(isDown, sec);
             },
             swipe: (dx, dy, power) => {
               const lesson = teaching();
               if (lesson) lesson.swipe(dx, dy, power);
               else if (playing()) self._ctx?.input.swipe?.(dx, dy, power);
             },
-            button: (which, down) => {
+            button: (which, isDown) => {
+              down[which] = isDown;
               const lesson = teaching();
               if (lesson) {
-                lesson.button(which, down);
+                lesson.button(which, isDown);
                 return;
               }
-              if (down ? !playing() : !open[which]) return;
-              open[which] = down;
-              self._ctx?.input.button?.(which, down);
+              if (isDown ? !playing() : !open[which]) return;
+              open[which] = isDown;
+              self._ctx?.input.button?.(which, isDown);
             },
             dial: (deltaRad) => {
               const lesson = teaching();
@@ -1833,6 +1875,10 @@ const minigameScreenImpl: MgScreenState & Screen = {
     this._phase = "play";
     markPhase("play");
     this._padKeys?.release();
+    // A key or finger still down at GO is a fresh press (a pre-charged pull,
+    // a held paddle). Its release, and any later press, work as usual.
+    if (this._padKeys && this._heldKeys) for (const key of this._heldKeys.values()) this._padKeys.keyDown(key, false);
+    this._touchGo?.();
     setPracticeBeat(false);
     this._playT = 0;
     ensureMarker(this);
@@ -1952,6 +1998,8 @@ const minigameScreenImpl: MgScreenState & Screen = {
     if (this._onKeyUp) window.removeEventListener("keyup", this._onKeyUp);
     if (this._onBlur) window.removeEventListener("blur", this._onBlur);
     this._padKeys = undefined;
+    this._heldKeys = undefined;
+    this._touchGo = undefined;
     this._touch?.destroy();
     this._touch = undefined;
     this._onPointerDown = undefined;
