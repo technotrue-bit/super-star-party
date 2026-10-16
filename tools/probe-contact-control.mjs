@@ -39,8 +39,17 @@ function gap(seat) {
 const FIRST_LOAD_MS = 120000;
 
 async function boot(page) {
-  await page.goto(`${BASE}/?audio=0&fx=off&seed=7`, { waitUntil: "domcontentloaded", timeout: FIRST_LOAD_MS });
-  await page.waitForFunction(() => window.__SSP__?.state?.()?.screen === "title", null, { timeout: FIRST_LOAD_MS });
+  // A cold server's first load can stall on one module request; a reload then comes from the warm cache.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await page.goto(`${BASE}/?audio=0&fx=off&seed=7`, { waitUntil: "domcontentloaded", timeout: FIRST_LOAD_MS });
+      await page.waitForFunction(() => window.__SSP__?.state?.()?.screen === "title", null, { timeout: FIRST_LOAD_MS });
+      return;
+    } catch (e) {
+      if (attempt >= 2) throw new Error(`title screen never loaded (2 tries): ${String(e).split("\n")[0]}`);
+      console.log(`   title not reached on load ${attempt}, reloading`);
+    }
+  }
 }
 
 async function openGame(page, id) {
@@ -55,7 +64,7 @@ async function openGame(page, id) {
     },
     id,
     { timeout: FIRST_LOAD_MS },
-  );
+  ).catch((e) => { throw new Error(`${id} never opened: ${String(e).split("\n")[0]}`); });
 }
 
 async function readMirror(page, id) {
