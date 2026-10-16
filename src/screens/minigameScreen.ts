@@ -873,6 +873,10 @@ function restorePose(self: MgScreenState): void {
   self._pose = undefined;
 }
 
+/**
+ * Practice steering turns the avatar to face the way the player pushes.
+ * It never walks: nobody leaves their start spot before GO.
+ */
 function tickPracticeMove(self: MgScreenState, dt: number): void {
   const ch = localSeat(self).char;
   const cam = world.camera;
@@ -882,13 +886,6 @@ function tickPracticeMove(self: MgScreenState, dt: number): void {
   const analog = stickGround(cam, self._stickX ?? 0, self._stickY ?? 0);
   const dir = analog ?? self._practiceKey;
   if (!dir) return;
-  const speed = 4.4;
-  const ox = ch.group.position.x + dir.x * speed * dt;
-  const oz = ch.group.position.z + dir.z * speed * dt;
-  const pose = self._pose?.find((p) => p.ch === ch);
-  if (pose && Math.hypot(ox - pose.x, oz - pose.z) > 3.2) return;
-  ch.group.position.x = ox;
-  ch.group.position.z = oz;
   ch.setFacing(Math.atan2(dir.x, dir.z));
 }
 
@@ -953,14 +950,7 @@ function teachTap(self: MgScreenState): void {
         x: Math.sin(ch.group.rotation.y),
         z: Math.cos(ch.group.rotation.y),
       };
-      const len = Math.hypot(raw.x, raw.z) || 1;
-      const pose = self._pose?.find((p) => p.ch === ch);
-      const nx = ch.group.position.x + (raw.x / len) * 0.9;
-      const nz = ch.group.position.z + (raw.z / len) * 0.9;
-      if (!pose || Math.hypot(nx - pose.x, nz - pose.z) <= 3.4) {
-        ch.group.position.x = nx;
-        ch.group.position.z = nz;
-      }
+      // Hop in place: a practice TAP never moves the avatar off its start spot.
       ch.setFacing(Math.atan2(raw.x, raw.z));
       ch.anim.jump();
     }
