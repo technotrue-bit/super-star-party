@@ -262,6 +262,20 @@ export function buildModel(kind: CharacterKind): BuiltModel {
       // drops about 0.57, so the rounded tips (plus ink) just touch down.
       parts.legR = buildPoint('legR', 144, 0.44, 0.2);
       parts.legL = buildPoint('legL', -144, 0.44, 0.2);
+      // Tip layout for the cartwheel walk (anims.ts): it lifts the star so
+      // whichever tip is lowest stays on the ground while he rolls.
+      const tips = [
+        { deg: 0, reach: SHOULDER + 0.44 },
+        { deg: 72, reach: SHOULDER + 0.4 },
+        { deg: -72, reach: SHOULDER + 0.4 },
+        { deg: 144, reach: SHOULDER + 0.44 },
+        { deg: -144, reach: SHOULDER + 0.44 },
+      ];
+      star.userData.roll = {
+        coreY: CORE_Y,
+        tips,
+        restDepth: -(SHOULDER + 0.44) * Math.cos(THREE.MathUtils.degToRad(144)),
+      };
 
       // A glossy sticker-star shine streak on the crown's left flank.
       const shineMat = new THREE.MeshBasicMaterial({ color: palette.white, transparent: true, opacity: 0.85 });

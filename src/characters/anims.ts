@@ -1,4 +1,5 @@
-import type * as THREE from 'three';
+import * as THREE from 'three';
+import { palette } from '../config/palette';
 import { settings } from '../config/settings';
 import { mulberry32 } from '../core/rng';
 import type { CharacterKind } from './roster';
@@ -72,6 +73,26 @@ const LIFT_RATE = 7; // how fast a floater rises / settles (1/s)
 /** True for characters that float instead of hopping (Wisp, Jack). */
 export function isFloater(key: string): boolean {
   return key in FLOATERS;
+}
+
+/**
+ * True for characters whose walk is one continuous motion (floaters glide,
+ * Pip cartwheels), so the turn loop moves them at a steady speed instead of
+ * the hoppers' surge-and-settle per space.
+ */
+export function travelsSmoothly(key: string): boolean {
+  return isFloater(key) || key === 'pip';
+}
+
+// Pip's cartwheel sparkle trail.
+const SPARK_COUNT = 28;
+const SPARK_LIFE = 0.75; // seconds a sparkle lives
+const SPARK_EVERY = 0.04; // one new sparkle this often while rolling
+
+interface StarRoll {
+  coreY: number;
+  restDepth: number;
+  tips: { deg: number; reach: number }[];
 }
 const TRAIL_RATE = 5; // how fast Jack's pumpkin trail fades in / out (1/s)
 
@@ -176,9 +197,85 @@ export function createAnimController(
 
   const floater = FLOATERS[kind.key];
   const starArms = kind.key === 'pip';
+  const roll = parts.star?.userData.roll as StarRoll | undefined;
+  // Face held while cartwheeling (blinks still win for their few frames).
+  let walkExpr: Expression | null = null;
   let lift = floater?.always ? 1 : 0; // 0 = resting on the ground, 1 = fully afloat
   const trail = parts.trail;
   let trailOn = 0; // 0 = hidden, 1 = the mini pumpkins are fully out
+
+  // Pip's sparkle trail. The sparkles hang off the placement root (the
+  // rig's parent) but keep a world position, so they stay where they were
+  // dropped as he rolls on: a real trail. Own rng stream, presentation only.
+  const sparkRng = mulberry32(0x5ba2c1e);
+  type Spark = { mesh: THREE.Mesh; world: THREE.Vector3; vel: THREE.Vector3; age: number; spin: number; size: number };
+  const sparks: Spark[] = [];
+  let sparkRoot: THREE.Group | null = null;
+  let sparkAcc = 0;
+  const sparkTmp = new THREE.Vector3();
+
+  const tickSparkles = (dt: number, emit: boolean, r: StarRoll): void => {
+    const root = rig.parent;
+    if (!root) return;
+    if (!sparkRoot) {
+      if (!emit) return;
+      sparkRoot = new THREE.Group();
+      sparkRoot.name = 'sparkTrail';
+      root.add(sparkRoot);
+      const geo = new THREE.OctahedronGeometry(0.065, 0);
+      const mats = [
+        new THREE.MeshBasicMaterial({ color: palette.sun }),
+        new THREE.MeshBasicMaterial({ color: palette.white }),
+      ];
+      for (let i = 0; i < SPARK_COUNT; i++) {
+        const mesh = new THREE.Mesh(geo, mats[i % 2]);
+        mesh.visible = false;
+        sparkRoot.add(mesh);
+        sparks.push({ mesh, world: new THREE.Vector3(), vel: new THREE.Vector3(), age: SPARK_LIFE, spin: 0, size: 1 });
+      }
+    }
+    root.updateWorldMatrix(true, false);
+    if (emit) {
+      sparkAcc += dt;
+      while (sparkAcc >= SPARK_EVERY) {
+        sparkAcc -= SPARK_EVERY;
+        const s = sparks.find((p) => p.age >= SPARK_LIFE);
+        if (!s) break;
+        // Just behind him along his travel (facing yaw), around his middle.
+        const back = 0.3 + sparkRng() * 0.2;
+        sparkTmp.set(
+          -Math.sin(yaw) * back + (sparkRng() - 0.5) * 0.35,
+          r.coreY + (sparkRng() - 0.5) * 0.6,
+          -Math.cos(yaw) * back + (sparkRng() - 0.5) * 0.35,
+        );
+        root.localToWorld(s.world.copy(sparkTmp));
+        s.vel.set((sparkRng() - 0.5) * 0.5, 0.45 + sparkRng() * 0.45, (sparkRng() - 0.5) * 0.5);
+        s.age = 0;
+        s.spin = (sparkRng() - 0.5) * 12;
+        s.size = 0.7 + sparkRng() * 0.7;
+        s.mesh.visible = true;
+      }
+    } else {
+      sparkAcc = 0;
+    }
+    for (const s of sparks) {
+      if (s.age >= SPARK_LIFE) continue;
+      s.age += dt;
+      if (s.age >= SPARK_LIFE) {
+        s.mesh.visible = false;
+        continue;
+      }
+      s.world.addScaledVector(s.vel, dt);
+      s.vel.multiplyScalar(Math.exp(-dt * 2)); // the drift eases off
+      const k = s.age / SPARK_LIFE;
+      // Pop in fast, then shrink away.
+      const grow = k < 0.15 ? k / 0.15 : 1 - (k - 0.15) / 0.85;
+      s.mesh.scale.setScalar(Math.max(0.001, s.size * grow));
+      s.mesh.position.copy(root.worldToLocal(sparkTmp.copy(s.world)));
+      s.mesh.rotation.y += s.spin * dt;
+      s.mesh.rotation.x += s.spin * 0.5 * dt;
+    }
+  };
 
   const set = (name: AnimName): void => {
     if (currentName === name) return; // keep phase continuity for repeats
@@ -310,7 +407,34 @@ export function createAnimController(
     arm('armR', 0.35 - drift, -0.4);
   };
 
+  // How far the star must rise so its lowest tip stays on the ground at roll
+  // angle `ang` (counter-clockwise from the front).
+  const rollLift = (r: StarRoll, ang: number): number => {
+    let depth = 0;
+    for (const tip of r.tips) {
+      depth = Math.max(depth, -tip.reach * Math.cos((tip.deg * Math.PI) / 180 - ang));
+    }
+    return Math.max(0, depth - r.restDepth);
+  };
+
+  const cartwheel = (r: StarRoll): void => {
+    // Pip turns side-on so the path runs through his body, then rolls one
+    // full turn per board space, tip over tip, with a light floaty arc.
+    // The angle is wrapped, so stopping on a space blends back without
+    // unwinding the turns he made.
+    const turns = t / settings.hopDuration;
+    const ang = angleDelta(0, turns * TAU);
+    pose.yaw = Math.PI / 2;
+    pose.parts.star[2] = ang;
+    pose.y = rollLift(r, ang) + Math.sin(Math.PI * (turns % 1)) * 0.12;
+    walkExpr = 'happy';
+  };
+
   const walk = (): void => {
+    if (roll) {
+      cartwheel(roll);
+      return;
+    }
     if (floater) {
       glide();
       return;
@@ -498,6 +622,7 @@ export function createAnimController(
     yawRate = dt > 0 ? angleDelta(prevYaw, yaw) / dt : 0;
 
     resetPose(pose);
+    walkExpr = null;
     fidgetExpr = null;
     switch (currentName) {
       case 'idle':
@@ -551,6 +676,8 @@ export function createAnimController(
       }
     }
 
+    if (roll) tickSparkles(dt, currentName === 'walk', roll);
+
     // Expressions owned by the idle/walk states: blink now and then.
     if (currentName === 'idle' || currentName === 'walk') {
       if (blinkT < 0 && t >= nextBlink) blinkT = 0;
@@ -564,7 +691,7 @@ export function createAnimController(
           if (animRng() < 0.25) nextBlink = t + 0.18;
         }
       } else {
-        setExpression(fidgetExpr ?? 'normal');
+        setExpression(fidgetExpr ?? (currentName === 'walk' ? walkExpr : null) ?? 'normal');
       }
     }
 
@@ -606,6 +733,9 @@ export function createAnimController(
     }
     // Keep the shown yaw offset bounded so a spin-on-the-spot blends cleanly.
     shown.yaw = angleDelta(0, shown.yaw);
+    // Pip rolls on his tips: whatever the blend or animation, never let the
+    // star's lowest tip sink into the ground at its current spin.
+    if (roll) shown.y = Math.max(shown.y, rollLift(roll, shown.parts.star[2]));
     applyPose(shown);
   };
 
