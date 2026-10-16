@@ -49,7 +49,7 @@ if (process.env.SSP_SKIP_GOLDEN !== "1") {
   const r = spawnSync(process.execPath, [resolve(ROOT, "tools/board-golden.mjs")], {
     env: { ...process.env, SSP_SEED: "7", SSP_TURNS: "30", SSP_GOLDEN: resolve(ROOT, "tools/golden/carnival-seed7.json"), SSP_BOARD: "carnival" },
     encoding: "utf8",
-    timeout: 900000,
+    timeout: 1500000,
   });
   const out = (r.stdout ?? "") + (r.stderr ?? "");
   for (const line of out.split("\n").filter((l) => /^golden|finale|PASS|FAIL/.test(l))) console.log(`    ${line}`);

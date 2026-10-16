@@ -18,7 +18,9 @@ const URL = `${BASE}/?seed=${SEED}&screen=board&autoplay=1&audio=0&speed=4${boar
 // Wall-clock cap for one replay. Eight minutes was not enough on a slower
 // CI runner: turn 11 and the finale were still running at the cap. The replay
 // itself is unchanged; only the time it may take goes up.
-const CAP_MS = 720000;
+// Longer Wave 1 minigames stretch the replay too; twenty minutes keeps the
+// finale inside the cap on a slow runner.
+const CAP_MS = 1200000;
 
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true })).newPage();
