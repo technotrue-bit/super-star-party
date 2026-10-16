@@ -15,11 +15,32 @@ export interface MapLook {
   destroy(): void;
 }
 
+const LOOK_STYLE_ID = "ssp-maplook-style";
+
+/**
+ * While the map is open, popups and their dimmed backdrop step aside (the lane
+ * choice, the shop, the star offer, the coin block), so the board is clear.
+ * They come back untouched on DONE.
+ */
+function injectLookStyle(): void {
+  if (document.getElementById(LOOK_STYLE_ID)) return;
+  const s = document.createElement("style");
+  s.id = LOOK_STYLE_ID;
+  s.textContent = `
+    body.ssp-maplook-on .ssp-popup,
+    body.ssp-maplook-on .ssp-coinblock,
+    body.ssp-maplook-on .ssp-orbaim,
+    body.ssp-maplook-on .ssp-last5 { visibility: hidden !important; }
+  `;
+  document.head.appendChild(s);
+}
+
 export function createMapLook(opts: {
   camera: THREE.PerspectiveCamera;
   bounds: { minX: number; maxX: number; minY: number; maxY: number };
   onChange?: (open: boolean) => void;
 }): MapLook {
+  injectLookStyle();
   const root = document.createElement("div");
   root.className = "ssp-maplook";
   root.style.cssText = [
@@ -144,6 +165,7 @@ export function createMapLook(opts: {
       saved.quat.copy(opts.camera.quaternion);
       saved.fov = opts.camera.fov;
       root.style.display = "block";
+      document.body.classList.add("ssp-maplook-on");
       apply();
       opts.onChange?.(true);
     },
@@ -152,6 +174,7 @@ export function createMapLook(opts: {
       opened = false;
       dragging = false;
       root.style.display = "none";
+      document.body.classList.remove("ssp-maplook-on");
       opts.camera.position.copy(saved.pos);
       opts.camera.quaternion.copy(saved.quat);
       opts.camera.fov = saved.fov;

@@ -34,6 +34,7 @@ import type { Character } from "../../characters/characterFactory";
 import { palette, hex } from "../../config/palette";
 import { Course, FINISH_X, START_X, LANE_Z, GROUND_HALF } from "./course";
 import { box as frameBox, frameMinigame } from "../framing";
+import { createFollowCamera, type FollowCamera } from "../followCamera";
 import {
   buildObstacle,
   cpuPlanFor,
@@ -65,6 +66,10 @@ const JUMP_APEX = 1.3; // gameplay apex (visual arc + holder lift)
 const ANIM_APEX = 0.9; // the character anim's own arc apex
 const HIT_SLACK = 0.25; // generous hitbox: h >= obs.h - HIT_SLACK clears
 const WIN_BEAT = 0.9; // celebration beat before finish()
+/** Extra course the framing box covers behind the camera anchor (the leader). */
+const CAM_BEHIND = 2.0;
+/** How far behind the anchor the local runner may fall before the camera waits. */
+const CAM_LAG_MAX = 2.2;
 const LAST_SPAWN_X = FINISH_X - 3; // no obstacles in the final stretch
 /** A jump started this far before an obstacle (u) is PERFECT if it clears. */
 const PERFECT_MIN = 1.85;
@@ -427,12 +432,18 @@ const S = {
   t: 0, // animation clock (dt-driven only — never gameplay decisions)
   ranking: [] as number[],
   announced: false,
-  shakeT: 0,
   bursts: [] as BurstShard[],
   camLook: new THREE.Vector3(),
   /** Fitted follow rig, relative to the anchor x (see fitFollowCamera). */
   camOff: new THREE.Vector3(7.2, 4.4, 9.6),
   lookOff: new THREE.Vector3(0.3, 1.5, 0),
+  /** Camera minus look target: the constant offset the follow camera keeps. */
+  followOff: new THREE.Vector3(6.9, 2.9, 9.6),
+  /** Follows the race leader's course position, never the human's input. */
+  follow: null as FollowCamera | null,
+  followTarget: new THREE.Vector3(),
+  /** Seat the camera keeps in view (the local human), by roster index. */
+  viewIndex: 0,
   /** Position indicator (pure display — never read by gameplay). */
   hud: {
     group: null as THREE.Group | null,
@@ -583,7 +594,6 @@ function setup(ctx: MinigameContext): void {
   S.raceT = 0;
   S.ranking = [];
   S.announced = false;
-  S.shakeT = 0;
   S.t = 0;
   S.bursts = [];
   S.obstacles = [];
@@ -644,7 +654,7 @@ function setup(ctx: MinigameContext): void {
   frameMinigame(
     ctx.camera,
     {
-      box: frameBox([START_X - 1.2, 0, -GROUND_HALF], [START_X + 4.6, 3.0, GROUND_HALF]),
+      box: frameBox([START_X - 1.2 - CAM_BEHIND, 0, -GROUND_HALF], [START_X + 4.6, 3.0, GROUND_HALF]),
       dir: new THREE.Vector3(6.9, 2.9, 9.6),
       fov: 50,
     },
@@ -652,8 +662,11 @@ function setup(ctx: MinigameContext): void {
       S.camOff.set(f.pos.x - START_X, f.pos.y, f.pos.z);
       S.lookOff.set(f.look.x - START_X, f.look.y, f.look.z);
       S.camLook.copy(f.look);
+      S.followOff.copy(S.camOff).sub(S.lookOff);
     }
   );
+  S.follow = createFollowCamera(ctx.camera, { offset: S.followOff });
+  S.viewIndex = localPlayerIndex(ctx.players);
 
   // Local seat: any press jumps (buffered 0.15s if pressed mid-air).
   const localIndex = localPlayerIndex(ctx.players);
@@ -753,7 +766,6 @@ function collide(r: Runner): void {
         S.ctx?.playSfx("pop", { pitch: 0.5, volume: 0.5 });
         const nm = S.ctx?.players[r.id]?.name ?? "?";
         S.ctx?.announce(`${nm} slipped!`, { durationMs: 900, sound: null });
-        S.shakeT = 0.25;
       }
     } else if (h < o.h - HIT_SLACK) {
       r.bumps += 1;
@@ -767,7 +779,6 @@ function collide(r: Runner): void {
       burstAt(o.x, LANE_Z[o.lane], CRUMB_COLORS, 6, 0.85); // crumb burst — cause reads
       S.ctx?.playSfx("pop", { pitch: 0.75 });
       S.ctx?.playSfx("crowd.aah", { volume: 0.6 });
-      S.shakeT = 0.3;
     }
   }
 }
@@ -808,46 +819,24 @@ function finishByDistance(timeUp: boolean): void {
 
 function updateCamera(dt: number): void {
   const ctx = S.ctx;
-  if (!ctx) return;
-  const cam = ctx.camera;
-  // Follow the local seat. Solo play still puts that runner first.
-  const human = S.runners.find((r) => isLocalPlayer(ctx.players, r.id)) ?? S.runners[0];
-  if (!human) return;
-  const humanX = human.x;
+  const follow = S.follow;
+  if (!ctx || !follow) return;
 
-  // Leader position — used only for the forward bias when trailing.
-  let leaderX = humanX;
+  // Follow the race leader's course position, but never further ahead than
+  // the local runner can stay in frame: the fitted box reaches CAM_BEHIND past
+  // the leader's spot, so a human trailing by more than CAM_LAG_MAX pulls the
+  // camera back toward them. Race progress only (no input), so taps and jumps
+  // cannot move the camera. The fitted rig (setup) keeps all four lanes on
+  // screen at any aspect, so only the course axis moves; the follow camera
+  // damps the target's steps and boosts.
+  let leaderX = START_X;
   for (const r of S.runners) if (r.x > leaderX) leaderX = r.x;
-
-  // The fitted rig (setup) keeps all four lanes on screen at any aspect, so
-  // the camera follows the human along the course only; the lane framing
-  // stays put. A small forward bias grows when trailing so leaders peek in.
-  const trail = Math.max(0, leaderX - humanX);
-  const bias = Math.min(trail * 0.1, 0.7);
-  const anchor = clamp(humanX, START_X, 56.8);
-
-  // Snap camera position to the human (no lag — the human moves at
-  // 6 u/s * speed, and a lerp would fall behind at high speed).
-  cam.position.set(anchor + S.camOff.x, S.camOff.y, S.camOff.z);
-
-  // Lerp look target for smoothness (no snap/jitter).
-  const k = 1 - Math.exp(-5 * dt);
-  const lx = clamp(humanX + bias, START_X, 56.8) + S.lookOff.x;
-  S.camLook.x += (lx - S.camLook.x) * k;
-  S.camLook.y += (S.lookOff.y - S.camLook.y) * k;
-  S.camLook.z += (S.lookOff.z - S.camLook.z) * k;
-
-  let sx = 0;
-  let sy = 0;
-  if (S.shakeT > 0) {
-    S.shakeT -= dt;
-    const a = Math.max(0, S.shakeT / 0.3);
-    sx = Math.sin(S.shakeT * 60) * 0.16 * a;
-    sy = Math.cos(S.shakeT * 47) * 0.1 * a;
-  }
-  cam.position.x += sx;
-  cam.position.y += sy;
-  cam.lookAt(S.camLook);
+  const humanX = S.runners[S.viewIndex]?.x ?? leaderX;
+  const anchorX = Math.min(leaderX, humanX + CAM_LAG_MAX);
+  S.followTarget.set(clamp(anchorX, START_X, 56.8) + S.lookOff.x, S.lookOff.y, S.lookOff.z);
+  follow.update(dt, S.followTarget);
+  // The progress rail anchors to the look target.
+  S.camLook.copy(follow.focus);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1007,6 +996,7 @@ function teardown(): void {
   S.ctx = null;
   S.scene = null;
   S.course = null;
+  S.follow = null;
   S.phase = "idle";
 }
 

@@ -64,9 +64,15 @@ export const PACK_OF_MINIGAME: Record<string, MinigamePackId> = {
   drum_solo: "sideshow",
   pipe_puzzle: "sideshow",
   memory_match: "sideshow",
+  quick_draw: "sideshow",
   cake_dash: "bigtop",
   balloon_pop: "bigtop",
   coin_grab: "bigtop",
+  slingshot_summit: "midway",
+  pie_flick: "sideshow",
+  row_rumble: "bigtop",
+  crank_coaster: "midway",
+  chalk_trails: "sideshow",
 };
 
 export const LS_MINIGAME_PACKS = "ssp.minigamePacks";

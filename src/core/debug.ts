@@ -13,6 +13,8 @@ import { screens } from "../screens/screenManager";
 import { world } from "../main";
 import { openShop } from "../screens/shopScreen";
 import { resetWipeRotation } from "../ui/transitions";
+import { screenLockInstalled } from "../ui/screenLock";
+import { mgProbeState } from "../screens/minigameScreen";
 import { awardMinigameResult, minigameCoinAward, minigamePayout, playerCoins, type MinigameAward } from "../game/economy";
 import {
   buyItem,
@@ -125,6 +127,14 @@ export interface SSPDebug {
   autoplay(on: boolean): void;
   rollDice(face: number): void;
   seed(n: number): void;
+  /** True once the page screen lock (no pinch, double-tap zoom or scroll) is installed. */
+  screenLockInstalled(): boolean;
+  /**
+   * Live minigame round, for probes: screen phase, game id, the camera's world
+   * position, the ranking once `ctx.finish` ran, and the input log that
+   * control_lab fills. Phase is "" outside a minigame.
+   */
+  mgProbe(): { phase: string; id: string | null; cam: [number, number, number]; ranking: number[] | null; inputs: string[] };
   reset(): void;
   audioLevels(): { rms: number; peak: number };
   /**
@@ -514,6 +524,19 @@ export function installDebugAPI(): void {
     rollDice(face: number) {
       // Wave 2: route to the turn-loop's forced-dice hook.
       (window as unknown as { __forcedDice?: number }).__forcedDice = face;
+    },
+    screenLockInstalled() {
+      return screenLockInstalled();
+    },
+    mgProbe() {
+      const p = world.camera?.position;
+      return {
+        phase: mgProbeState.phase,
+        id: mgProbeState.id,
+        cam: [p?.x ?? 0, p?.y ?? 0, p?.z ?? 0],
+        ranking: mgProbeState.ranking ? [...mgProbeState.ranking] : null,
+        inputs: mgProbeState.inputs,
+      };
     },
     seed(n: number) {
       rng.reset(n);

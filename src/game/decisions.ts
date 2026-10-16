@@ -17,6 +17,7 @@ import { onlineMatch } from "../net/mode";
 import { rng } from "../core/rng";
 import { decideShopPurchase, pickAutoItem, type ShopDecision } from "./items";
 import { sensibleStarCount } from "./economy";
+import { boardCpuSkill, cpuSlips } from "./cpuPlay";
 
 export interface PendingDecision {
   pending: true;
@@ -95,7 +96,8 @@ export const decisions: DecisionSource = {
     const seat = playerController(playerId);
     if (seat === "local") return { mode: "button" };
     if (seat === "remote") return { mode: "wait" };
-    return { mode: "timer", delay: 0.9 + rng.next() * 0.6 };
+    // A Relaxed CPU takes longer over its turn; Challenge is quicker. Same draw either way.
+    return { mode: "timer", delay: (0.9 + rng.next() * 0.6) / boardCpuSkill() };
   },
 
   preRollItem(playerId) {
@@ -117,7 +119,9 @@ export const decisions: DecisionSource = {
 
   starBundle(playerId) {
     if (!automatic(playerId)) return { pending: true };
-    return { count: sensibleStarCount(playerId) };
+    const sensible = sensibleStarCount(playerId);
+    // A slip buys one star fewer (never a pass, so the balloon keeps moving on).
+    return { count: sensible >= 2 && cpuSlips() ? sensible - 1 : sensible };
   },
 
   poison(holderId) {
@@ -127,6 +131,9 @@ export const decisions: DecisionSource = {
 
   path(playerId, stay, branch, hops) {
     if (!automatic(playerId)) return { pending: true };
-    return { to: hops(branch) < hops(stay) ? branch : stay };
+    const shorter = hops(branch) < hops(stay) ? branch : stay;
+    // A slip takes the longer lane.
+    const longer = shorter === branch ? stay : branch;
+    return { to: cpuSlips() ? longer : shorter };
   },
 };

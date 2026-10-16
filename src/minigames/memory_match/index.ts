@@ -23,6 +23,7 @@ import * as THREE from "three";
 import {
   automatedSeatIds,
   contactProbeLive,
+  cpuSkill,
   isLocalPlayer,
   isPracticeBeat,
   type Minigame,
@@ -399,9 +400,9 @@ function startRound(st: St): void {
   const choices = st.cards.filter((c) => !c.solved && c.index !== st.target).map((c) => c.index);
   for (const id of st.automated) {
     if (st.knows[id][pair]) {
-      st.plans[id] = { t: uniform(ctx.rng, CPU_KNOW_LO, CPU_KNOW_HI), card: st.twin };
+      st.plans[id] = { t: uniform(ctx.rng, CPU_KNOW_LO, CPU_KNOW_HI) / cpuSkill(), card: st.twin };
     } else {
-      const t = uniform(ctx.rng, CPU_GUESS_LO, CPU_GUESS_HI);
+      const t = uniform(ctx.rng, CPU_GUESS_LO, CPU_GUESS_HI) / cpuSkill();
       st.plans[id] = { t, card: choices[Math.floor(ctx.rng() * choices.length)] };
     }
   }
@@ -814,7 +815,7 @@ const memoryMatch: Minigame = {
       [deck[i], deck[j]] = [deck[j], deck[i]];
     }
     const recall = [0, 0, 0, 0];
-    for (const id of automated) recall[id] = uniform(ctx.rng, CPU_RECALL_LO, CPU_RECALL_HI);
+    for (const id of automated) recall[id] = uniform(ctx.rng, CPU_RECALL_LO, CPU_RECALL_HI) / cpuSkill();
     const fx = mulberry32(Math.floor(ctx.rng() * 0xffffffff));
 
     const root = new THREE.Group();

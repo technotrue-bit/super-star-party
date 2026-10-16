@@ -24,6 +24,7 @@ import {
 } from "../minigames/packRules";
 
 import { mountBoardPicker } from "./boardPicker";
+import { CPU_LEVELS, CPU_LEVEL_DEFS, setStoredCpuLevel, storedCpuLevel } from "../config/cpuLevel";
 
 let stylesInjected = false;
 
@@ -188,6 +189,9 @@ function injectPackStyles(): void {
       gap: 6px;
     }
     .ssp-ms__coins .ssp-ms__label { flex: 0 0 auto; margin-right: 2px; }
+    .ssp-ms__cpu { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .ssp-ms__cpu .ssp-ms__label { flex: 0 0 auto; margin-right: 2px; }
+    .ssp-ms__cpu-blurb { flex-basis: 100%; font-size: 12px; color: ${palette.inkSoft}; font-weight: 600; line-height: 1.3; }
     .ssp-ms-mult {
       font-family: inherit;
       flex: 1 1 0;
@@ -300,10 +304,10 @@ export function mountPackPicker(opts?: { card?: boolean }): PackPickerHandle {
 
     const note = document.createElement("p");
     note.className = "ssp-pack-picker__note";
-    const base = settings.minigameWinCoins * mult;
+    const [c1, c2, c3] = settings.minigamePlaceCoins.map((c) => c * mult);
     note.textContent = opts?.card
-      ? `Win pays ${base} coins, then the pack bonus.`
-      : `A win pays ${base} coins before the pack bonus. One owner of the dealt pack doubles that. Two, three, or four owners pay ×2, ×3, or ×4. A pack you switch off never comes up.`;
+      ? `1st ${c1}, 2nd ${c2}, 3rd ${c3} coins, then the pack bonus.`
+      : `Places pay ${c1} / ${c2} / ${c3} coins (1st / 2nd / 3rd; team wins pay ${c1} each) before the pack bonus. One owner of the dealt pack doubles that. Two, three, or four owners pay ×2, ×3, or ×4. A pack you switch off never comes up.`;
     root.appendChild(note);
   };
 
@@ -419,10 +423,41 @@ export function mountMatchSettings(): PackPickerHandle {
 
     const note = document.createElement("p");
     note.className = "ssp-ms__note";
-    note.textContent = `Winners earn ${settings.minigameWinCoins} coins × bonus`;
+    const [c1, c2, c3] = settings.minigamePlaceCoins;
+    note.textContent = `1st ${c1} · 2nd ${c2} · 3rd ${c3} coins × bonus`;
 
     const boards = mountBoardPicker({ compact: true });
-    root.append(title, boards.el, mixLabel, tiles, rot, coins, note);
+    // CPU rivals: saved for the next match. A match in progress keeps its level,
+    // so an online room's computer players never change mid-game.
+    const cpuRow = document.createElement("div");
+    cpuRow.className = "ssp-ms__cpu";
+    const cpuLabel = document.createElement("div");
+    cpuLabel.className = "ssp-ms__label";
+    cpuLabel.textContent = "CPU rivals";
+    cpuRow.appendChild(cpuLabel);
+    const cpuNow = storedCpuLevel();
+    const cpuBlurb = document.createElement("div");
+    cpuBlurb.className = "ssp-ms-cpu-blurb ssp-ms__cpu-blurb";
+    cpuBlurb.textContent = CPU_LEVEL_DEFS[cpuNow].blurb;
+    for (const level of CPU_LEVELS) {
+      const on = level === cpuNow;
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = `ssp-ms-mult${on ? " ssp-ms-mult--on" : ""}`;
+      b.textContent = CPU_LEVEL_DEFS[level].name;
+      b.setAttribute("aria-pressed", String(on));
+      b.setAttribute("aria-label", `CPU rivals: ${CPU_LEVEL_DEFS[level].name}. ${CPU_LEVEL_DEFS[level].blurb}`);
+      b.setAttribute("data-ssp-role", "cpu");
+      b.setAttribute("data-ssp-cpu", level);
+      onTap(b, () => {
+        setStoredCpuLevel(level);
+        paint();
+      });
+      cpuRow.appendChild(b);
+    }
+    cpuRow.appendChild(cpuBlurb);
+
+    root.append(title, boards.el, mixLabel, tiles, rot, coins, cpuRow, note);
   };
 
   paint();

@@ -29,6 +29,7 @@
  * genre. Countdown and results advance on dt. performance.now only times
  * the coin-count tween. Gameplay does not call Math.random.
  */
+import { isFreeplay } from "../game/freeplay";
 import * as THREE from "three";
 import { world } from "../main";
 import { palette, hex } from "../config/palette";
@@ -42,7 +43,7 @@ import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
 import { characterColor } from "../characters/roster";
 import { createCharacter, type Character } from "../characters/characterFactory";
-import { awardMinigameResult, playerCoins } from "../game/economy";
+import { awardMinigameResult, playerCoins, resolveMinigameCoinWinners } from "../game/economy";
 import { isAutoplay } from "../core/debug";
 import {
   armTapCooldown,
@@ -62,7 +63,7 @@ import {
 } from "../minigames/framework";
 import { minigameDescription, minigameEntry } from "../minigames/registry";
 import { createScoreHud, type ScoreHud } from "../minigames/scoreHud";
-import type { MinigameRules } from "../minigames/framework";
+import type { MinigameInput, MinigamePad, MinigameRules } from "../minigames/framework";
 import { prefersTouchControls } from "../ui/touchPad";
 import { isContactMinigame, loadRapier } from "../physics/contact";
 import { cpuPlayout, onlineMatch, partyAssist, setCpuPlayout } from "../net/mode";
@@ -72,6 +73,7 @@ import { screens } from "./screenManager";
 import { startResultsCeremony, type ResultsCeremony } from "./resultsCeremony";
 import { createTouchPad, type TouchPad } from "../ui/touchPad";
 import { onViewportChange } from "../ui/viewport";
+import { createPadKeys, type PadKeys } from "../minigames/padKeys";
 import { clearFraming, makeLawnTexture, makeSkyTexture, reframe } from "../minigames/framing";
 
 /* ------------------------------------------------------------------ */
@@ -116,10 +118,82 @@ function injectMinigameStyles(): void {
 .ssp-mg-practice {
   position: fixed; left: 50%; top: calc(14px + env(safe-area-inset-top, 0px));
   transform: translateX(-50%); z-index: 77; pointer-events: none;
-  padding: 6px 14px; border-radius: 999px; white-space: nowrap;
+  padding: 6px 14px; border-radius: 999px; width: max-content; max-width: min(94vw, 460px);
   background: ${palette.sun}; color: ${palette.ink};
   border: 3px solid ${palette.ink}; box-shadow: 0 4px 0 ${palette.ink};
   font-family: Fredoka, sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 0.02em;
+  text-align: center; line-height: 1.25;
+}
+.ssp-mg-practice--done { background: ${palette.mint}; }
+/* A cream fingertip that shows the move on the phone pad. */
+.ssp-mg-demo {
+  position: fixed; z-index: 76; pointer-events: none;
+  width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%;
+  background: ${palette.cream}; border: 4px solid ${palette.ink};
+  box-shadow: 0 3px 0 ${palette.ink}; opacity: 0.92;
+}
+.ssp-mg-demo--hold, .ssp-mg-demo--twin, .ssp-mg-demo--twin2, .ssp-mg-demo--dial { margin: 0; }
+.ssp-mg-demo--hold {
+  right: calc(57px + env(safe-area-inset-right, 0px)); bottom: calc(67px + env(safe-area-inset-bottom, 0px));
+  animation: sspDemoHold 1.8s ease-in-out infinite;
+}
+@keyframes sspDemoHold {
+  0%, 12% { transform: scale(1.25); }
+  20%, 62% { transform: scale(0.85); box-shadow: 0 1px 0 ${palette.ink}; }
+  74%, 100% { transform: scale(1.25) translateY(-10px); }
+}
+.ssp-mg-demo--swipe {
+  left: 50%; top: 62%;
+  animation: sspDemoSwipe 1.4s ease-in infinite;
+}
+@keyframes sspDemoSwipe {
+  0% { transform: translateY(70px); opacity: 0; }
+  15% { opacity: 0.92; }
+  80% { transform: translateY(-190px); opacity: 0.92; }
+  100% { transform: translateY(-230px); opacity: 0; }
+}
+.ssp-mg-demo--twin {
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px)); left: calc(52px + env(safe-area-inset-left, 0px));
+  animation: sspDemoTwinA 1.6s ease-in-out infinite;
+}
+@keyframes sspDemoTwinA {
+  0%, 40% { transform: scale(1.2); opacity: 0.92; }
+  10%, 20% { transform: scale(0.8); }
+  50% { transform: scale(1.2); opacity: 0; }
+  100% { transform: scale(1.2); opacity: 0; }
+}
+.ssp-mg-demo--twin2 {
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px)); right: calc(52px + env(safe-area-inset-right, 0px));
+  animation: sspDemoTwinB 1.6s ease-in-out infinite;
+}
+@keyframes sspDemoTwinB {
+  0%, 50% { transform: scale(1.2); opacity: 0; }
+  60%, 70% { transform: scale(0.8); opacity: 0.92; }
+  80%, 95% { transform: scale(1.2); opacity: 0.92; }
+  100% { transform: scale(1.2); opacity: 0; }
+}
+.ssp-mg-demo--dial {
+  right: calc(80px + env(safe-area-inset-right, 0px)); bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+  animation: sspDemoDial 1.8s linear infinite;
+}
+@keyframes sspDemoDial {
+  from { transform: rotate(0deg) translateY(-62px) rotate(0deg); }
+  to { transform: rotate(360deg) translateY(-62px) rotate(-360deg); }
+}
+.ssp-mg-demo--draw {
+  left: 50%; top: 52%;
+  animation: sspDemoDraw 2s ease-in-out infinite;
+}
+@keyframes sspDemoDraw {
+  0% { transform: translate(-90px, 40px); opacity: 0; }
+  10% { opacity: 0.92; }
+  30% { transform: translate(-40px, -50px); }
+  55% { transform: translate(20px, 30px); }
+  80% { transform: translate(90px, -40px); opacity: 0.92; }
+  100% { transform: translate(100px, -30px); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ssp-mg-demo { animation: none !important; }
 }
 .ssp-seat-tags { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 74; pointer-events: none; }
 .ssp-seat {
@@ -521,7 +595,27 @@ function cancelHudCoinsTween(): void {
 /*  Screen state                                                       */
 /* ------------------------------------------------------------------ */
 
+/** Held-key identity: Shift and caps lock must not split a press from its release. */
+const heldKeyId = (key: string): string => (key === "Enter" ? " " : key.length === 1 ? key.toLowerCase() : key);
+
 type MgPhase = "vs-splash" | "countdown" | "practice" | "go" | "play" | "results";
+
+/**
+ * What the `__SSP__.mgProbe()` debug hook reads. Written by the screen,
+ * never read by gameplay. `inputs` is filled by the hidden control_lab game
+ * and emptied at the start of every round.
+ */
+export const mgProbeState: {
+  phase: string;
+  id: string | null;
+  ranking: number[] | null;
+  inputs: string[];
+} = { phase: "", id: null, ranking: null, inputs: [] };
+
+function markPhase(phase: MgPhase): void {
+  document.body.dataset.mgPhase = phase;
+  mgProbeState.phase = phase;
+}
 
 interface MgScreenState {
   _active?: boolean;
@@ -549,9 +643,26 @@ interface MgScreenState {
   _onPointerMove?: (e: PointerEvent) => void;
   _onPointerUp?: (e: PointerEvent) => void;
   _onKeyDown?: (e: KeyboardEvent) => void;
+  _onKeyUp?: (e: KeyboardEvent) => void;
+  _onBlur?: () => void;
+  /** Keyboard and mouse mapping for the game's control pad. Unset for tap and steer games. */
+  _padKeys?: PadKeys;
+  /**
+   * Pad keys physically down before play begins (key, as pressed). A key still
+   * down at GO is fed to the pad as a fresh press (see _beginPlay).
+   */
+  _heldKeys?: Map<string, string>;
+  /** Phone pads: a finger still down at GO starts its hold or button then. */
+  _touchGo?: () => void;
   _touch?: TouchPad;
   _hud?: ScoreHud;
   _practiceEl?: HTMLDivElement;
+  /** The pad lesson: keys feeding the practice recorder, and what it has seen. */
+  _practiceKeys?: PadKeys;
+  _practiceLearn?: PracticeLearn;
+  /** Seconds since the lesson was learned (undefined while it is not). */
+  _practiceDoneT?: number;
+  _demoEls?: HTMLDivElement[];
   _goalEl?: HTMLDivElement;
   _seatTags?: SeatTags;
   _seatMark?: THREE.Group;
@@ -594,6 +705,72 @@ const GOAL_HOLD = 4.2;
 /** Autoplay, party assist, and online rooms skip the lesson so timing stays put. */
 function skipPracticeBeat(): boolean {
   return isAutoplay() || partyAssist() || onlineMatch() || cpuPlayout();
+}
+
+/** What the player must do once to learn a pad. */
+const PRACTICE_DIAL_RAD = Math.PI;
+/** How long "NICE!" shows once the lesson is learned, in seconds. */
+const PRACTICE_NICE_SEC = 0.5;
+
+/** The practice prompt for a control pad (a tap or steer game keeps the generic one). */
+function padPrompt(mg: Minigame): string | null {
+  switch (mg.pad) {
+    case "hold":
+      return "HOLD to charge, LET GO to throw";
+    case "swipe":
+      return "SWIPE to flick";
+    case "twin":
+      return `Tap ${mg.padLabels?.a ?? "A"} and ${mg.padLabels?.b ?? "B"}`;
+    case "dial":
+      return "Spin the WHEEL";
+    case "draw":
+      return "DRAW a path";
+    default:
+      return null;
+  }
+}
+
+/** Pad calls seen in practice. A pad is learned when its action is done once. */
+interface PracticeLearn {
+  calls: Required<Pick<MinigameInput, "hold" | "swipe" | "button" | "dial" | "draw">>;
+}
+
+function createPracticeLearn(pad: MinigamePad, onLearned: () => void): PracticeLearn {
+  let learned = false;
+  const learn = (): void => {
+    if (learned) return;
+    learned = true;
+    onLearned();
+  };
+  const twin = { a: false, b: false };
+  let turned = 0;
+  return {
+    calls: {
+      // Press and let go.
+      hold: (down) => {
+        if (pad === "hold" && !down) learn();
+      },
+      swipe: () => {
+        if (pad === "swipe") learn();
+      },
+      // Both buttons, each pressed once, in either order.
+      button: (which, down) => {
+        if (pad !== "twin" || !down) return;
+        twin[which] = true;
+        if (twin.a && twin.b) learn();
+      },
+      // Half a turn either way.
+      dial: (deltaRad) => {
+        if (pad !== "dial") return;
+        turned += Math.abs(deltaRad);
+        if (turned >= PRACTICE_DIAL_RAD) learn();
+      },
+      // One stroke, lifted.
+      draw: (phase) => {
+        if (pad === "draw" && phase === "end") learn();
+      },
+    },
+  };
 }
 
 function teachKeys(mg: Minigame): string {
@@ -648,6 +825,9 @@ function applyTeach(self: MgScreenState): void {
     repeat: mg.tapRepeat === true,
     grid: mg.steerGrid === true,
     touchVerb: mg.tapOnTouch !== false,
+    pad: mg.pad,
+    padLabels: mg.padLabels,
+    holdMax: mg.holdMax,
   });
 }
 
@@ -703,6 +883,10 @@ function restorePose(self: MgScreenState): void {
   self._pose = undefined;
 }
 
+/**
+ * Practice steering turns the avatar to face the way the player pushes.
+ * It never walks: nobody leaves their start spot before GO.
+ */
 function tickPracticeMove(self: MgScreenState, dt: number): void {
   const ch = localSeat(self).char;
   const cam = world.camera;
@@ -712,13 +896,6 @@ function tickPracticeMove(self: MgScreenState, dt: number): void {
   const analog = stickGround(cam, self._stickX ?? 0, self._stickY ?? 0);
   const dir = analog ?? self._practiceKey;
   if (!dir) return;
-  const speed = 4.4;
-  const ox = ch.group.position.x + dir.x * speed * dt;
-  const oz = ch.group.position.z + dir.z * speed * dt;
-  const pose = self._pose?.find((p) => p.ch === ch);
-  if (pose && Math.hypot(ox - pose.x, oz - pose.z) > 3.2) return;
-  ch.group.position.x = ox;
-  ch.group.position.z = oz;
   ch.setFacing(Math.atan2(dir.x, dir.z));
 }
 
@@ -783,14 +960,7 @@ function teachTap(self: MgScreenState): void {
         x: Math.sin(ch.group.rotation.y),
         z: Math.cos(ch.group.rotation.y),
       };
-      const len = Math.hypot(raw.x, raw.z) || 1;
-      const pose = self._pose?.find((p) => p.ch === ch);
-      const nx = ch.group.position.x + (raw.x / len) * 0.9;
-      const nz = ch.group.position.z + (raw.z / len) * 0.9;
-      if (!pose || Math.hypot(nx - pose.x, nz - pose.z) <= 3.4) {
-        ch.group.position.x = nx;
-        ch.group.position.z = nz;
-      }
+      // Hop in place: a practice TAP never moves the avatar off its start spot.
       ch.setFacing(Math.atan2(raw.x, raw.z));
       ch.anim.jump();
     }
@@ -829,11 +999,23 @@ function beginPractice(self: MgScreenState): void {
   self._practiceT = 0;
   self._practiceKey = null;
   self._practiceKeyT = 0;
-  document.body.dataset.mgPhase = "practice";
+  self._practiceDoneT = undefined;
+  self._practiceKeys = undefined;
+  self._practiceLearn = undefined;
+  markPhase("practice");
   snapshotPose(self);
   ensureMarker(self);
   applyTeach(self);
   self._touch?.show();
+  const pad = self._minigame?.pad;
+  if (pad) {
+    // A pad game has no TAP to try. Its own keys feed a recorder here, never the
+    // game, and doing the action once ends the beat.
+    const learn = createPracticeLearn(pad, () => learnedPractice(self));
+    self._practiceLearn = learn;
+    self._practiceKeys = createPadKeys(pad, () => learn.calls, undefined, self._minigame?.holdMax);
+    showDemo(self, pad);
+  }
   // A visible "practice" label with its own countdown, so GO never comes
   // out of nowhere.
   const badge = document.createElement("div");
@@ -848,19 +1030,62 @@ function tickPracticeBadge(self: MgScreenState): void {
   const el = self._practiceEl;
   if (!el) return;
   const left = Math.max(1, Math.ceil(PRACTICE_SEC - (self._practiceT ?? 0)));
-  const text = `PRACTICE! Try the controls · ${left}`;
+  const prompt = self._minigame ? padPrompt(self._minigame) : null;
+  const text = self._practiceDoneT !== undefined
+    ? "NICE! Got it"
+    : `PRACTICE! ${prompt ?? "Try the controls"} · ${left}`;
   if (el.textContent !== text) el.textContent = text;
+}
+
+/** A fingertip that plays the move on the phone pad. Touch phones only. */
+function showDemo(self: MgScreenState, pad: MinigamePad): void {
+  hideDemo(self);
+  if (!prefersTouchControls()) return;
+  const kinds = pad === "twin" ? ["twin", "twin2"] : [pad];
+  self._demoEls = kinds.map((kind) => {
+    const el = document.createElement("div");
+    el.className = `ssp-mg-demo ssp-mg-demo--${kind}`;
+    el.dataset.mgDemo = pad;
+    document.body.appendChild(el);
+    return el;
+  });
+}
+
+function hideDemo(self: MgScreenState): void {
+  for (const el of self._demoEls ?? []) el.remove();
+  self._demoEls = undefined;
+}
+
+/** The player did the action once: say so, then move on to GO after a beat. */
+function learnedPractice(self: MgScreenState): void {
+  if (self._phase !== "practice" || self._practiceDoneT !== undefined) return;
+  self._practiceDoneT = 0;
+  hideDemo(self);
+  const badge = self._practiceEl;
+  if (badge) {
+    badge.dataset.mgPracticeDone = "1";
+    badge.classList.add("ssp-mg-practice--done");
+  }
+  tickPracticeBadge(self);
+  spawnBurst(self);
+  localSeat(self).char?.anim.jump();
 }
 
 function beginGo(self: MgScreenState): void {
   setPracticeBeat(false);
+  hideDemo(self);
   self._practiceEl?.remove();
   self._practiceEl = undefined;
   restorePose(self);
   self._phase = "go";
+  // After the phase moves on, so a key still down ends quietly instead of "learning".
+  self._practiceKeys?.release();
+  self._practiceKeys = undefined;
+  self._practiceLearn = undefined;
+  self._practiceDoneT = undefined;
   self._goT = 0;
   self._practiceKey = null;
-  document.body.dataset.mgPhase = "go";
+  markPhase("go");
   showGo(self);
 }
 
@@ -877,6 +1102,11 @@ function tickTeach(self: MgScreenState, dt: number): void {
 // panning for "MINI GAME TIME", the enter() should skip re-showing the card
 // and go straight to building the arena so the player "jumps in" after the click.
 let skipPreScreen = false;
+
+/** Where a minigame hands back to: the board, or the menu in free play. */
+function homeScreen(): string {
+  return isFreeplay() ? "minigames" : "board";
+}
 
 export function skipNextMinigamePreScreen(): void {
   skipPreScreen = true;
@@ -950,6 +1180,8 @@ const minigameScreenImpl: MgScreenState & Screen = {
     this._presented = false;
     this._finished = false;
     this._coinWinners = undefined;
+    mgProbeState.ranking = null;
+    mgProbeState.inputs.length = 0;
 
     // Robustness: no pending entry (or no live match) -> straight back to
     // the board; the turn loop's resume path continues the round.
@@ -961,12 +1193,13 @@ const minigameScreenImpl: MgScreenState & Screen = {
       entry = minigameEntry(forced) ?? { id: forced, name: forced };
     }
     if (!entry || match.players.length === 0) {
-      screens.goto("board");
+      screens.goto(homeScreen());
       return;
     }
     if (isContactMinigame(entry.id)) void loadRapier();
 
     this._active = true;
+    mgProbeState.id = entry.id;
     var self = this;
     console.log('[minigameScreen] enter, skipPreScreen=', skipPreScreen, 'entry=', entry);
 
@@ -991,7 +1224,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
       )
       .then((started) => {
       if (!started) {
-        screens.goto("board");
+        screens.goto(homeScreen());
         return;
       }
       buildArenaAndStart();
@@ -1119,7 +1352,13 @@ const minigameScreenImpl: MgScreenState & Screen = {
         if (onPad(e)) return;
         if (self._phase === "play") {
           const [x, y] = px(e);
-          self._ctx?.input.pointer(x, y, true);
+          if (self._minigame?.pad === "draw") self._padKeys?.stroke("start", x, y);
+          else self._ctx?.input.pointer(x, y, true);
+        } else if (self._phase === "practice") {
+          if (self._minigame?.pad === "draw") {
+            const [x, y] = px(e);
+            self._practiceKeys?.stroke("start", x, y);
+          }
         } else if (self._phase === "vs-splash") {
           self._vsSkip = true;
         }
@@ -1130,20 +1369,50 @@ const minigameScreenImpl: MgScreenState & Screen = {
         if (onPad(e)) return;
         if (self._phase === "play" && (e.buttons & 1)) {
           const [x, y] = px(e);
-          self._ctx?.input.drag?.(x, y);
+          if (self._minigame?.pad === "draw") self._padKeys?.stroke("move", x, y);
+          else self._ctx?.input.drag?.(x, y);
+        } else if (self._phase === "practice" && (e.buttons & 1) && self._minigame?.pad === "draw") {
+          const [x, y] = px(e);
+          self._practiceKeys?.stroke("move", x, y);
         }
       };
       self._onPointerUp = (e) => {
         if (onPad(e)) return;
         if (self._phase === "play") {
           const [x, y] = px(e);
-          self._ctx?.input.pointer(x, y, false);
+          if (self._minigame?.pad === "draw") self._padKeys?.stroke("end", x, y);
+          else self._ctx?.input.pointer(x, y, false);
+        } else if (self._phase === "practice" && self._minigame?.pad === "draw") {
+          const [x, y] = px(e);
+          self._practiceKeys?.stroke("end", x, y);
         }
       };
 
       self._onKeyDown = (e: KeyboardEvent) => {
+        // Remember pad keys held through the countdown: GO treats them as pressed.
+        if (self._phase !== "play" && self._padKeys && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          (self._heldKeys ??= new Map()).set(heldKeyId(e.key), e.key);
+        }
         if ((e.key === " " || e.key === "Enter") && self._phase === "vs-splash") {
           self._vsSkip = true;
+        }
+        // A control-pad game reads its own keys in play (Space, Z, X, Q, E, arrows).
+        // The old direction key() call only happens when the game also steers.
+        if (self._phase === "play" && self._padKeys && self._ctx) {
+          if (self._padKeys.keyDown(e.key, e.repeat, e.timeStamp)) e.preventDefault();
+          const steerAction = self._minigame?.steer ? keyAction(e.key) : null;
+          if (steerAction && steerAction !== "confirm") self._ctx.input.key(steerAction);
+          return;
+        }
+        // The lesson for a control pad reads the same keys as play, but into the recorder.
+        if (self._phase === "practice" && self._practiceKeys?.keyDown(e.key, e.repeat, e.timeStamp)) {
+          e.preventDefault();
+          const dir = self._minigame?.steer ? keyDirFrom(keyAction(e.key) ?? "") : null;
+          if (dir) {
+            self._practiceKey = dir;
+            self._practiceKeyT = 0;
+          }
+          return;
         }
         const action = keyAction(e.key);
         if (!action) return;
@@ -1171,6 +1440,20 @@ const minigameScreenImpl: MgScreenState & Screen = {
       window.addEventListener("pointerup", self._onPointerUp);
       window.addEventListener("pointercancel", self._onPointerUp);
       window.addEventListener("keydown", self._onKeyDown);
+      // Releases and a lost window matter to the pads: a hold must end when
+      // Space comes up, or when alt-tab swallows the keyup.
+      self._onKeyUp = (e: KeyboardEvent) => {
+        self._heldKeys?.delete(heldKeyId(e.key));
+        if (self._padKeys?.keyUp(e.key, e.timeStamp) && self._phase === "play") e.preventDefault();
+        if (self._practiceKeys?.keyUp(e.key, e.timeStamp) && self._phase === "practice") e.preventDefault();
+      };
+      self._onBlur = () => {
+        self._heldKeys?.clear();
+        self._padKeys?.release();
+        self._practiceKeys?.release();
+      };
+      window.addEventListener("keyup", self._onKeyUp);
+      window.addEventListener("blur", self._onBlur);
 
       self._touch = createTouchPad({
         onSteer: (action) => {
@@ -1180,6 +1463,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
             return;
           }
           if (self._phase !== "play") return;
+          if (self._minigame?.pad && !self._minigame.steer) return;
           document.body.dataset.sspSteer = action;
           self._ctx?.input.key(action);
         },
@@ -1187,11 +1471,91 @@ const minigameScreenImpl: MgScreenState & Screen = {
           self._stickX = x;
           self._stickY = y;
           if (self._phase !== "play") return;
+          if (self._minigame?.pad && !self._minigame.steer) return;
           self._ctx?.input.stick?.(x, y);
         },
         onAction: () => {
           teachTap(self);
         },
+        // The phone pads. A press only counts in play; its release always gets
+        // through, so a finger that lifts after the round moved on cannot leave
+        // a hold or a button stuck in the game. The window handlers skip
+        // everything on .ssp-touch, so nothing here fires twice.
+        onPad: (() => {
+          const open = { hold: false, a: false, b: false, draw: false };
+          /** The finger is on the pad right now, whether or not the game took the press. */
+          const down = { hold: false, a: false, b: false };
+          /** When a press that started before GO was handed to the game (ms). */
+          const goAt = { hold: 0 };
+          const playing = (): boolean => self._phase === "play" && !!self._ctx;
+          // A finger still down when play begins counts as pressing then. The
+          // release path is untouched: it always reaches the game via `open`.
+          self._touchGo = () => {
+            if (!playing()) return;
+            const at = performance.now();
+            if (down.hold && !open.hold) {
+              open.hold = true;
+              goAt.hold = at;
+              self._ctx?.input.hold?.(true, 0);
+            }
+            for (const which of ["a", "b"] as const) {
+              if (down[which] && !open[which]) {
+                open[which] = true;
+                self._ctx?.input.button?.(which, true);
+              }
+            }
+          };
+          // In the practice beat the same calls feed the lesson recorder, never the game.
+          const teaching = (): PracticeLearn["calls"] | null =>
+            self._phase === "practice" ? self._practiceLearn?.calls ?? null : null;
+          return {
+            hold: (isDown, heldSec) => {
+              down.hold = isDown;
+              const lesson = teaching();
+              if (lesson) {
+                lesson.hold(isDown, heldSec);
+                return;
+              }
+              if (isDown ? !playing() : !open.hold) return;
+              open.hold = isDown;
+              // A charge that began before GO counts from GO, as on the keyboard.
+              const sec = !isDown && goAt.hold ? Math.min(heldSec, (performance.now() - goAt.hold) / 1000) : heldSec;
+              if (!isDown) goAt.hold = 0;
+              self._ctx?.input.hold?.(isDown, sec);
+            },
+            swipe: (dx, dy, power) => {
+              const lesson = teaching();
+              if (lesson) lesson.swipe(dx, dy, power);
+              else if (playing()) self._ctx?.input.swipe?.(dx, dy, power);
+            },
+            button: (which, isDown) => {
+              down[which] = isDown;
+              const lesson = teaching();
+              if (lesson) {
+                lesson.button(which, isDown);
+                return;
+              }
+              if (isDown ? !playing() : !open[which]) return;
+              open[which] = isDown;
+              self._ctx?.input.button?.(which, isDown);
+            },
+            dial: (deltaRad) => {
+              const lesson = teaching();
+              if (lesson) lesson.dial(deltaRad);
+              else if (playing()) self._ctx?.input.dial?.(deltaRad);
+            },
+            draw: (phase, x, y) => {
+              const lesson = teaching();
+              if (lesson) {
+                lesson.draw(phase, x, y);
+                return;
+              }
+              if (phase === "start" ? !playing() : !open.draw) return;
+              open.draw = phase !== "end";
+              self._padKeys?.stroke(phase, x, y);
+            },
+          };
+        })(),
       });
 
       // ---- wire minigame and start (VS splash etc) ----
@@ -1207,10 +1571,11 @@ const minigameScreenImpl: MgScreenState & Screen = {
         }
         if (!self._active) return;
         if (!mg) {
-          screens.goto("board");
+          screens.goto(homeScreen());
           return;
         }
         self._minigame = mg;
+        self._padKeys = mg.pad ? createPadKeys(mg.pad, () => self._ctx?.input, undefined, mg.holdMax) : undefined;
 
         const ctx: MinigameContext = {
           players: match.players.map(p => ({
@@ -1245,6 +1610,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
             (self as any)._finished = true;
             (self as any)._ranking = ranking;
             (self as any)._coinWinners = coinWinners;
+            mgProbeState.ranking = [...ranking];
           },
           input: {
             pointer: (x, y, down) => {},
@@ -1269,7 +1635,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
         self._vsSkip = false;
         buildVsSplash(self, mg.name, themeColor);
         self._phase = "vs-splash";
-        document.body.dataset.mgPhase = "vs-splash";
+        markPhase("vs-splash");
         self._countdownT = 0;
         self._tick = -1;
       };
@@ -1294,7 +1660,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
           this._vsTimer = undefined;
           if (skipPracticeBeat()) {
             this._phase = "countdown";
-            document.body.dataset.mgPhase = "countdown";
+            markPhase("countdown");
             this._countdownT = 0;
             this._tick = -1;
           } else {
@@ -1309,8 +1675,10 @@ const minigameScreenImpl: MgScreenState & Screen = {
         this._practiceT = (this._practiceT ?? 0) + dt;
         tickPracticeMove(this, dt);
         tickTeach(this, dt);
+        this._practiceKeys?.tick(dt);
+        if (this._practiceDoneT !== undefined) this._practiceDoneT += dt;
         tickPracticeBadge(this);
-        if ((this._practiceT ?? 0) >= PRACTICE_SEC) beginGo(this);
+        if ((this._practiceT ?? 0) >= PRACTICE_SEC || (this._practiceDoneT ?? 0) >= PRACTICE_NICE_SEC) beginGo(this);
         break;
       }
       case "go": {
@@ -1364,13 +1732,15 @@ const minigameScreenImpl: MgScreenState & Screen = {
         tickTeach(this, dt);
         if ((this._playT ?? 0) > GOAL_HOLD) this._goalEl?.classList.remove("ssp-mg-goal--on");
         if (!this._finished) {
+          this._padKeys?.tick(dt);
           this._minigame?.update(dt);
           this._seatTags?.tick();
           // Safety net: a minigame that never calls finish must not hang
           // the match. Deterministic fallback ranking (player id order).
-          if (!this._finished && (this._playT ?? 0) > settings.minigameTimeLimit) {
+          if (!this._finished && (this._playT ?? 0) > (this._minigame?.timeLimit ?? settings.minigameTimeLimit)) {
             this._finished = true;
             this._ranking = forcedRanking(this);
+            mgProbeState.ranking = [...this._ranking];
             this._coinWinners = undefined;
             if (cpuPlayout() && isHost()) {
               publishMinigame({
@@ -1385,7 +1755,8 @@ const minigameScreenImpl: MgScreenState & Screen = {
         }
         if (this._finished && this._ranking) {
           this._phase = "results";
-          document.body.dataset.mgPhase = "results";
+          markPhase("results");
+          this._padKeys?.release();
           this._touch?.hide();
           this._resultsT = 0.6; // short winner-reveal beat
         }
@@ -1401,7 +1772,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
             this._present();
           } else if (this._ceremony?.isDone() && !this._ceremonyDone) {
             this._ceremonyDone = true;
-            screens.goto("board");
+            screens.goto(homeScreen());
             return;
           }
         }
@@ -1422,11 +1793,14 @@ const minigameScreenImpl: MgScreenState & Screen = {
 
     const ranking = this._ranking ?? [];
     const mg = this._minigame;
-    // Team coinWinners each get the full pot. Free-for-all pays ranking[0].
+    // Team coinWinners each get the full pot. Free-for-all pays by place
+    // (10 / 6 / 3 / 0 before bonuses); the headline still names the winner(s).
+    const winnerIds = resolveMinigameCoinWinners(ranking, this._coinWinners);
     const awards = awardMinigameResult(ranking, this._coinWinners);
     const winner = ranking[0] ?? awards[0]?.playerId ?? match.players[0]?.id ?? 0;
     const payout = awards.find((a) => a.playerId === winner)?.coins ?? awards[0]?.coins ?? 0;
-    const paidIds = awards.map((a) => a.playerId);
+    const paidIds = winnerIds.length > 0 ? winnerIds : awards.map((a) => a.playerId);
+    const coinsById = new Map(awards.map((a) => [a.playerId, a.coins]));
 
     bus.emit("minigame:end", { id: mg?.id ?? "?", winner, coins: payout });
 
@@ -1463,13 +1837,24 @@ const minigameScreenImpl: MgScreenState & Screen = {
     if (this._seatMark) hide.push(this._seatMark);
 
     // Start the ceremony (camera + podium + banner + coins + confetti + card).
+    // A 1v1 duel: only the two duelists take the podium; the watchers step out.
+    const duel = mg?.rules?.format === "1v1";
+    const podiumIds = duel ? ranking.slice(0, 2) : undefined;
+    if (podiumIds) {
+      for (const ch of this._chars ?? []) {
+        const id = (this._chars ?? []).indexOf(ch);
+        if (!podiumIds.includes(id)) hide.push(ch.group);
+      }
+    }
     this._ceremony = startResultsCeremony({
       hide,
+      podiumIds,
       chars: this._chars ?? [],
       ranking,
       winner,
       coins: payout,
       paidIds,
+      coinsById,
       minigameName: mg?.name ?? "MINIGAME",
       scores: this._hud?.scores(),
       unit: this._hud?.unitText(),
@@ -1478,7 +1863,12 @@ const minigameScreenImpl: MgScreenState & Screen = {
 
   _beginPlay() {
     this._phase = "play";
-    document.body.dataset.mgPhase = "play";
+    markPhase("play");
+    this._padKeys?.release();
+    // A key or finger still down at GO is a fresh press (a pre-charged pull,
+    // a held paddle). Its release, and any later press, work as usual.
+    if (this._padKeys && this._heldKeys) for (const key of this._heldKeys.values()) this._padKeys.keyDown(key, false);
+    this._touchGo?.();
     setPracticeBeat(false);
     this._playT = 0;
     ensureMarker(this);
@@ -1575,12 +1965,19 @@ const minigameScreenImpl: MgScreenState & Screen = {
     this._hud = undefined;
     this._practiceEl?.remove();
     this._practiceEl = undefined;
+    this._practiceKeys?.release();
+    this._practiceKeys = undefined;
+    this._practiceLearn = undefined;
+    this._practiceDoneT = undefined;
+    hideDemo(this);
     this._seatTags?.destroy();
     this._seatTags = undefined;
     this._seatMark = undefined;
     this._bursts = undefined;
     this._pose = undefined;
     delete document.body.dataset.mgPhase;
+    mgProbeState.phase = "";
+    mgProbeState.id = null;
     if (this._onPointerDown) window.removeEventListener("pointerdown", this._onPointerDown);
     if (this._onPointerMove) window.removeEventListener("pointermove", this._onPointerMove);
     if (this._onPointerUp) {
@@ -1588,12 +1985,19 @@ const minigameScreenImpl: MgScreenState & Screen = {
       window.removeEventListener("pointercancel", this._onPointerUp);
     }
     if (this._onKeyDown) window.removeEventListener("keydown", this._onKeyDown);
+    if (this._onKeyUp) window.removeEventListener("keyup", this._onKeyUp);
+    if (this._onBlur) window.removeEventListener("blur", this._onBlur);
+    this._padKeys = undefined;
+    this._heldKeys = undefined;
+    this._touchGo = undefined;
     this._touch?.destroy();
     this._touch = undefined;
     this._onPointerDown = undefined;
     this._onPointerMove = undefined;
     this._onPointerUp = undefined;
     this._onKeyDown = undefined;
+    this._onKeyUp = undefined;
+    this._onBlur = undefined;
     this._phase = undefined;
     ui.clearScreen();
     audio.music.stop(0.3);
@@ -1621,6 +2025,7 @@ const FORMAT_LABEL: Record<MinigameRules["format"], string> = {
   ffa: "FREE-FOR-ALL",
   "1v3": "1 VS 3",
   "2v2": "2 VS 2",
+  "1v1": "1 VS 1",
 };
 
 /**
@@ -1654,7 +2059,13 @@ export async function showMinigamePreview(
       ? `<div data-mg-win style="background:${palette.sun};color:${palette.ink};border-radius:12px;padding:7px 10px;font-size:16px;font-weight:700;line-height:1.25;margin-bottom:10px;">🏆 ${escapeHtml(rules.win)}</div>`
       : "";
     const prize = coins !== undefined
-      ? `<div style="color:${palette.cream};opacity:0.85;font-size:14px;margin-bottom:12px;">Winner takes <b style="color:${palette.sun}">${coins} coins</b></div>`
+      ? (() => {
+          // `coins` is first place's pot; the other places scale with it (10 / 6 / 3 / 0).
+          const k = coins / (settings.minigamePlaceCoins[0] || 1);
+          const [, c2, c3] = settings.minigamePlaceCoins.map((c) => Math.round(c * k));
+          const b = (n: number): string => `<b style="color:${palette.sun}">${n}</b>`;
+          return `<div style="color:${palette.cream};opacity:0.85;font-size:14px;margin-bottom:12px;">1st ${b(coins)} · 2nd ${b(c2)} · 3rd ${b(c3)} coins <span style="opacity:0.8">(team wins: ${coins} each)</span></div>`;
+        })()
       : `<div style="height:4px"></div>`;
     root.innerHTML = `
       <div style="background:${palette.ink};border:5px solid ${palette.cream};border-radius:20px;padding:18px 16px;width:min(92vw, 430px);max-height:calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px);overflow-y:auto;box-sizing:border-box;text-align:center;box-shadow:0 8px 0 ${palette.ink};">

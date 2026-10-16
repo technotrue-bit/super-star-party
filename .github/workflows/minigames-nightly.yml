@@ -1,0 +1,59 @@
+name: minigames-nightly
+
+# The per-minigame probes (tools/probe-mg-*.mjs) take too long for every pull
+# request, so they run once a day against main, and on demand.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  minigames:
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.0"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the game
+        run: |
+          RUNNER_TRACKING_ID="" nohup npm run dev -- --host 127.0.0.1 > "$RUNNER_TEMP/vite.log" 2>&1 < /dev/null &
+          disown
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:5177/; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "The game did not listen on port 5177."
+          cat "$RUNNER_TEMP/vite.log"
+          exit 1
+
+      - name: Minigame probes
+        run: |
+          # Run every probe even when one fails, so one run shows every result.
+          failed=0
+          # The per-game probes (Fifty). Other probe-mg-* scripts are print-only diagnostics.
+          for id in slingshot_summit pie_flick row_rumble crank_coaster chalk_trails; do
+            probe="tools/probe-mg-$id.mjs"
+            echo "::group::$probe"
+            if node "$probe"; then
+              echo "PASS $probe"
+            else
+              echo "::error::$probe failed"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"

@@ -19,7 +19,7 @@ import { ease } from "../core/rng";
 import type { SpaceType } from "../core/game";
 import { groundHeight, type BoardDef } from "./boardData";
 import { activeBoard } from "./registry";
-import { buildKit, type BoardTextures } from "./boardTextures";
+import { buildKit, DISK_STYLE, type BoardTextures } from "./boardTextures";
 import { buildBoardLanes } from "./boardLanes";
 import { DOWNTOWN_WATER, downtownWorld } from "./boards/downtownData";
 import {
@@ -121,16 +121,9 @@ export function boardBounds(): { minX: number; maxX: number; minY: number; maxY:
 // upright from the standard south-side party camera.
 const DISK_YAW = Math.PI / 2;
 
-const DISK_RIM: Record<SpaceType, string> = {
-  blue: palette.spaceBlueDeep,
-  red: palette.lavaDeep,
-  green: palette.spaceGreenDeep,
-  star: palette.sunDeep,
-  shop: palette.berryDeep,
-  grumpus: palette.lavaDeep,
-  stamp: palette.sunDeep,
-  minigame_balloon: palette.candyDeep,
-};
+const DISK_RIM: Record<SpaceType, string> = Object.fromEntries(
+  Object.entries(DISK_STYLE).map(([k, v]) => [k, v.deep])
+) as Record<SpaceType, string>;
 
 interface RingState {
   ring: THREE.Mesh;

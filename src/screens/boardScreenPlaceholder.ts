@@ -18,7 +18,7 @@ import { playerLabel, labelDoes } from "../ui/labels";
 import { setOnlineMatch } from "../net/mode";
 import { rng, ease } from "../core/rng";
 import { bus } from "../core/events";
-import { roster } from "../characters/roster";
+import { roster, MATCH_SEATS } from "../characters/roster";
 import { audio } from "../audio/audioEngine";
 import { ui, queue } from "../ui/kit";
 import { setAutoplay } from "../core/debug";
@@ -43,6 +43,8 @@ import { screens } from "./screenManager";
 import { openShop } from "./shopScreen";
 import { onViewportChange, viewportSize } from "../ui/viewport";
 import { createMapLook, type MapLook } from "../ui/mapLook";
+import { createOrbMarkers, type OrbMarkers } from "../board/orbProp";
+import { installTips, type TipsHandle } from "../ui/tips";
 import { applyCameraShots } from "../board/lively/shots";
 
 /* ------------------------------------------------------------------ */
@@ -124,6 +126,41 @@ interface CamFit {
  * - lookAt biased toward the ferris corner so the signature landmark stays
  *   readable, with the board center projecting near the screen center.
  */
+/**
+ * Critically damped spring toward `target` (per axis), like Unity's
+ * SmoothDamp: it eases in AND out, never overshoots, and a target that jumps
+ * (a hop landing, a new player's turn) never jerks the camera into motion.
+ * `vel` is the spring's velocity, kept between frames.
+ */
+function smoothDampV(cur: THREE.Vector3, target: THREE.Vector3, vel: THREE.Vector3, smoothTime: number, dt: number): void {
+  const omega = 2 / Math.max(1e-4, smoothTime);
+  const x = omega * dt;
+  const k = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+  for (const a of ["x", "y", "z"] as const) {
+    const change = cur[a] - target[a];
+    const temp = (vel[a] + omega * change) * dt;
+    vel[a] = (vel[a] - omega * temp) * k;
+    cur[a] = target[a] + (change + temp) * k;
+  }
+}
+
+/** Seconds the follow camera takes to settle: steady by default, gentler when aiming. */
+const CAM_SETTLE = 0.36;
+const CAM_SETTLE_SOFT = 0.75;
+/** Tighter settle while a token walks, so the camera keeps up (the lead covers the rest). */
+const CAM_SETTLE_MOVE = 0.26;
+/** Seconds of averaged walking velocity the camera aims ahead (≈ the total smoothing lag). */
+const CAM_LEAD_TIME = 0.48;
+/** Velocity averaging window (s): spans a couple of hops, so no per-hop bob. */
+const CAM_LEAD_AVG = 0.3;
+/** Lead never more than this (world units), and a per-frame jump above CAM_LEAD_JUMP is a teleport. */
+const CAM_LEAD_MAX = 4;
+const CAM_LEAD_JUMP = 2.5;
+/** Settle time toward a ceremony hold ("THE STAR IS HERE!"): there in about a second. */
+const CAM_SETTLE_HOLD = 0.4;
+/** Final smoothing over swoops and punches (s): short, so shots still read. */
+const CAM_OUTPUT_SMOOTH = 0.22;
+
 function computeCameraFit(): CamFit {
   const b = boardBounds();
   const { w, h } = viewportSize();
@@ -279,6 +316,25 @@ interface BoardScreenState {
   _cam?: CamFit;
   _camHold?: { base: THREE.Vector3; look: THREE.Vector3; fov: number } | null;
   _punch?: Punch | null;
+  /** Orb aim / throw: the follow camera looks here instead of the active player. */
+  _camAim?: THREE.Vector3 | null;
+  /** Seconds left of the slow, gentle follow after an aim change. */
+  _camSoftT?: number;
+  _orbMarkers?: OrbMarkers;
+  /** One-time beginner tips (src/ui/tips.ts). */
+  _tips?: TipsHandle;
+  /** Spring velocities for the follow camera (position, look target). */
+  _followVel?: THREE.Vector3;
+  _lookVel?: THREE.Vector3;
+  /** Final camera after swoops and punches, lightly smoothed (and its velocities). */
+  _outPos?: THREE.Vector3;
+  /** Walk lead: last token position, its player, and averaged velocity. */
+  _tokPrev?: THREE.Vector3;
+  _tokPid?: number;
+  _tokVel?: THREE.Vector3;
+  _outLook?: THREE.Vector3;
+  _outVel?: THREE.Vector3;
+  _outLookVel?: THREE.Vector3;
   _followPos?: THREE.Vector3;
   _followLook?: THREE.Vector3;
   _t?: number;
@@ -416,9 +472,10 @@ const boardScreenImpl: BoardScreenState & Screen = {
       // The reset below restarts the dice stream at that seed (pack picks
       // use their own stream and do not consume this one).
       setOnlineMatch(false);
+      const seated = roster.slice(0, MATCH_SEATS);
       startMatch(
-        roster.map((c) => c.key),
-        roster.map((c) => c.name),
+        seated.map((c) => c.key),
+        seated.map((c) => c.name),
         10,
         used,
       );
@@ -439,6 +496,11 @@ const boardScreenImpl: BoardScreenState & Screen = {
     const boardDef = activeBoard();
     const board = buildBoardScene(boardDef);
     this._board = board;
+    this._camAim = null;
+    this._camSoftT = 0;
+    this._orbMarkers = createOrbMarkers(board);
+    this._tips?.dispose();
+    this._tips = installTips();
     // Lively time of day snaps to this turn's look before the first frame.
     board.setTimeOfDay(match.turn, match.totalTurns);
 
@@ -663,6 +725,12 @@ const boardScreenImpl: BoardScreenState & Screen = {
     // init smooth follow targets
     this._followPos = this._cam.base.clone();
     this._followLook = this._cam.look.clone();
+    this._followVel = new THREE.Vector3();
+    this._lookVel = new THREE.Vector3();
+    this._outPos = this._cam.base.clone();
+    this._outLook = this._cam.look.clone();
+    this._outVel = new THREE.Vector3();
+    this._outLookVel = new THREE.Vector3();
 
     const onResize = (): void => {
       if (this._cam) this._cam = computeCameraFit();
@@ -746,24 +814,23 @@ const boardScreenImpl: BoardScreenState & Screen = {
       dice: this._die3d ?? diceView,
       itemBar,
       punchCamera: (target: THREE.Vector3) => {
-        if (!this._cam) return;
-        const dir = this._cam.base.clone().sub(target);
-        const dist = dir.length();
-        dir.normalize();
+        // A small push in from where the camera already is (not from the
+        // whole-board overview, which used to swing the view on every roll).
+        if (!this._followPos || !this._followLook) return;
         this._punch = {
-          pos: this._cam.base.clone().add(dir.multiplyScalar(dist * 0.30)),
-          look: target.clone(),
+          pos: this._followPos.clone().lerp(target, 0.14),
+          look: this._followLook.clone().lerp(target, 0.35),
           t: 0,
         };
       },
       ceremony: {
         focusCamera: (target: THREE.Vector3, intensity: number) => {
-          if (!this._cam) return;
-          const dir = this._cam.base.clone().sub(target);
-          dir.normalize();
+          // Lean toward the moment from the current framing, never a jump cut.
+          if (!this._followPos || !this._followLook) return;
+          const k = Math.min(0.5, Math.max(0, intensity));
           this._punch = {
-            pos: this._cam.base.clone().add(dir.multiplyScalar(dir.length() * intensity)),
-            look: this._cam.look.clone().lerp(target, intensity),
+            pos: this._followPos.clone().lerp(target, k * 0.4),
+            look: this._followLook.clone().lerp(target, k),
             t: 0,
           };
         },
@@ -774,6 +841,11 @@ const boardScreenImpl: BoardScreenState & Screen = {
           this._cam.look.copy(look);
           cam.fov = fov;
           cam.updateProjectionMatrix();
+        },
+        aimCamera: (target: THREE.Vector3 | null) => {
+          this._camAim = target ? target.clone() : null;
+          // Glide (not snap) there and back again.
+          this._camSoftT = 1.4;
         },
         releaseCamera: () => {
           if (!this._cam || !this._camHold) return;
@@ -1043,6 +1115,11 @@ const boardScreenImpl: BoardScreenState & Screen = {
       ch.dispose();
     }
     this._chars = undefined;
+    this._orbMarkers?.dispose();
+    this._tips?.dispose();
+    this._tips = undefined;
+    this._orbMarkers = undefined;
+    this._camAim = null;
     this._board?.dispose();
     this._board = undefined;
     this._die3d?.dispose();
@@ -1131,6 +1208,7 @@ const boardScreenImpl: BoardScreenState & Screen = {
     const starCeremonyOn = this._loop?.starCeremonyActive === true;
     if (!starCeremonyOn) this._board?.setPrizeBalloon(match.players.length > 0 ? match.starBalloonPos : null);
     this._board?.update(dt);
+    this._orbMarkers?.update(dt);
     for (const ch of this._chars ?? []) ch.update(dt);
 
     // ---- party camera: smooth follow on active player, overview, or slow minigame pan ----
@@ -1160,6 +1238,12 @@ const boardScreenImpl: BoardScreenState & Screen = {
       cam.lookAt(introPose.look);
       this._followPos?.copy(introPose.pos);
       this._followLook?.copy(introPose.look);
+      this._outPos?.copy(introPose.pos);
+      this._outLook?.copy(introPose.look);
+      this._followVel?.set(0, 0, 0);
+      this._lookVel?.set(0, 0, 0);
+      this._outVel?.set(0, 0, 0);
+      this._outLookVel?.set(0, 0, 0);
     } else if (cam && this._cam && this._followPos && this._followLook) {
       const phase = match.phase;
       const currentPid = match.currentPlayer;
@@ -1167,13 +1251,49 @@ const boardScreenImpl: BoardScreenState & Screen = {
       let idealPos: THREE.Vector3;
       let idealLook: THREE.Vector3;
 
-      if ((phase === "dice" || phase === "moving" || phase === "space-effect") && match.players[currentPid]) {
-        // Follow the active player — compute ideal target each frame
+      if (
+        (phase === "idle" || phase === "dice" || phase === "moving" || phase === "space-effect") &&
+        match.players[currentPid]
+      ) {
+        // Follow the active player's token as it is drawn. During a hop it
+        // slides smoothly between spaces, so the camera rides along instead of
+        // lurching at every landing. "idle" (back from a minigame) follows too: the next
+        // player is a glide away, not a fly-out to the overview and back.
         const off = PLAYER_OFFSETS[currentPid] ?? [0, 0];
-        const v = this._board?.spaceWorldPos(match.players[currentPid]?.space ?? 0) || new THREE.Vector3();
-        const playerPos = v.clone();
-        playerPos.x += off[0];
-        playerPos.z += off[1];
+        const token = this._chars?.[currentPid]?.group.position;
+        const playerPos = token
+          ? token.clone()
+          : (this._board?.spaceWorldPos(match.players[currentPid]?.space ?? 0) ?? new THREE.Vector3()).add(
+              new THREE.Vector3(off[0], 0, off[1]),
+            );
+        // Lead the walker: a smoothed camera trails a moving target by about
+        // speed x settle time, which left a walking character near the screen
+        // edge. Aim ahead along its averaged velocity (over a few hops, so the
+        // camera does not bob per hop) to cancel that lag. A teleport or a new
+        // player is a jump, not a velocity.
+        this._tokVel ??= new THREE.Vector3();
+        if (token) {
+          const jumped =
+            !this._tokPrev || this._tokPid !== currentPid || this._tokPrev.distanceToSquared(token) > CAM_LEAD_JUMP ** 2;
+          if (jumped || dt <= 0) {
+            this._tokVel.set(0, 0, 0);
+          } else {
+            const raw = token.clone().sub(this._tokPrev!).divideScalar(dt);
+            raw.y = 0;
+            this._tokVel.lerp(raw, 1 - Math.exp(-dt / CAM_LEAD_AVG));
+          }
+          (this._tokPrev ??= new THREE.Vector3()).copy(token);
+          this._tokPid = currentPid;
+          const lead = this._tokVel.clone().multiplyScalar(CAM_LEAD_TIME);
+          if (lead.length() > CAM_LEAD_MAX) lead.setLength(CAM_LEAD_MAX);
+          playerPos.add(lead);
+        }
+        // Orb aim / throw: frame the target instead (the turn loop glides it).
+        if (this._camAim) playerPos.copy(this._camAim);
+        // A ceremony hold ("THE STAR IS HERE!", a star buy) frames its look
+        // point from the same angle as play, so the camera glides over to it
+        // and back instead of ignoring it or swinging round the board.
+        if (this._camHold) playerPos.copy(this._cam.look).setY(this._cam.look.y - 2);
 
         idealPos = playerPos.clone();
         idealPos.y += 18; // high angle
@@ -1200,10 +1320,26 @@ const boardScreenImpl: BoardScreenState & Screen = {
         idealLook.z += Math.sin(t * 0.21) * 0.3;
       }
 
-      // Smooth lerp the persistent follow target toward the ideal (prevents stutter/clip from discrete player hops)
-      const followSpeed = 1 - Math.exp(-11 * dt); // responsive but silky (tune 9-14)
-      this._followPos.lerp(idealPos, followSpeed);
-      this._followLook.lerp(idealLook, followSpeed * 0.85);
+      // One critically damped spring for position AND look target, with the
+      // same settle time, so the camera glides without tilting or overshoot.
+      // Aiming / throwing an orb settles more gently still.
+      if (this._camHold) this._camSoftT = 1.2; // glide to the held spot, and back after release
+      const soft = this._camAim != null || this._camHold != null || (this._camSoftT ?? 0) > 0;
+      if (!this._camAim && (this._camSoftT ?? 0) > 0) this._camSoftT = Math.max(0, (this._camSoftT ?? 0) - dt);
+      // A ceremony hold arrives promptly (the beat is short); aiming and the
+      // glide back afterwards stay gentle.
+      const walking = phase === "moving" && !this._camAim && !this._camHold;
+      const settle = this._camHold
+        ? CAM_SETTLE_HOLD
+        : walking
+          ? CAM_SETTLE_MOVE
+          : soft
+            ? CAM_SETTLE_SOFT
+            : CAM_SETTLE;
+      this._followVel ??= new THREE.Vector3();
+      this._lookVel ??= new THREE.Vector3();
+      smoothDampV(this._followPos, idealPos, this._followVel, settle, dt);
+      smoothDampV(this._followLook, idealLook, this._lookVel, settle, dt);
 
       let pos = this._followPos.clone();
       let lk = this._followLook.clone();
@@ -1212,6 +1348,15 @@ const boardScreenImpl: BoardScreenState & Screen = {
       // punch still takes priority (committed shot during roll) and pauses
       // them, as does a ceremony holdCamera.
       this._punch = applyCameraShots(dt, pos, lk, this._punch ?? null, !!this._camHold, this._board);
+
+      // Last, a light spring over the composed camera: a swoop cut short or a
+      // punch starting eases in instead of jolting the view.
+      if (this._outPos && this._outLook && this._outVel && this._outLookVel) {
+        smoothDampV(this._outPos, pos, this._outVel, CAM_OUTPUT_SMOOTH, dt);
+        smoothDampV(this._outLook, lk, this._outLookVel, CAM_OUTPUT_SMOOTH, dt);
+        pos = this._outPos;
+        lk = this._outLook;
+      }
 
       cam.position.copy(pos);
       cam.lookAt(lk);

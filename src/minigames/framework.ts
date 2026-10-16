@@ -53,9 +53,21 @@ import type * as THREE from "three";
 import type { Character } from "../characters/characterFactory";
 import type { SeatController } from "../core/seat";
 import { assertMinigameHowTos, registerMinigame, type MinigameEntry } from "./registry";
+import { match } from "../core/game";
+import { cpuSkillOf } from "../config/cpuLevel";
 import { MINIGAME_MODULES } from "./index";
 
 export type { MinigameEntry }; // pending-entry hand-off uses registry entries
+
+/**
+ * How sharp the computer players are this match (1 = the tuned Normal game,
+ * above 1 faster and more accurate, below 1 slower). Minigames scale their
+ * CPU tuning by this. It only reads the match, so it is the same on every
+ * peer of an online room.
+ */
+export function cpuSkill(): number {
+  return cpuSkillOf(match.cpuLevel ?? "normal");
+}
 
 export type MinigameGenre =
   | "survival"
@@ -300,6 +312,32 @@ export interface MinigameInput {
    * Minigames that only listen for the 4-direction key actions can omit it.
    */
   stick?(x: number, y: number): void;
+  /**
+   * Hold-and-release pad (`pad: "hold"`). down=true when the press starts
+   * (heldSec 0), down=false when it ends (heldSec = how long it was held,
+   * capped at the game's holdMax, default 1.5 s).
+   * A lost window or a cancelled touch also ends the hold with down=false.
+   */
+  hold?(down: boolean, heldSec: number): void;
+  /**
+   * Swipe pad (`pad: "swipe"`). (dx, dy) is the unit swipe direction in
+   * screen space (+x right, +y down). power is screen speed / 3 screens per
+   * second, clamped 0..1. On a keyboard, power is the Space hold / 1 s.
+   */
+  swipe?(dx: number, dy: number, power: number): void;
+  /** Two-button pad (`pad: "twin"`). Called on every press and release of A or B. */
+  button?(which: "a" | "b", down: boolean): void;
+  /**
+   * Dial pad (`pad: "dial"`). A turn since the last call, in radians
+   * (positive is clockwise on screen). A keyboard sends one per frame at
+   * 1.5 turns per second.
+   */
+  dial?(deltaRad: number): void;
+  /**
+   * Draw pad (`pad: "draw"`). One stroke is start, move..., end, in
+   * normalized 0..1 screen coords. move is capped at 60 events per second.
+   */
+  draw?(phase: "start" | "move" | "end", x: number, y: number): void;
 }
 
 /**
@@ -324,8 +362,11 @@ export interface MinigameHud {
  * a phone shows `touch`, a keyboard player sees `keys`.
  */
 export interface MinigameRules {
-  /** "ffa" free-for-all, "1v3", "2v2". */
-  format: "ffa" | "1v3" | "2v2";
+  /**
+   * "ffa" free-for-all, "1v3", "2v2", or "1v1" (a duel: two of the four
+   * play, the other two watch; free play only, never dealt by the roulette).
+   */
+  format: "ffa" | "1v3" | "2v2" | "1v1";
   /** How long / how it ends: "30 seconds", "Race to the cake", "Last one standing". */
   length: string;
   /** How you win, one line. */
@@ -364,10 +405,35 @@ export interface MinigameContext {
   hud: MinigameHud;
 }
 
+/**
+ * The on-screen control a minigame uses besides tap and the stick.
+ * hold: press and hold, release to act. swipe: flick in a direction.
+ * twin: two buttons, A and B. dial: turn a wheel. draw: trace with a finger.
+ * Unset keeps the classic TAP button and MOVE stick.
+ */
+export type MinigamePad = "hold" | "swipe" | "twin" | "dial" | "draw";
+
 export interface Minigame {
   id: string;
   name: string;
   genre: MinigameGenre;
+  /** The control pad this game uses. Unset means the classic TAP and MOVE. */
+  pad?: MinigamePad;
+  /** Button words for the `twin` pad. */
+  padLabels?: { a: string; b: string };
+  /** Longest useful hold for the `hold` pad, in seconds. Default 1.5. */
+  holdMax?: number;
+  /**
+   * Safety net: the screen force-finishes a round that is still running after
+   * this many seconds of play. Default `settings.minigameTimeLimit` (30 s).
+   * A game that runs longer sets it a little past its own clock.
+   */
+  timeLimit?: number;
+  /**
+   * Kept out of the MINIGAMES menu and the roulette. Reachable only by
+   * `?minigame=<id>` (test rigs such as control_lab).
+   */
+  hidden?: boolean;
   /**
    * Shown on the START MINI GAME card. One or two short sentences:
    * how to touch, tap, or hold, and how to win. Required — a new game
@@ -472,7 +538,7 @@ export async function registerAllMinigames(): Promise<void> {
     if (!howTo) {
       throw new Error(`[minigames] '${mg.id}' is missing howTo (controls and how to win)`);
     }
-    registerMinigame({ id: mg.id, name: mg.name, description: howTo, rules: mg.rules });
+    registerMinigame({ id: mg.id, name: mg.name, description: howTo, rules: mg.rules, hidden: mg.hidden, pad: mg.pad });
   }
   assertMinigameHowTos();
 }

@@ -43,7 +43,11 @@ export interface HudHandle {
   el: HTMLDivElement;
   update(players: HudPlayerState[]): void;
   /** Center-top announcement in the HUD banner slot. */
-  showBanner(text: string, opts?: { durationMs?: number }): { el: HTMLElement; destroy(): void };
+  /** `priority` matters on the board, whose queue lets "high" cut in ahead of routine banners. */
+  showBanner(
+    text: string,
+    opts?: { durationMs?: number; priority?: "low" | "normal" | "high" | "critical" },
+  ): { el: HTMLElement; destroy(): void };
   destroy(): void;
 }
 
@@ -247,7 +251,7 @@ export function hud(): HudHandle {
     }
   }
 
-  function showBanner(text: string, opts?: { durationMs?: number }) {
+  function showBanner(text: string, opts?: { durationMs?: number; priority?: "low" | "normal" | "high" | "critical" }) {
     if (bannerSink) return bannerSink(text, opts);
     const b = document.createElement("div");
     b.className = "ssp-hud-banner";

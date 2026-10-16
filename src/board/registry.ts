@@ -30,13 +30,13 @@ export const BOARDS: Record<BoardId, BoardEntry> = {
     def: fizzyFairground,
     name: "Fizzy Fairground",
     blurb: "An island midway: a hilltop inner lane and a Funhouse Gate that flips every round.",
-    rev: 3,
+    rev: 4,
   },
   downtown: {
     def: downtown,
     name: "Downtown",
     blurb: "A city Ring Road with Market Street and the Riverside Walk.",
-    rev: 2,
+    rev: 3,
   },
 };
 

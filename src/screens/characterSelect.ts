@@ -20,15 +20,24 @@ import { setOnlineMatch } from "../net/mode";
 import type { SeatController } from "../core/seat";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
-import { roster } from "../characters/roster";
+import { roster, MATCH_SEATS, type CharacterKind } from "../characters/roster";
 import { createCharacter, type Character } from "../characters/characterFactory";
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
 import { onViewportChange, viewportSize } from "../ui/viewport";
 import { mountMatchSettings } from "../ui/packPicker";
 import { setSelectBoundsReader, type SelectBounds, type SelectRect } from "../core/debug";
+import { isFreeplay } from "../game/freeplay";
 
 const SLOT_COUNT = roster.length;
+
+/**
+ * The CPU rivals for a pick: the first MATCH_SEATS - 1 other heroes in roster
+ * order. Picking one of the original four keeps the same rivals as before.
+ */
+function opponentsFor(selIdx: number): CharacterKind[] {
+  return roster.filter((_, i) => i !== selIdx).slice(0, MATCH_SEATS - 1);
+}
 const PARTY_FOV = 45;
 /** Lens for the hero shot: long enough that the model isn't fish-eyed. */
 const HERO_FOV = 30;
@@ -262,7 +271,7 @@ const characterSelectImpl: SelectScreenState & Screen = {
     world.scene?.add(cone);
     this._cone = cone;
 
-    // All four load now so a swap is instant; only the selected one shows.
+    // Every hero loads now so a swap is instant; only the selected one shows.
     roster.forEach((charKind) => {
       const ch = createCharacter(charKind.key);
       ch.setFacing(0);
@@ -376,6 +385,12 @@ const characterSelectImpl: SelectScreenState & Screen = {
     okBtn.el.classList.add("ssp-sel-start");
     this._startEl = okBtn.el;
 
+    // Minigame free play: no board or match rules to set, and START reads NEXT.
+    if (isFreeplay()) {
+      settingsCard.style.display = "none";
+      okBtn.setLabel("NEXT ▶");
+      okBtn.el.setAttribute("aria-label", "Next: pick a minigame");
+    }
     side.append(plate, cardRow, settingsCard, okBtn.el);
     stage.append(topBar, slot, side);
 
@@ -451,8 +466,8 @@ const characterSelectImpl: SelectScreenState & Screen = {
     if (!row) return;
     const sel = this._selected ?? 0;
     row.replaceChildren();
-    roster.forEach((charKind, i) => {
-      if (i === sel) return;
+    opponentsFor(sel).forEach((charKind) => {
+      const i = roster.indexOf(charKind);
       const card = document.createElement("button");
       card.type = "button";
       card.className = "ssp-sel-card";
@@ -580,7 +595,7 @@ const characterSelectImpl: SelectScreenState & Screen = {
   _confirmStart() {
     const selIdx = this._selected ?? 0;
     const sel = roster[selIdx];
-    const others = roster.filter((_, i) => i !== selIdx);
+    const others = opponentsFor(selIdx);
     const kinds = [sel.key, ...others.map((c) => c.key)];
     const names = [sel.name, ...others.map((c) => c.name)];
     const controllers: SeatController[] = ["local", ...others.map(() => "cpu" as const)];
@@ -595,6 +610,12 @@ const characterSelectImpl: SelectScreenState & Screen = {
 
     setOnlineMatch(false);
     startMatch(kinds, names, 10, urlSeed, controllers);
+    if (isFreeplay()) {
+      // The match only seats the four players for the minigames.
+      audio.sfx.play("pop");
+      screens.goto("minigames");
+      return;
+    }
     audio.sfx.play("fanfare.win");
     screens.goto("board");
   },

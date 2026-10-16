@@ -27,3 +27,6 @@ tools/check-files.mjs
 /nul
 vision-*.png
 tools/probe-*.json
+
+# capture-minigame-clips.mjs scratch frames
+.clip-frames/

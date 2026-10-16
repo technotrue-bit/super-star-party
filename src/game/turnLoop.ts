@@ -55,10 +55,22 @@ import {
   movementTotal,
   takeLuckyPlayers,
   collectLuckyBlue,
+  orbThrowSpaces,
   type ShopDecision,
   type UseItemResult,
 } from "./items";
 import { openShop } from "../screens/shopScreen";
+import {
+  rollHiddenBlock,
+  openHiddenBlock,
+  cpuCoinBlockHits,
+  clampCoinBlockHits,
+  payCoinBlock,
+  type HiddenBlockKind,
+  type HiddenBlockPrize,
+} from "./hiddenBlocks";
+import { createHiddenBlock, type HiddenBlockProp } from "../board/hiddenBlockProp";
+import { createOrbMesh, disposeOrbMesh, orbColor } from "../board/orbProp";
 import { restockShops } from "./shopStock";
 import { tryPickMinigame } from "../minigames/registry";
 import { setPendingMinigame } from "../minigames/framework";
@@ -204,6 +216,11 @@ export interface CeremonyDeps {
   holdCamera(pos: THREE.Vector3, look: THREE.Vector3, fov: number): void;
   /** Restore the camera to its default position after a holdCamera. */
   releaseCamera(): void;
+  /**
+   * Glide the follow camera to look at a world point (orb aiming / throw),
+   * slowly and smoothly; null glides back to the active player.
+   */
+  aimCamera(target: THREE.Vector3 | null): void;
 }
 
 export interface TurnLoopDeps {
@@ -253,6 +270,25 @@ setAutoplayHook(() => {
 
 export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const { board, chars, hud, rollButton, dice, itemBar, punchCamera, ceremony, projectToScreen, flashOverlay } = deps;
+
+  /** One Hidden Block, from popping out of the air to vanishing. */
+  interface BlockRun {
+    pid: number;
+    kind: HiddenBlockKind;
+    prop: HiddenBlockProp;
+    stage: "spawn" | "hit" | "reveal" | "mash" | "wait" | "replay" | "pay" | "out";
+    /** Seconds in the current stage. */
+    t: number;
+    then: () => void;
+    prize: HiddenBlockPrize | null;
+    /** Coin Dice Block: hits counted (mash) or to play back (replay). */
+    hits: number;
+    shown: number;
+    lastHitT: number;
+    /** Local online human: relay the hit count when the window closes. */
+    publish: boolean;
+    mash: { root: HTMLElement; count: HTMLElement; bar: HTMLElement; btn: ButtonHandle; onKey: (e: KeyboardEvent) => void } | null;
+  }
 
   interface LoopState {
     phase: LoopPhase;
@@ -307,6 +343,14 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     netDice: boolean;
     netShop: { pid: number; space: number; done: () => void } | null;
     netStar: { pid: number; commit: (count: number) => void; pass: () => void } | null;
+    /** Waiting on a remote seat's Coin Dice Block hits (null hits = the CPU draw). */
+    netBlock: { pid: number; finish: (hits: number | null) => void } | null;
+    /** A Hidden Block in play: runs INSTEAD of the pause chain, like the star ceremony. */
+    blockRun: BlockRun | null;
+    /** Orb aim mode is open (ghost orb bob + cancel on dispose). */
+    orbAim: { update: (dt: number) => void; cancel: () => void } | null;
+    /** An orb in flight: update returns false when the beat is over. */
+    orbThrow: { t: number; landed: boolean; update: (dt: number) => boolean; done: () => void } | null;
     netPoison: { holderId: number; finish: (use: boolean) => void } | null;
     netPath: {
       pid: number;
@@ -366,6 +410,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     netDice: false,
     netShop: null,
     netStar: null,
+    netBlock: null,
+    blockRun: null,
+    orbAim: null,
+    orbThrow: null,
     netPoison: null,
     netPath: null,
     resultSteps: [],
@@ -409,27 +457,33 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     bought: string[],
     traps: { space: number; kind: string }[],
   ): void => {
-    let trapAtIndex = 0;
+    // Orbs go in the bag like any item now; `traps` is kept for the message
+    // shape only (every peer on this rev sends it empty).
+    void traps;
     for (const key of bought) {
       const def = ITEM_DEFS[key];
       if (!buyItem(pid, key)) continue;
-      if (!def?.places) {
-        ui.toast(`Bought ${def?.name ?? key}!`, { durationMs: 1200 });
-        continue;
-      }
-      const held = match.players[pid]?.items;
-      const at = held?.lastIndexOf(key) ?? -1;
-      if (held && at >= 0) held.splice(at, 1);
-      const trap = traps[trapAtIndex];
-      trapAtIndex += 1;
-      if (trap) placeTrap(pid, trap.space, trap.kind as TrapKind);
-      ui.toast(`Set ${def.name}!`, { durationMs: 1200 });
+      ui.toast(`Bought ${def?.name ?? key}!`, { durationMs: 1200 });
     }
   };
 
   let pumping = false;
   /** Apply one queued remote choice. True when the caller should look again. */
   const stepNet = (): boolean => {
+    if (S.netBlock) {
+      const wait = S.netBlock;
+      if (playerController(wait.pid) === "cpu") {
+        S.netBlock = null;
+        wait.finish(null);
+        return true;
+      }
+      const msg = peekChoice();
+      if (!msg || msg.kind !== "block" || msg.playerId !== wait.pid) return false;
+      shiftChoice();
+      S.netBlock = null;
+      wait.finish(msg.auto ? null : clampCoinBlockHits(msg.hits ?? 0));
+      return true;
+    }
     if (S.netPoison) {
       const wait = S.netPoison;
       if (playerController(wait.holderId) === "cpu") {
@@ -812,6 +866,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const applyAutoItem = (pid: number, key: string, res: UseItemResult): boolean => {
     if (!res.ok) return false;
     markItemUsed();
+    if (res.placedOn !== undefined) {
+      refreshHud();
+      throwOrb(pid, key, res);
+      return true;
+    }
     ui.toast(res.message, { durationMs: 1600 });
     audio.sfx.play("boing");
     refreshHud();
@@ -976,6 +1035,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     }
     const content = document.createElement("div");
     content.style.cssText = "display:flex;flex-direction:column;gap:10px;";
+    bus.emit("tip:moment", { id: "fork", player: pid });
     const pop = ui.popup({
       title: "WHICH LANE?",
       body: forkLabel(activeBoard(), here),
@@ -1118,6 +1178,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         hud.showBanner(`+${gained} COINS!`, { durationMs: 1400 });
         const sc = projectToScreen(pos);
         if (sc) ui.confettiBurst(sc.x, sc.y, { count: 36, sound: null });
+        // Now and then a Hidden Block pops out of thin air (match rng).
+        const block = rollHiddenBlock();
+        if (block) {
+          refreshHud();
+          pause(1.0, () => hiddenBlock(pid, block, finishEffect));
+          return;
+        }
         break;
       }
       case "red": {
@@ -1161,6 +1228,278 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         break;
     }
     finishEffect();
+  };
+
+  /* ---------------- hidden blocks ---------------- */
+
+  const BLOCK_RISE = 3.0; // block height above the player's space
+
+  const blockBanner = (kind: HiddenBlockKind, prize: HiddenBlockPrize): string => {
+    if (kind === "star") return "A STAR!";
+    if (prize.item) return `${(ITEM_DEFS[prize.item]?.name ?? prize.item).toUpperCase()}!`;
+    return `+${prize.coins} COINS!`;
+  };
+
+  /**
+   * A Hidden Block appears above `pid` (they just landed on blue). The player
+   * bonks it: a star, an item or coins pop out, or it turns into the Coin
+   * Dice Block, which pays a coin per hit until it vanishes.
+   */
+  const hiddenBlock = (pid: number, kind: HiddenBlockKind, then: () => void): void => {
+    const prop = createHiddenBlock();
+    const parent = board.group.parent ?? board.group;
+    parent.add(prop.root);
+    S.blockRun = {
+      pid,
+      kind,
+      prop,
+      stage: "spawn",
+      t: 0,
+      then,
+      prize: null,
+      hits: 0,
+      shown: 0,
+      lastHitT: -1,
+      publish: false,
+      mash: null,
+    };
+    placeBlock(S.blockRun);
+    audio.sfx.play("happening.magic");
+    audio.sfx.play("pop", { pitch: 1.4 });
+    hud.showBanner("HIDDEN BLOCK!", { durationMs: 1300 });
+    ceremony.focusCamera(charPos(pid), 0.35);
+    chars[pid]?.anim.squash();
+    bus.emit("hidden:block", { player: pid, space: match.players[pid]?.space ?? 0, prize: kind, coins: 0, item: null });
+  };
+
+  const placeBlock = (run: BlockRun): void => {
+    const p = charPos(run.pid);
+    run.prop.root.position.set(p.x, p.y + BLOCK_RISE, p.z);
+  };
+
+  const blockSparkle = (run: BlockRun, color: string, count = 10): void => {
+    const sc = projectToScreen(run.prop.root.position);
+    if (sc) ceremony.sparkle(sc.x, sc.y, count, color);
+  };
+
+  /** One hit on the Coin Dice Block (counted or played back). */
+  const blockHit = (run: BlockRun): void => {
+    run.prop.bump();
+    run.prop.popCoin();
+    run.lastHitT = run.t;
+    audio.sfx.play("coin.gain", { volume: 0.7, pitch: 1 + Math.min(run.shown, 20) * 0.03 });
+    if (run.mash) run.mash.count.textContent = `×${run.hits}`;
+  };
+
+  /** Decide how the Coin Dice Block gets hit: tap window, CPU, or the relay. */
+  const startCoinBlock = (run: BlockRun): void => {
+    const pid = run.pid;
+    // Fists pumping, hopping into the block for the whole window.
+    chars[pid]?.anim.cheer();
+    const replay = (hits: number): void => {
+      run.hits = clampCoinBlockHits(hits);
+      run.shown = 0;
+      run.stage = "replay";
+      run.t = 0;
+    };
+    const gate = netGate(pid);
+    if (gate === "remote") {
+      run.stage = "wait";
+      run.t = 0;
+      S.netBlock = { pid, finish: (hits) => replay(hits ?? cpuCoinBlockHits()) };
+      pumpNet();
+      return;
+    }
+    if (gate === "assist") {
+      publishChoice({ kind: "block", playerId: pid, auto: true });
+      replay(cpuCoinBlockHits());
+      return;
+    }
+    if (gate === "cpu" && !decisions.choosesLocally(pid)) {
+      replay(cpuCoinBlockHits());
+      return;
+    }
+    // A local human: tap HIT! (or Space / Enter) as fast as you can.
+    run.publish = gate === "human";
+    run.stage = "mash";
+    run.t = 0;
+    run.hits = 0;
+    openMashUi(run);
+  };
+
+  const openMashUi = (run: BlockRun): void => {
+    const root = document.createElement("div");
+    root.className = "ssp-coinblock";
+    root.style.cssText =
+      "position:fixed;left:50%;bottom:calc(120px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);" +
+      "display:flex;flex-direction:column;align-items:center;gap:8px;z-index:40;pointer-events:auto;";
+    const count = document.createElement("div");
+    count.style.cssText =
+      `font-family:Fredoka,sans-serif;font-weight:700;font-size:40px;line-height:1;color:${palette.sun};` +
+      `-webkit-text-stroke:2px ${palette.ink};paint-order:stroke fill;text-shadow:3px 3px 0 ${palette.ink};`;
+    count.textContent = "×0";
+    const track = document.createElement("div");
+    track.style.cssText = `width:200px;height:12px;border-radius:8px;background:${palette.cream};border:3px solid ${palette.ink};overflow:hidden;`;
+    const bar = document.createElement("div");
+    bar.style.cssText = `height:100%;width:100%;background:${palette.sun};`;
+    track.appendChild(bar);
+    const hit = (): void => {
+      const r = S.blockRun;
+      if (!r || r.stage !== "mash") return;
+      if (r.lastHitT >= 0 && r.t - r.lastHitT < settings.coinBlockCooldown) return;
+      if (r.hits >= settings.coinBlockMaxHits) return;
+      r.hits += 1;
+      r.shown = r.hits;
+      blockHit(r);
+    };
+    const btn = ui.button({
+      label: "HIT!",
+      kind: "gold",
+      size: "lg",
+      sound: null,
+      ariaLabel: "Hit the coin block",
+      onClick: hit,
+    });
+    btn.el.style.minWidth = "200px";
+    btn.el.style.touchAction = "manipulation";
+    // pointerdown, not click, so fast taps all count on a phone.
+    btn.el.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      hit();
+    });
+    btn.el.addEventListener("click", (e) => e.preventDefault(), true);
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.repeat) return;
+      if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        hit();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    root.append(count, track, btn.el);
+    document.body.appendChild(root);
+    run.mash = { root, count, bar, btn, onKey };
+  };
+
+  const closeMashUi = (run: BlockRun): void => {
+    if (!run.mash) return;
+    window.removeEventListener("keydown", run.mash.onKey);
+    run.mash.btn.destroy();
+    run.mash.root.remove();
+    run.mash = null;
+  };
+
+  const endBlock = (run: BlockRun): void => {
+    closeMashUi(run);
+    run.prop.dispose();
+    S.blockRun = null;
+    if (S.netBlock?.pid === run.pid) S.netBlock = null;
+  };
+
+  /** Hidden Block update, driven from update() while S.blockRun is set. */
+  const updateBlock = (dt: number): void => {
+    const run = S.blockRun;
+    if (!run) return;
+    run.t += dt;
+    placeBlock(run);
+    const alive = run.prop.update(dt);
+    const pid = run.pid;
+    const next = (stage: BlockRun["stage"]): void => {
+      run.stage = stage;
+      run.t = 0;
+    };
+    switch (run.stage) {
+      case "spawn":
+        if (run.t >= 1.0) {
+          chars[pid]?.anim.jump();
+          audio.sfx.play("jump");
+          next("hit");
+        }
+        break;
+      case "hit":
+        if (run.t >= 0.32) {
+          run.prop.bump();
+          audio.sfx.play("boing", { pitch: 1.2 });
+          blockSparkle(run, palette.sun, 14);
+          if (run.kind === "dice") {
+            run.prop.setLook("dice");
+            hud.showBanner("COIN DICE BLOCK! HIT IT!", { durationMs: 1500 });
+            startCoinBlock(run);
+            break;
+          }
+          const prize = openHiddenBlock(pid, run.kind);
+          run.prize = prize;
+          run.prop.reveal(run.kind === "star" ? "star" : prize.item ? "item" : "coins");
+          run.prop.setLook("spent");
+          hud.showBanner(blockBanner(run.kind, prize), { durationMs: 1500 });
+          audio.sfx.play(run.kind === "star" ? "star.get" : prize.item ? "shop.buy" : "coin.gain");
+          chars[pid]?.anim.cheer();
+          if (prize.item) ui.toast(`${playerLabel(pid)} found ${ITEM_DEFS[prize.item]?.name ?? prize.item}!`, { durationMs: 1700 });
+          bus.emit("hidden:block", { player: pid, space: match.players[pid]?.space ?? 0, prize: run.kind, coins: prize.coins, item: prize.item });
+          refreshHud();
+          next("reveal");
+        }
+        break;
+      case "reveal":
+        if (run.t >= 1.5) {
+          run.prop.vanish();
+          next("out");
+        }
+        break;
+      case "mash": {
+        const left = Math.max(0, 1 - run.t / settings.coinBlockSeconds);
+        if (run.mash) run.mash.bar.style.width = `${Math.round(left * 100)}%`;
+        if (run.t >= settings.coinBlockSeconds || run.hits >= settings.coinBlockMaxHits) {
+          closeMashUi(run);
+          if (run.publish) publishChoice({ kind: "block", playerId: pid, hits: run.hits });
+          next("pay");
+        }
+        break;
+      }
+      case "wait":
+        break; // stepNet hands the relayed count to replay()
+      case "replay": {
+        // Play the hits back at a quick, readable pace inside the block's window.
+        const gap = Math.min(0.26, settings.coinBlockSeconds / Math.max(1, run.hits));
+        if (run.shown < run.hits && run.t >= 0.25 + run.shown * gap) {
+          run.shown += 1;
+          blockHit(run);
+        }
+        if (run.shown >= run.hits && run.t >= 0.25 + run.hits * gap + 0.3) next("pay");
+        break;
+      }
+      case "pay":
+        if (run.t >= 0.2 && !run.prize) {
+          const coins = payCoinBlock(pid, run.hits);
+          run.prize = { kind: "dice", coins, item: null };
+          run.prop.setLook("spent");
+          if (coins > 0) {
+            hud.showBanner(`+${coins} COINS!`, { durationMs: 1500 });
+            chars[pid]?.anim.cheer();
+            blockSparkle(run, palette.sun, 18);
+          } else {
+            hud.showBanner("NO COINS...", { durationMs: 1300 });
+            chars[pid]?.anim.sad();
+          }
+          bus.emit("hidden:block", { player: pid, space: match.players[pid]?.space ?? 0, prize: "dice", coins, item: null });
+          refreshHud();
+        }
+        if (run.t >= 1.4) {
+          run.prop.vanish();
+          next("out");
+        }
+        break;
+      case "out":
+        if (!alive) {
+          const then = run.then;
+          const star = run.kind === "star";
+          endBlock(run);
+          chars[pid]?.anim.idle();
+          if (star) celebrateStar(pid, 1, then);
+          else then();
+        }
+        break;
+    }
   };
 
   const finishEffect = (): void => {
@@ -1418,6 +1757,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         btn.el.addEventListener("click", () => useItemPressed(pid, key));
       }
       itemBar.appendChild(btn.el);
+      if (!used) bus.emit("tip:moment", { id: "item-bar", player: pid });
     }
   };
 
@@ -1447,7 +1787,255 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       chompThenRoll(pid);
       return;
     }
+    if (res.placedOn !== undefined) {
+      throwOrb(pid, key, res);
+      return;
+    }
     itemBeat(pid, res);
+  };
+
+  /* ---------------- orbs: aim, then throw ---------------- */
+
+  /**
+   * Aim an orb: the spaces in reach glow, the camera glides to the chosen one,
+   * and a ghost orb bobs over it. Tap a glowing space or step with ◀ ▶, then
+   * THROW. CANCEL keeps the orb.
+   */
+  const openOrbAim = (pid: number, key: string): void => {
+    const def = ITEM_DEFS[key];
+    const spots = orbThrowSpaces(pid);
+    if (!def?.places || spots.length === 0) {
+      ui.toast("No space in reach.", { durationMs: 1300 });
+      return;
+    }
+    S.itemResolving = true;
+    rollButton.setEnabled(false);
+    // Clear the view: no ROLL button or hovering die over the board while aiming.
+    rollButton.setVisible(false);
+    dice.hide();
+    itemBar.innerHTML = "";
+    for (const i of spots) board.setHighlight(i, true);
+    // Start on the nearest reachable space ahead, else the first one.
+    const here = match.players[pid]?.space ?? 0;
+    let at = Math.max(0, spots.findIndex((i) => i > here));
+    bus.emit("tip:moment", { id: "orb-aim", player: pid });
+    const ghost = createOrbMesh(def.places, 0.3);
+    (board.group.parent ?? board.group).add(ghost);
+    let t = 0;
+
+    const sheet = document.createElement("div");
+    sheet.className = "ssp-orbaim";
+    sheet.style.cssText =
+      "position:fixed;left:50%;bottom:calc(104px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);" +
+      `z-index:45;display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 12px;border-radius:20px;` +
+      `background:${palette.cream};border:4px solid ${palette.ink};box-shadow:0 5px 0 ${palette.ink};` +
+      "width:min(92vw,380px);box-sizing:border-box;pointer-events:auto;font-family:Fredoka,sans-serif;";
+    const title = document.createElement("div");
+    title.style.cssText = `font-weight:700;font-size:18px;color:${palette.ink};`;
+    title.textContent = `${def.icon} Throw ${def.name}`;
+    const hint = document.createElement("div");
+    hint.style.cssText = `font-weight:600;font-size:13px;color:${palette.inkSoft};text-align:center;`;
+    hint.textContent = `Tap a glowing space (up to ${settings.orbThrowRange} away).`;
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:8px;width:100%;";
+    const label = document.createElement("div");
+    label.style.cssText = `flex:1;min-width:0;text-align:center;font-weight:700;font-size:15px;color:${palette.ink};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+    const prev = ui.button({ label: "◀", kind: "primary", size: "sm", ariaLabel: "Previous space", onClick: () => step(-1) });
+    const next = ui.button({ label: "▶", kind: "primary", size: "sm", ariaLabel: "Next space", onClick: () => step(1) });
+    row.append(prev.el, label, next.el);
+    const actions = document.createElement("div");
+    actions.style.cssText = "display:flex;gap:8px;width:100%;";
+    const cancelBtn = ui.button({ label: "CANCEL", kind: "ghost", size: "sm", onClick: () => cancel() });
+    const throwBtn = ui.button({ label: "THROW!", kind: "gold", size: "sm", onClick: () => commit(spots[at]) });
+    cancelBtn.el.style.flex = "1";
+    throwBtn.el.style.flex = "2";
+    actions.append(cancelBtn.el, throwBtn.el);
+    sheet.append(title, hint, row, actions);
+    document.body.appendChild(sheet);
+
+    const show = (): void => {
+      const i = spots[at];
+      const sp = activeBoard().spaces[i];
+      const steps = hopsBetweenAny(here, i);
+      label.textContent = `${sp?.name ?? `Space ${i + 1}`} · ${steps} away`;
+      const p = board.spaceWorldPos(i);
+      ceremony.aimCamera(p);
+    };
+    const step = (d: number): void => {
+      at = (at + d + spots.length) % spots.length;
+      audio.sfx.play("ui.click");
+      show();
+    };
+    // Tap on the board: the nearest glowing space under the finger.
+    const onTap = (e: PointerEvent): void => {
+      if ((e.target as HTMLElement | null)?.closest?.("button, .ssp-orbaim, .ssp-popup")) return;
+      let best = -1;
+      let bestD = 46 * 46;
+      spots.forEach((i, k) => {
+        const sc = projectToScreen(board.spaceWorldPos(i));
+        if (!sc) return;
+        const d = (sc.x - e.clientX) ** 2 + (sc.y - e.clientY) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = k;
+        }
+      });
+      if (best < 0) return;
+      if (best === at) {
+        commit(spots[at]);
+        return;
+      }
+      at = best;
+      audio.sfx.play("ui.click");
+      show();
+    };
+    window.addEventListener("pointerdown", onTap);
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "ArrowLeft") step(-1);
+      else if (e.key === "ArrowRight") step(1);
+      else if (e.key === "Enter") commit(spots[at]);
+      else if (e.key === "Escape") cancel();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+
+    let settled = false;
+    const close = (): void => {
+      window.removeEventListener("pointerdown", onTap);
+      window.removeEventListener("keydown", onKey);
+      for (const b of [prev, next, cancelBtn, throwBtn]) b.destroy();
+      sheet.remove();
+      disposeOrbMesh(ghost);
+      for (const i of spots) board.setHighlight(i, false);
+      S.orbAim = null;
+      S.itemAutoCommit = null;
+    };
+    const cancel = (): void => {
+      if (settled) return;
+      settled = true;
+      close();
+      ceremony.aimCamera(null);
+      S.itemResolving = false;
+      rollButton.setVisible(true);
+      dice.hover(pid);
+      if (decisions.usesRollButton(pid)) rollButton.setEnabled(true);
+      rebuildItemBar(pid);
+    };
+    const commit = (space?: number): void => {
+      if (settled) return;
+      settled = true;
+      close();
+      S.itemResolving = false;
+      publishLocal(pid, { kind: "item", playerId: pid, key, target: space });
+      finishBarUse(pid, key, useItem(pid, key, space));
+    };
+    // Autoplay that flips on mid-aim throws at a rng space and never waits.
+    S.itemAutoCommit = () => commit();
+    S.orbAim = {
+      update: (dt: number) => {
+        t += dt;
+        const p = board.spaceWorldPos(spots[at]);
+        ghost.position.set(p.x, p.y + 1.1 + Math.sin(t * 4) * 0.12, p.z);
+        ghost.rotation.y = t * 2;
+      },
+      cancel,
+    };
+    show();
+  };
+
+  /** Steps between two spaces along the paths, either way (display only). */
+  const hopsBetweenAny = (from: number, to: number): number => {
+    const def = activeBoard();
+    const n = def.spaces.length;
+    const adj: number[][] = Array.from({ length: n }, () => []);
+    def.next.forEach((outs, a) => outs.forEach((b) => { adj[a].push(b); adj[b].push(a); }));
+    const dist = new Array<number>(n).fill(-1);
+    dist[from] = 0;
+    const q = [from];
+    for (let qi = 0; qi < q.length; qi++) {
+      for (const b of adj[q[qi]]) {
+        if (dist[b] !== -1) continue;
+        dist[b] = dist[q[qi]] + 1;
+        q.push(b);
+      }
+    }
+    return Math.max(0, dist[to]);
+  };
+
+  /**
+   * The throw beat: the thrower turns to the space and winds up, the orb arcs
+   * through the air and lands with a pop, the camera glides along with it,
+   * then the seat goes back to its roll. State already changed in useItem;
+   * this is presentation on the sim clock (no rng).
+   */
+  const throwOrb = (pid: number, key: string, res: UseItemResult): void => {
+    const def = ITEM_DEFS[key];
+    const space = res.placedOn;
+    if (!def?.places || space === undefined) {
+      itemBeat(pid, res);
+      return;
+    }
+    S.itemResolving = true;
+    S.netDice = false;
+    rollButton.setEnabled(false);
+    itemBar.innerHTML = "";
+    dice.hide();
+    const from = charPos(pid);
+    const to = board.spaceWorldPos(space);
+    const ch = chars[pid];
+    ch?.setFacing(Math.atan2(to.x - from.x, to.z - from.z));
+    ch?.anim.jump();
+    audio.sfx.play("jump");
+    const orb = createOrbMesh(def.places, 0.28);
+    (board.group.parent ?? board.group).add(orb);
+    orb.position.copy(from).add(new THREE.Vector3(0, 1.4, 0));
+    orb.visible = false;
+    ceremony.aimCamera(from.clone().lerp(to, 0.5));
+    hud.showBanner(res.label, { durationMs: 1100 });
+    const dist = from.distanceTo(to);
+    S.orbThrow = {
+      t: 0,
+      landed: false,
+      update: (dt: number): boolean => {
+        const run = S.orbThrow!;
+        run.t += dt;
+        const WIND = 0.32;
+        const FLIGHT = 0.75 + Math.min(0.5, dist * 0.03);
+        if (run.t < WIND) return true;
+        orb.visible = true;
+        const u = Math.min(1, (run.t - WIND) / FLIGHT);
+        const start = from.clone().add(new THREE.Vector3(0, 1.4, 0));
+        const end = to.clone().add(new THREE.Vector3(0, 0.55, 0));
+        orb.position.lerpVectors(start, end, u);
+        orb.position.y += Math.sin(Math.PI * u) * (2.2 + dist * 0.12);
+        orb.rotation.x = run.t * 9;
+        if (u < 1) {
+          ceremony.aimCamera(orb.position.clone().setY(to.y));
+          return true;
+        }
+        if (!run.landed) {
+          run.landed = true;
+          audio.sfx.play("pop");
+          board.highlight(space);
+          board.react(space, "hop");
+          const sc = projectToScreen(end);
+          if (sc) ceremony.sparkle(sc.x, sc.y, 14, orbColor(def.places!));
+          ui.toast(res.message, { durationMs: 2000 });
+          ceremony.aimCamera(to);
+          orb.visible = false;
+        }
+        return run.t < WIND + FLIGHT + 0.9;
+      },
+      done: () => {
+        disposeOrbMesh(orb);
+        S.orbThrow = null;
+        ceremony.aimCamera(null);
+        ch?.anim.idle();
+        ch?.setFacing(0);
+        pause(0.5, () => returnToPreRoll(pid));
+      },
+    };
   };
 
   const openTargetPicker = (pid: number, key: string): void => {
@@ -1551,6 +2139,17 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   const useItemPressed = (pid: number, key: string): void => {
     if (S.phase !== "dice" || S.rolling || S.itemResolving || match.itemUsedThisTurn) return;
+    if (ITEM_DEFS[key]?.places) {
+      const aim = decisions.aim(pid);
+      if (aim === "picker") {
+        openOrbAim(pid, key);
+        return;
+      }
+      if (aim === "wait") return;
+      publishLocal(pid, { kind: "item", playerId: pid, key });
+      finishBarUse(pid, key, useItem(pid, key));
+      return;
+    }
     if (TARGET_PICK.has(key)) {
       const aim = decisions.aim(pid);
       if (aim === "picker") {
@@ -1835,6 +2434,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       }),
     });
     row.appendChild(pass.el);
+    bus.emit("tip:moment", { id: "star-offer", player: pid });
     S.starPopup = ui.popup({
       title: "GRAND PRIZE BALLOON",
       body: `${player.name}, stars are ${settings.starCost} coins each, up to ${settings.starBundleMax}. You have ${player.coins} coins. If you can't pay for the whole bundle, you get what you can afford and the rest pops away.`,
@@ -1847,7 +2447,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const toastShop = (decision: ShopDecision): void => {
     const def = ITEM_DEFS[decision.key];
     const label = def?.name ?? decision.key;
-    ui.toast(decision.placedOn !== undefined ? `Set ${label}!` : `Bought ${label}!`, { durationMs: 1500 });
+    ui.toast(`Bought ${label}!`, { durationMs: 1500 });
   };
 
   /**
@@ -1907,6 +2507,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     };
     // The stall has its own cheerful music-box jingle while the human is choosing.
     audio.music.play("shop", { intensity: 0.35 });
+    bus.emit("tip:moment", { id: "land-shop", player: pid });
     openShop(pid, { shopSpace: space })
       .then((res) => {
         if (S.disposed) return;
@@ -2119,6 +2720,10 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
     const coins = minigameCoinAward(mg.pack);
     const desc = (mg as { description?: string }).description || getMinigameDescription(mg.id, mg.name);
+    const me = match.players.findIndex((p) => p.controller === "local");
+    if (me >= 0) bus.emit("tip:moment", { id: "minigame", player: me });
+    // A game with a new control teaches it once, the first time it comes up.
+    if (me >= 0 && mg.pad) bus.emit("tip:moment", { id: `pad-${mg.pad}`, player: me });
     showMinigamePreview(mg.name, desc, mg.rules, coins).then((started) => {
       console.log('[turnLoop] pre-screen resolved started=', started);
       if (!started) {
@@ -2210,6 +2815,19 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     // beat. It draws no gameplay rng, so the seeded simulation stays identical.
     if (S.starCeremony) {
       updateStarCeremony(dt);
+      return;
+    }
+
+    if (S.orbAim) S.orbAim.update(dt);
+    if (S.orbThrow) {
+      if (!S.orbThrow.update(dt)) S.orbThrow.done();
+      return;
+    }
+
+    // A Hidden Block is a staged beat too; remote hit counts arrive via pumpNet.
+    if (S.blockRun) {
+      updateBlock(dt);
+      pumpNet();
       return;
     }
 
@@ -2383,10 +3001,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     ceremony.holdCamera(look.clone().add(new THREE.Vector3(0, 8.5, 10.5)), look, 40);
     board.highlight(idx);
     audio.sfx.play("happening.magic");
-    hud.showBanner("THE STAR IS HERE!", { durationMs: 1800 });
+    // High priority: it shows while the camera is on the star, not after
+    // the coins banner has played out.
+    hud.showBanner("THE STAR IS HERE!", { durationMs: 2200, priority: "high" });
     const name = activeBoard().spaces[idx]?.name;
-    if (name) ui.toast(`The Grand Prize Balloon starts at ${name}. Go get it!`, { durationMs: 2400 });
-    pause(2.4, () => {
+    if (name) ui.toast(`The Grand Prize Balloon starts at ${name}. Go get it!`, { durationMs: 2800 });
+    // ~1 s to glide across the board, then a good look before turn 1.
+    pause(3.2, () => {
       ceremony.releaseCamera();
       then();
     });
@@ -2412,6 +3033,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     S.poisonPopup?.destroy();
     S.poisonPopup = null;
     S.poisonAutoCommit = null;
+    if (S.blockRun) endBlock(S.blockRun);
+    S.orbAim?.cancel();
+    S.orbAim = null;
+    S.orbThrow = null;
+    S.netBlock = null;
     liveLoop = null;
   };
 
@@ -2426,6 +3052,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       !S.shopOpen &&
       !S.starPopup &&
       !S.starCeremony &&
+      !S.blockRun &&
       !S.itemResolving &&
       !S.itemPopup &&
       !S.poisonPopup,
