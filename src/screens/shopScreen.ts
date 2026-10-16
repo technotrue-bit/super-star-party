@@ -22,10 +22,10 @@ import { bus } from "../core/events";
 import { palette } from "../config/palette";
 import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
-import { ITEM_DEFS, buyItem, starCannonAvailable } from "../game/items";
+import { ITEM_DEFS, buyItem, itemDesc, itemIcon, itemName, starCannonAvailable } from "../game/items";
 import { shopSpaceFor, shopStockAt } from "../game/shopStock";
 import { activeBoard } from "../board/registry";
-import { shopTitle } from "../board/boardText";
+import { shopPopupTitle, shopTitle } from "../board/boardText";
 
 let stylesInjected = false;
 
@@ -241,17 +241,17 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
 
       const icon = document.createElement("div");
       icon.className = "ssp-shop__icon";
-      icon.textContent = def.icon;
+      icon.textContent = itemIcon(key);
       icon.setAttribute("aria-hidden", "true");
 
       const info = document.createElement("div");
       info.className = "ssp-shop__info";
       const nm = document.createElement("div");
       nm.className = "ssp-shop__name";
-      nm.textContent = def.name;
+      nm.textContent = itemName(key);
       const desc = document.createElement("div");
       desc.className = "ssp-shop__desc";
-      desc.textContent = def.desc;
+      desc.textContent = itemDesc(key);
       const price = document.createElement("div");
       price.className = "ssp-shop__price";
       const pc = document.createElement("span");
@@ -300,7 +300,7 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
           const rect = btn.el.getBoundingClientRect();
           ui.showFloatingNumber(rect.left + rect.width / 2, rect.top - 8, -def.price, { durationMs: 700 });
           // Orbs go in the bag too: throw one onto a nearby space before a roll.
-          ui.toast(def.places ? `Got the ${def.name}! Throw it before you roll.` : `Got the ${def.name}!`, {
+          ui.toast(def.places ? `Got the ${itemName(key)}! Throw it before you roll.` : `Got the ${itemName(key)}!`, {
             durationMs: 1700,
             priority: "high",
           });
@@ -337,7 +337,7 @@ export function openShop(playerId: number, opts?: OpenShopOpts): Promise<{ bough
     const offScreen = bus.on("screen:change", close);
 
     const pop = ui.popup({
-      title: "GUMBALL SHOP",
+      title: shopPopupTitle(),
       body: "", // no body row: 3 cards + CLOSE fit a phone without scrolling
       content,
       closeOnEsc: false, // Esc handled here so the promise always resolves

@@ -73,6 +73,32 @@ export interface BoardSkin {
   jackpot: string;
   /** Lower-case place word in happening text (carnival: "carnival"). */
   place: string;
+  /** Shop name in help text and the shop popup (carnival: "Shop" / "GUMBALL SHOP"). */
+  shopName?: string;
+  /**
+   * Item display overrides by item key (keys, prices and rules never change).
+   * Absent fields keep the carnival's ITEM_DEFS text.
+   */
+  items?: Partial<Record<string, ItemSkin>>;
+  /** The last-place free-item giver (carnival: Fizzy Barker). */
+  giver?: GiverSkin;
+}
+
+export interface ItemSkin {
+  name?: string;
+  desc?: string;
+  icon?: string;
+}
+
+export interface GiverSkin {
+  /** Full name, for help text ("Penny the Paperboy"). */
+  name: string;
+  /** Banner when the gift lands (carnival: "FIZZY BARKER!"). */
+  banner: string;
+  /** Gift toast; `{item}` is replaced by the item's display name. */
+  gift: string;
+  /** Toast when the bag is already full. */
+  full: string;
 }
 
 // ---- Fizzy Fairground layout -------------------------------------------------

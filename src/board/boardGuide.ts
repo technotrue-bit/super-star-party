@@ -119,9 +119,12 @@ export function boardGuide(def: BoardDef, totalTurns: number = settings.totalTur
 
   const shop = firstOf(def, "shop");
   if (shop !== undefined) {
+    const shopWord = def.skin?.shopName;
     stops.push({
-      title: "Item Shops",
-      body: "Walk past a shop and you can stop to buy items: mushrooms for extra steps, double dice, warps, even items that steal Stars. Each shop's stock changes every round.",
+      title: shopWord ? `${shopWord}s` : "Item Shops",
+      body: shopWord
+        ? `Walk past a ${shopWord.toLowerCase()} and you can stop to buy items: bus passes for extra steps, double dice, taxi whistles, even items that steal Stars. Each ${shopWord.toLowerCase()}'s stock changes every round.`
+        : "Walk past a shop and you can stop to buy items: mushrooms for extra steps, double dice, warps, even items that steal Stars. Each shop's stock changes every round.",
       focus: { kind: "space", index: shop },
     });
   }

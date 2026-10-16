@@ -727,6 +727,29 @@ export interface ItemDebugSnapshot {
   luckyPlayers: number[];
 }
 
+/**
+ * Display text for an item on the active board: the board skin's override
+ * (BoardSkin.items), else the ITEM_DEFS text. Keys and rules never change.
+ */
+export function itemName(key: string): string {
+  return activeBoard().skin?.items?.[key]?.name ?? ITEM_DEFS[key]?.name ?? key;
+}
+
+export function itemDesc(key: string): string {
+  return activeBoard().skin?.items?.[key]?.desc ?? ITEM_DEFS[key]?.desc ?? "";
+}
+
+export function itemIcon(key: string): string {
+  return activeBoard().skin?.items?.[key]?.icon ?? ITEM_DEFS[key]?.icon ?? "";
+}
+
+/** A skinned item's use banner reads its own name ("TAXI WHISTLE!"); orb throws keep theirs. */
+function skinUseLabel(key: string, res: UseItemResult): UseItemResult {
+  const name = activeBoard().skin?.items?.[key]?.name;
+  if (!name || !res.ok || res.label === "ORB THROWN!") return res;
+  return { ...res, label: `${name.toUpperCase()}!` };
+}
+
 /** Item catalog and live bags for window.__SSP__.state().items. */
 export function itemDebugSnapshot(): ItemDebugSnapshot {
   return {
@@ -770,6 +793,15 @@ export function useItem(
   targetId?: number,
   trade?: ItemTrade,
 ): UseItemResult {
+  return skinUseLabel(key, applyItem(playerId, key, targetId, trade));
+}
+
+function applyItem(
+  playerId: number,
+  key: string,
+  targetId?: number,
+  trade?: ItemTrade,
+): UseItemResult {
   const player = match.players[playerId];
   const def = ITEM_DEFS[key];
   if (!player || !def) return failItem("No such item.");
@@ -785,7 +817,7 @@ export function useItem(
     if (!placeTrap(playerId, space, def.places)) return failItem("Something is already there.");
     audio.sfx.play("whoosh");
     const where = activeBoard().spaces[space]?.name ?? `space ${space + 1}`;
-    return { ok: true, label: "ORB THROWN!", message: `${def.name} set on ${where}!`, placedOn: space };
+    return { ok: true, label: "ORB THROWN!", message: `${itemName(key)} set on ${where}!`, placedOn: space };
   }
 
   if (key === "poison_mushroom") {
@@ -827,8 +859,8 @@ export function useItem(
     player.items.push(take);
     rival.items.push(give);
     audio.sfx.play("whoosh");
-    const giveName = ITEM_DEFS[give]?.name ?? give;
-    const takeName = ITEM_DEFS[take]?.name ?? take;
+    const giveName = itemName(give);
+    const takeName = itemName(take);
     return {
       ok: true,
       label: "SWAP CARD!",
@@ -931,7 +963,7 @@ export function useItem(
     consumeOne(rival, stolen);
     player.items.push(stolen);
     audio.sfx.play("happening.magic");
-    const name = ITEM_DEFS[stolen]?.name ?? stolen;
+    const name = itemName(stolen);
     return {
       ok: true,
       label: "COGFLY!",

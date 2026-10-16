@@ -30,3 +30,34 @@ export function placeWord(): string {
 export function shopTitle(): string {
   return activeBoard().skin?.shopTitle ?? "GRUMPUS'S GUMBOOTH";
 }
+
+/** Shop name in help text ("Shop" on the carnival). */
+export function shopName(): string {
+  return activeBoard().skin?.shopName ?? "Shop";
+}
+
+/** Shop popup title ("GUMBALL SHOP" on the carnival). */
+export function shopPopupTitle(): string {
+  return activeBoard().skin?.shopName?.toUpperCase() ?? "GUMBALL SHOP";
+}
+
+/** Free-item giver's full name, or null on the carnival (its help text never named one). */
+export function giverName(): string | null {
+  return activeBoard().skin?.giver?.name ?? null;
+}
+
+/** Banner when the giver hands over a free item ("FIZZY BARKER!" on the carnival). */
+export function giverBanner(): string {
+  return activeBoard().skin?.giver?.banner ?? "FIZZY BARKER!";
+}
+
+/** Gift toast for `item` (a display name). */
+export function giverGift(item: string): string {
+  const line = activeBoard().skin?.giver?.gift;
+  return line ? line.replace("{item}", item) : `Aw, tough luck kid, here's a ${item} on the house!`;
+}
+
+/** Toast when the giver finds the bag full. */
+export function giverFull(): string {
+  return activeBoard().skin?.giver?.full ?? "Aw, tough luck kid, your bag's already full!";
+}

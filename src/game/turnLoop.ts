@@ -31,7 +31,7 @@ import { characterDice, characterColor } from "../characters/roster";
 import type { BoardScene } from "../board/boardScene";
 import { liveStayOf, branchOf, forkLabel, ahead } from "../board/boardData";
 import { activeBoard } from "../board/registry";
-import { stampLabel, jackpotWord } from "../board/boardText";
+import { stampLabel, jackpotWord, giverBanner, giverFull, giverGift } from "../board/boardText";
 import type { Character } from "../characters/characterFactory";
 import type { HudHandle } from "../ui/hud";
 import type { ButtonHandle } from "../ui/button";
@@ -40,6 +40,9 @@ import { addCoins, awardMinigameResult, tryBuyStars, sensibleStarCount, movePriz
 import { resolveGreen, resolveGrumpus, consumeFreeStar, consumeDoubleBlue } from "./happenings";
 import {
   ITEM_DEFS,
+  itemName,
+  itemDesc,
+  itemIcon,
   buyItem,
   canUseItem,
   decideShopPurchase,
@@ -472,9 +475,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     // shape only (every peer on this rev sends it empty).
     void traps;
     for (const key of bought) {
-      const def = ITEM_DEFS[key];
       if (!buyItem(pid, key)) continue;
-      ui.toast(`Bought ${def?.name ?? key}!`, { durationMs: 1200 });
+      ui.toast(`Bought ${itemName(key)}!`, { durationMs: 1200 });
     }
   };
 
@@ -715,7 +717,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       bus.emit("turn:start", { turn: match.turn, player: pid });
       announceGate(pid);
       hud.showBanner(`${labelDoes(pid, "LOSE", "LOSES")} A TURN!`, { durationMs: 1400 });
-      ui.toast("The Grumpus Coat ate their turn!", { durationMs: 1800 });
+      ui.toast(`The ${itemName("bowser_suit")} ate their turn!`, { durationMs: 1800 });
       chars[pid]?.anim.sad();
       audio.sfx.play("sad");
       refreshHud();
@@ -757,16 +759,16 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     }
     const key = grantFizzyPity(pid);
     if (!key) {
-      ui.toast("Aw, tough luck kid, your bag's already full!", { durationMs: 2000 });
+      ui.toast(giverFull(), { durationMs: 2000 });
       audio.sfx.play("sad");
       pause(1.1, then);
       return;
     }
-    const name = ITEM_DEFS[key]?.name ?? key;
+    const name = itemName(key);
     bus.emit("pity:gift", { player: pid, item: key });
     audio.sfx.play("happening.magic");
-    hud.showBanner("FIZZY BARKER!", { durationMs: 1500 });
-    ui.toast(`Aw, tough luck kid, here's a ${name} on the house!`, { durationMs: 2400 });
+    hud.showBanner(giverBanner(), { durationMs: 1500 });
+    ui.toast(giverGift(name), { durationMs: 2400 });
     chars[pid]?.anim.cheer();
     refreshHud();
     pause(1.2, then);
@@ -1247,7 +1249,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   const blockBanner = (kind: HiddenBlockKind, prize: HiddenBlockPrize): string => {
     if (kind === "star") return "A STAR!";
-    if (prize.item) return `${(ITEM_DEFS[prize.item]?.name ?? prize.item).toUpperCase()}!`;
+    if (prize.item) return `${itemName(prize.item).toUpperCase()}!`;
     return `+${prize.coins} COINS!`;
   };
 
@@ -1445,7 +1447,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
           hud.showBanner(blockBanner(run.kind, prize), { durationMs: 1500 });
           audio.sfx.play(run.kind === "star" ? "star.get" : prize.item ? "shop.buy" : "coin.gain");
           chars[pid]?.anim.cheer();
-          if (prize.item) ui.toast(`${playerLabel(pid)} found ${ITEM_DEFS[prize.item]?.name ?? prize.item}!`, { durationMs: 1700 });
+          if (prize.item) ui.toast(`${playerLabel(pid)} found ${itemName(prize.item)}!`, { durationMs: 1700 });
           bus.emit("hidden:block", { player: pid, space: match.players[pid]?.space ?? 0, prize: run.kind, coins: prize.coins, item: prize.item });
           refreshHud();
           next("reveal");
@@ -1706,11 +1708,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         after(use);
       };
       S.poisonAutoCommit = () => finish(true);
+      // A board that renames the Sour Mushroom names it on the button too.
+      const poisonSkin = itemName("poison_mushroom") !== ITEM_DEFS.poison_mushroom?.name;
       const useBtn = ui.button({
-        label: "🍋 SOUR −2",
+        label: poisonSkin ? `${itemIcon("poison_mushroom")} ${itemName("poison_mushroom").toUpperCase()} −2` : "🍋 SOUR −2",
         kind: "danger",
         size: "md",
-        ariaLabel: "Use Sour Mushroom to subtract 2 from this roll",
+        ariaLabel: `Use ${itemName("poison_mushroom")} to subtract 2 from this roll`,
         onClick: () => finish(true),
       });
       useBtn.el.setAttribute("data-poison", "use");
@@ -1750,14 +1754,14 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     for (const key of keys) {
       if (key === "poison_mushroom") continue;
       if (!used && !canUseItem(pid, key)) continue;
-      const def = ITEM_DEFS[key];
-      if (!def) continue;
+      if (!ITEM_DEFS[key]) continue;
+      const name = itemName(key);
       const btn = ui.button({
-        label: `${def.icon} ${def.name}`,
+        label: `${itemIcon(key)} ${name}`,
         kind: "primary",
         size: "sm",
         sound: "ui.click",
-        ariaLabel: used ? `${def.name} (one item per turn)` : `Use ${def.name}`,
+        ariaLabel: used ? `${name} (one item per turn)` : `Use ${name}`,
       });
       btn.el.setAttribute("data-item-use", key);
       if (used) {
@@ -1843,7 +1847,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       "width:min(92vw,380px);box-sizing:border-box;pointer-events:auto;font-family:Fredoka,sans-serif;";
     const title = document.createElement("div");
     title.style.cssText = `font-weight:700;font-size:18px;color:${palette.ink};`;
-    title.textContent = `${def.icon} Throw ${def.name}`;
+    title.textContent = `${itemIcon(key)} Throw ${itemName(key)}`;
     const hint = document.createElement("div");
     hint.style.cssText = `font-weight:600;font-size:13px;color:${palette.inkSoft};text-align:center;`;
     hint.textContent = `Tap a glowing space (up to ${settings.orbThrowRange} away).`;
@@ -2110,12 +2114,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     const showGive = (targetId: number): void => {
       sheet.replaceChildren();
       for (const give of swapGiveChoices(pid)) {
-        const gdef = ITEM_DEFS[give];
         const btn = ui.button({
-          label: `Give ${gdef?.icon ?? ""} ${gdef?.name ?? give}`,
+          label: `Give ${itemIcon(give)} ${itemName(give)}`,
           kind: "primary",
           size: "sm",
-          ariaLabel: `Give ${gdef?.name ?? give}`,
+          ariaLabel: `Give ${itemName(give)}`,
           onClick: () => showTake(targetId, give),
         });
         btn.el.setAttribute("data-swap-give", give);
@@ -2125,12 +2128,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     const showTake = (targetId: number, give: string): void => {
       sheet.replaceChildren();
       for (const take of swapTakeChoices(targetId)) {
-        const tdef = ITEM_DEFS[take];
         const btn = ui.button({
-          label: `Take ${tdef?.icon ?? ""} ${tdef?.name ?? take}`,
+          label: `Take ${itemIcon(take)} ${itemName(take)}`,
           kind: "gold",
           size: "sm",
-          ariaLabel: `Take ${tdef?.name ?? take}`,
+          ariaLabel: `Take ${itemName(take)}`,
           onClick: () => commit(targetId, { give, take }),
         });
         btn.el.setAttribute("data-swap-take", take);
@@ -2139,8 +2141,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     };
     showPlayers();
     S.itemPopup = ui.popup({
-      title: def?.name ?? "ITEM",
-      body: def?.desc ?? "Choose a rival.",
+      title: def ? itemName(key) : "ITEM",
+      body: def ? itemDesc(key) : "Choose a rival.",
       content: sheet,
       sound: null,
       closeOnEsc: false,
@@ -2456,9 +2458,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   };
 
   const toastShop = (decision: ShopDecision): void => {
-    const def = ITEM_DEFS[decision.key];
-    const label = def?.name ?? decision.key;
-    ui.toast(`Bought ${label}!`, { durationMs: 1500 });
+    ui.toast(`Bought ${itemName(decision.key)}!`, { durationMs: 1500 });
   };
 
   /**
@@ -2537,8 +2537,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
           else ui.toast("Just looking!", { durationMs: 900 });
         } else {
           for (const key of res.bought) {
-            const def = ITEM_DEFS[key];
-            ui.toast(`Bought ${def?.name ?? key}!`, { durationMs: 1600 });
+            ui.toast(`Bought ${itemName(key)}!`, { durationMs: 1600 });
           }
         }
         done();
