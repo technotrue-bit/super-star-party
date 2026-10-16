@@ -44,7 +44,9 @@ jobs:
         run: |
           # Run every probe even when one fails, so one run shows every result.
           failed=0
-          for probe in tools/probe-mg-*.mjs; do
+          # The per-game probes (Fifty). Other probe-mg-* scripts are print-only diagnostics.
+          for id in slingshot_summit pie_flick row_rumble crank_coaster chalk_trails; do
+            probe="tools/probe-mg-$id.mjs"
             echo "::group::$probe"
             if node "$probe"; then
               echo "PASS $probe"

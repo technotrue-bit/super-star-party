@@ -1400,7 +1400,7 @@ const minigameScreenImpl: MgScreenState & Screen = {
 
       self._onKeyDown = (e: KeyboardEvent) => {
         // Remember pad keys held through the countdown: GO treats them as pressed.
-        if (self._phase !== "play" && self._padKeys && !e.repeat) {
+        if (self._phase !== "play" && self._padKeys && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
           (self._heldKeys ??= new Map()).set(heldKeyId(e.key), e.key);
         }
         if ((e.key === " " || e.key === "Enter") && self._phase === "vs-splash") {
