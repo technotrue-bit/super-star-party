@@ -110,7 +110,10 @@ function boot(): void {
     import("./screens/minigameReady").then((m) => screens.register(m.minigameReadyScreen)),
   ];
   void Promise.all(screenImports).then(() => {
-    screens.goto(screen);
+    // A debug hook (__SSP__.goto / openMinigame, from a test) can navigate before
+    // every screen chunk has loaded. That goto already took the wipe-free first
+    // render; going to the boot screen now would wipe it away and cancel it.
+    if (!screens.booted) screens.goto(screen);
   });
 
   // Resize to the visible phone viewport (Safari toolbar), not the layout viewport.
