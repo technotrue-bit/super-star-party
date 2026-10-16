@@ -66,6 +66,10 @@ const JUMP_APEX = 1.3; // gameplay apex (visual arc + holder lift)
 const ANIM_APEX = 0.9; // the character anim's own arc apex
 const HIT_SLACK = 0.25; // generous hitbox: h >= obs.h - HIT_SLACK clears
 const WIN_BEAT = 0.9; // celebration beat before finish()
+/** Extra course the framing box covers behind the camera anchor (the leader). */
+const CAM_BEHIND = 2.0;
+/** How far behind the anchor the local runner may fall before the camera waits. */
+const CAM_LAG_MAX = 2.2;
 const LAST_SPAWN_X = FINISH_X - 3; // no obstacles in the final stretch
 /** A jump started this far before an obstacle (u) is PERFECT if it clears. */
 const PERFECT_MIN = 1.85;
@@ -438,6 +442,8 @@ const S = {
   /** Follows the race leader's course position, never the human's input. */
   follow: null as FollowCamera | null,
   followTarget: new THREE.Vector3(),
+  /** Seat the camera keeps in view (the local human), by roster index. */
+  viewIndex: 0,
   /** Position indicator (pure display — never read by gameplay). */
   hud: {
     group: null as THREE.Group | null,
@@ -648,7 +654,7 @@ function setup(ctx: MinigameContext): void {
   frameMinigame(
     ctx.camera,
     {
-      box: frameBox([START_X - 1.2, 0, -GROUND_HALF], [START_X + 4.6, 3.0, GROUND_HALF]),
+      box: frameBox([START_X - 1.2 - CAM_BEHIND, 0, -GROUND_HALF], [START_X + 4.6, 3.0, GROUND_HALF]),
       dir: new THREE.Vector3(6.9, 2.9, 9.6),
       fov: 50,
     },
@@ -660,6 +666,7 @@ function setup(ctx: MinigameContext): void {
     }
   );
   S.follow = createFollowCamera(ctx.camera, { offset: S.followOff });
+  S.viewIndex = localPlayerIndex(ctx.players);
 
   // Local seat: any press jumps (buffered 0.15s if pressed mid-air).
   const localIndex = localPlayerIndex(ctx.players);
@@ -815,13 +822,18 @@ function updateCamera(dt: number): void {
   const follow = S.follow;
   if (!ctx || !follow) return;
 
-  // Follow the race leader's course position. It is a function of race
-  // progress only, so taps and jumps cannot move the camera. The fitted rig
-  // (setup) keeps all four lanes on screen at any aspect, so only the course
-  // axis moves; the follow camera damps the leader's steps and boosts.
+  // Follow the race leader's course position, but never further ahead than
+  // the local runner can stay in frame: the fitted box reaches CAM_BEHIND past
+  // the leader's spot, so a human trailing by more than CAM_LAG_MAX pulls the
+  // camera back toward them. Race progress only (no input), so taps and jumps
+  // cannot move the camera. The fitted rig (setup) keeps all four lanes on
+  // screen at any aspect, so only the course axis moves; the follow camera
+  // damps the target's steps and boosts.
   let leaderX = START_X;
   for (const r of S.runners) if (r.x > leaderX) leaderX = r.x;
-  S.followTarget.set(clamp(leaderX, START_X, 56.8) + S.lookOff.x, S.lookOff.y, S.lookOff.z);
+  const humanX = S.runners[S.viewIndex]?.x ?? leaderX;
+  const anchorX = Math.min(leaderX, humanX + CAM_LAG_MAX);
+  S.followTarget.set(clamp(anchorX, START_X, 56.8) + S.lookOff.x, S.lookOff.y, S.lookOff.z);
   follow.update(dt, S.followTarget);
   // The progress rail anchors to the look target.
   S.camLook.copy(follow.focus);
