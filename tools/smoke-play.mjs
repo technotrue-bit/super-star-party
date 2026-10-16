@@ -191,7 +191,8 @@ while (Date.now() - t0 < MATCH_CAP_MS) {
       text,
       howVisible: inView(how),
       btnVisible: inView(btn),
-      controls: /tap|drag|hold/i.test(text),
+      // A control verb for every pad: TAP/stick, hold, swipe, dial and draw.
+      controls: /tap|drag|hold|swipe|flick|spin|draw|steer/i.test(text),
     };
   });
   if (startGate) {
