@@ -55,10 +55,13 @@ async function probe(id) {
     // the page, in the same evaluate that reads the camera, so the loop stays near 50 ms.
     const samples = [];
     const stamps = [];
+    // Sample for SAMPLE_FOR_MS, and past it until MIN_SAMPLES are in (a slow runner can fall
+    // one short: row_rumble once got 39), up to three windows.
     const tEnd = Date.now() + SAMPLE_FOR_MS;
+    const tCap = Date.now() + 3 * SAMPLE_FOR_MS;
     let n = 0;
     let endPhase = "play";
-    while (Date.now() < tEnd) {
+    while (Date.now() < tEnd || (samples.length < MIN_SAMPLES && Date.now() < tCap)) {
       const arrow = n % 40 < 20 ? "ArrowRight" : "ArrowLeft";
       const p = await page.evaluate(({ arrow, held }) => {
         const key = (type, k, repeat = false) => window.dispatchEvent(new KeyboardEvent(type, { key: k, repeat, bubbles: true, cancelable: true }));
