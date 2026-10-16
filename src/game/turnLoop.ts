@@ -36,7 +36,8 @@ import type { Character } from "../characters/characterFactory";
 import type { HudHandle } from "../ui/hud";
 import type { ButtonHandle } from "../ui/button";
 import type { PopupHandle } from "../ui/popup";
-import { addCoins, awardMinigameResult, tryBuyStars, sensibleStarCount, movePrizeBalloon, computeBonusStars, finalRanking, grantStamp, popMinigameBalloon, carnivalSqueeze, minigameCoinAward, type BonusStarKind } from "./economy";
+import { addCoins, awardMinigameResult, tryBuyStars, sensibleStarCount, movePrizeBalloon, grantStamp, popMinigameBalloon, carnivalSqueeze, minigameCoinAward } from "./economy";
+import { decideFinalResults } from "./finalResults";
 import { resolveGreen, resolveGrumpus, consumeFreeStar, consumeDoubleBlue } from "./happenings";
 import {
   ITEM_DEFS,
@@ -113,18 +114,6 @@ const wrap = (i: number): number => {
   const n = activeBoard().spaces.length;
   return ((i % n) + n) % n;
 };
-
-function bonusStarLabel(star: BonusStarKind): string {
-  if (star === "mini") return "MINI STAR";
-  if (star === "stamp") return "STAMP STAR";
-  return "COIN STAR";
-}
-
-function bonusStarTag(star: BonusStarKind): string {
-  if (star === "mini") return "★mini";
-  if (star === "stamp") return "★stamp";
-  return "★coin";
-}
 
 /** Fewest hops from `from` to the star, honouring junctions (BFS over the graph). */
 function hopsToStar(from: number): number {
@@ -2762,52 +2751,26 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     rollButton.setVisible(false);
     refreshHud();
 
-    const bonuses = computeBonusStars();
+    // Decide once. The finale ceremony presents this record; nothing after
+    // this point draws the gameplay rng or changes who won.
+    const final = decideFinalResults();
+    const order = final.ranking.map((r) => r.playerId);
     const steps: Array<() => void> = [];
-    for (const b of bonuses) {
-      steps.push(() => {
-        const p = match.players[b.playerId];
-        audio.sfx.play("fanfare.win");
-        ui.confettiBurst(undefined, undefined, { count: 90, sound: null });
-        hud.showBanner(`★ ${bonusStarLabel(b.star)} → ${playerLabel(b.playerId)}!`, { durationMs: 1900 });
-      });
-    }
     steps.push(() => {
-      const entries = finalRanking();
-      const winner = match.players[entries[0]?.playerId ?? 0];
-      audio.music.play("results", { intensity: 0.85 });
-      audio.sfx.play("fanfare.win");
-      ui.confettiBurst(undefined, undefined, { count: 140, sound: null });
-      hud.showBanner(`WINNER: ${winner ? playerLabel(winner.id) : "?"}!`, { durationMs: 2600 });
-      chars[entries[0]?.playerId ?? 0]?.anim.cheer();
-      bus.emit("results:show", { ranking: entries.map((r) => r.playerId) });
-      bus.emit("match:end", { ranking: entries.map((r) => r.playerId) });
-
-      const content = document.createElement("div");
-      content.className = "ssp-podium";
-      entries.forEach((r, i) => {
-        const p = match.players[r.playerId];
-        const row = document.createElement("div");
-        row.className = `ssp-podium__row${i === 0 ? " ssp-podium__row--win" : ""}`;
-        const tags = r.bonus.map((b) => bonusStarTag(b)).join(" ");
-        row.textContent = `${i + 1}. ${p ? playerLabel(p.id) : "?"}  ★${r.stars} · ${r.coins}c${tags ? `  ${tags}` : ""}`;
-        content.appendChild(row);
-      });
-      ui.popup({
-        title: "FINAL RESULTS",
-        content,
-        sound: "fanfare.win",
-        buttons: [
-          {
-            label: "PLAY AGAIN",
-            kind: "gold",
-            onClick: () => {
-              audio.music.stop(0.4);
-              screens.goto("title");
-            },
-          },
-        ],
-      });
+      // Build-up on the board: the whistle blows and everyone jumps, then
+      // the board hands over to the finale stage.
+      // Leftover turn banners would queue ahead of this one; the match is over.
+      ui.clearFeedback();
+      audio.music.stop(0.6);
+      audio.sfx.play("whistle");
+      audio.sfx.play("crowd.cheer");
+      hud.showBanner("THAT'S THE GAME!", { durationMs: 1900 });
+      for (const ch of chars) ch?.anim.jump();
+    });
+    steps.push(() => {}); // hold on the banner
+    steps.push(() => {
+      bus.emit("results:show", { ranking: order });
+      bus.emit("match:end", { ranking: order });
       S.phase = "ended";
       match.phase = "ended";
     });

@@ -953,6 +953,39 @@ export const TRACKS: Record<string, TrackDef> = {
     ],
   },
 
+  /* Finale suspense: a snare roll that swells over two bars, low tom pulse.
+     Loops until the reveal stops it (played on the stinger bus). */
+  drumroll: {
+    id: "drumroll",
+    bpm: 132,
+    swing: 0.5,
+    loop: true,
+    voices: [
+      {
+        style: "drums",
+        layer: "base",
+        pattern: [
+          "S:1:0.35 S:1:0.3 S:1:0.38 S:1:0.32 S:1:0.42 S:1:0.36 S:1:0.45 S:1:0.4 S:1:0.5 S:1:0.44 S:1:0.52 S:1:0.47 S:1:0.56 S:1:0.5 S:1:0.6 S:1:0.55",
+          "S:1:0.62 S:1:0.57 S:1:0.66 S:1:0.6 S:1:0.7 S:1:0.64 S:1:0.74 S:1:0.68 S:1:0.78 S:1:0.72 S:1:0.82 S:1:0.76 S:1:0.88 S:1:0.8 S:1:0.95 S:1:0.9",
+        ],
+      },
+      { style: "drums", layer: "base", pattern: ["D:4:0.5 -:4 D:4:0.55 -:4", "D:4:0.6 -:4 D:4:0.7 D:2:0.75 D:2:0.85"] },
+    ],
+  },
+
+  /* The reveal hit after a drumroll: crash, kick, and a bright brass stab. */
+  drumroll_hit: {
+    id: "drumroll_hit",
+    bpm: 132,
+    swing: 0.5,
+    loop: false,
+    voices: [
+      { style: "drums", layer: "base", pattern: ["C:8:1 K:4:1 -:4"] },
+      { style: "brassStab", layer: "base", gain: 1.6, pattern: ["{C5,E5,G5}:4 -:2 {C5,E5,G5,C6}:6 -:4"] },
+      { style: "bassSine", layer: "base", gain: 1.4, pattern: ["C2:8 -:8"] },
+    ],
+  },
+
   /* ~4s comedic trombone fall: wah-wah-wah with slides. */
   lose: {
     id: "lose",
@@ -970,6 +1003,7 @@ export const TRACKS: Record<string, TrackDef> = {
 export const TRACK_ORDER = [
   "title", "board", "minigame_a", "minigame_b", "happening", "grumpus",
   "shop", "results", "star_fanfare", "minigame_intro", "win", "lose",
+  "drumroll", "drumroll_hit",
 ];
 
 export function trackIds(): string[] {
