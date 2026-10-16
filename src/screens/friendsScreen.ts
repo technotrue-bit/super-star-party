@@ -20,6 +20,8 @@ import {
   setPlannedTurns,
   startFromLobby,
   subscribeParty,
+  updateBoardMessage,
+  type PartyView,
 } from "../net/session";
 
 const TURN_CHOICES = [3, 5, 10];
@@ -76,6 +78,11 @@ function injectStyles(): void {
       color: ${palette.ink}; background: ${palette.white};
     }
     .ssp-friends__err { color: ${palette.lava}; font-weight: 700; text-align: center; margin: 0; }
+    .ssp-friends__notice {
+      margin: 0; text-align: center; color: ${palette.ink}; font-size: 15px; font-weight: 700; line-height: 1.25;
+      background: ${palette.sun}; border: 3px solid ${palette.ink}; border-radius: 14px; padding: 8px 10px;
+    }
+    .ssp-friends__notice--warn { background: ${palette.white}; color: ${palette.lava}; }
     .ssp-friends__transport {
       margin: 0; text-align: center; color: ${palette.inkSoft}; font-size: 13px;
     }
@@ -180,6 +187,7 @@ const friendsImpl = {
       humans.dataset.partyHumans = String(view.humans);
       humans.textContent = `${view.humans} human${view.humans === 1 ? "" : "s"} · CPUs fill the rest`;
       card.append(code, humans);
+      appendBoardNotices(card, view);
 
       for (const seat of view.seats) {
         const row = document.createElement("div");
@@ -263,6 +271,39 @@ const friendsImpl = {
     this._root = undefined;
   },
 };
+
+/**
+ * The board switched after guests joined: every lobby says so. A guest whose
+ * build lacks the board (and the host, naming that guest) sees the update
+ * message before START.
+ */
+function appendBoardNotices(card: HTMLElement, view: PartyView): void {
+  const board = view.board ?? DEFAULT_BOARD;
+  const label = boardRuleLabel(board);
+  if (view.boardSwitch) {
+    const note = document.createElement("p");
+    note.className = "ssp-friends__notice";
+    note.setAttribute("role", "status");
+    note.dataset.partyBoardNotice = view.boardSwitch;
+    note.textContent = view.host ? `You switched the board to ${label}` : `Host switched the board to ${label}`;
+    card.appendChild(note);
+  }
+  const warn = view.host
+    ? view.staleGuests.length
+      ? `${view.staleGuests.join(", ")} must update the game to play ${label}.`
+      : null
+    : view.boardStale
+      ? updateBoardMessage(board)
+      : null;
+  if (warn) {
+    const note = document.createElement("p");
+    note.className = "ssp-friends__notice ssp-friends__notice--warn";
+    note.setAttribute("role", "alert");
+    note.dataset.partyBoardStale = "1";
+    note.textContent = warn;
+    card.appendChild(note);
+  }
+}
 
 function lobbyError(card: HTMLElement, text: string): void {
   let err = card.querySelector(".ssp-friends__err");

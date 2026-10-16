@@ -14,7 +14,9 @@
  * "random" in buildSetup. A join lists the guest's boards as `id@rev`;
  * the host refuses a join without that list (an old client) or without
  * the host's board, so a version mismatch reads as "update the game"
- * instead of BOARD OUT OF SYNC.
+ * instead of BOARD OUT OF SYNC. When the host switches the board after
+ * guests sat down, every lobby shows the switch, and a guest whose build
+ * lacks the new board sees the update message before START.
  */
 import { storedCpuLevel } from "../config/cpuLevel";
 import { roster } from "../characters/roster";
@@ -22,6 +24,7 @@ import { match, snapshot, startMatch } from "../core/game";
 import { ui } from "../ui/kit";
 import { assignPlayerPacks, blankPlayedByPack, readPersistedRules } from "../minigames/packRules";
 import {
+  BOARDS,
   boardIds,
   boardTag,
   boardTags,
@@ -69,6 +72,12 @@ export interface PartyView {
   refused: string | null;
   /** Host: peers turned away for a missing or older board. */
   refusedPeers: string[];
+  /** The board the host switched to after guests joined (lobby notice). Null until a switch. */
+  boardSwitch: BoardRule | null;
+  /** Guest: this build lacks the room's board (update message before START). */
+  boardStale: boolean;
+  /** Host: seated guests ("Player 2") whose build lacks the room's board. */
+  staleGuests: string[];
 }
 
 interface RoomState {
@@ -108,6 +117,8 @@ let refused: string | null = null;
 const refusedPeers: string[] = [];
 /** Host: each seated guest's `boards` list from its join. */
 const guestBoards = new Map<string, string[]>();
+let boardSwitch: BoardRule | null = null;
+let boardStale = false;
 const listeners = new Set<() => void>();
 
 function peerId(): string {
@@ -180,13 +191,28 @@ function ensureRelay(code: string, role: PartyRole): void {
  * same gate as __SSP_CONTACT__); a production build ignores it.
  */
 function legacyJoin(): boolean {
+  return probeParam("legacyJoin") === "1";
+}
+
+/** Dev/CI-gated URL param (same gate as legacyJoin); null in production. */
+function probeParam(key: string): string | null {
   const live = import.meta.env.DEV || import.meta.env.VITE_SSP_TEST === "1" || import.meta.env.VITE_SSP_TEST === "true";
-  if (!live) return false;
+  if (!live) return null;
   try {
-    return new URLSearchParams(location.search).get("legacyJoin") === "1";
+    return new URLSearchParams(location.search).get(key);
   } catch {
-    return false;
+    return null;
   }
+}
+
+/**
+ * The boards this build plays, as `id@rev`. Probe-only: `?joinBoards=a@1,b@2`
+ * (dev/CI gate) makes this tab act like a build with just those boards.
+ */
+function myBoardTags(): string[] {
+  const only = probeParam("joinBoards");
+  if (only !== null) return only.split(",").map((s) => s.trim()).filter(Boolean);
+  return boardTags();
 }
 
 function postJoin(): void {
@@ -195,7 +221,24 @@ function postJoin(): void {
     relay.post({ type: "join", code: room.code, peerId: peerId(), name: "Friend" });
     return;
   }
-  relay.post({ type: "join", code: room.code, peerId: peerId(), name: "Friend", boards: boardTags() });
+  relay.post({ type: "join", code: room.code, peerId: peerId(), name: "Friend", boards: myBoardTags() });
+}
+
+/** Board name for lobby messages ("Downtown", "a random board"). */
+function boardRuleName(rule: BoardRule): string {
+  return rule === "random" ? "a random board" : (BOARDS[rule]?.name ?? BOARDS[DEFAULT_BOARD].name);
+}
+
+/** Lobby text for a guest whose build lacks `rule`. */
+export function updateBoardMessage(rule: BoardRule): string {
+  return `Update the game to play ${boardRuleName(rule)}.`;
+}
+
+/** Host: seated guests (not the host) whose join can't play the room's board. */
+function staleSeats(): SeatSlot[] {
+  if (!room || !isHost()) return [];
+  const need = boardTagsFor(room.board ?? DEFAULT_BOARD);
+  return room.seats.filter((s) => s.peerId && s.peerId !== room?.hostId && !canPlay(guestBoards.get(s.peerId), need));
 }
 
 /** The host's board rule right now (saved rule, ?board= wins). */
@@ -265,6 +308,9 @@ export function partyView(): PartyView {
     board: room?.board ?? null,
     refused,
     refusedPeers: [...refusedPeers],
+    boardSwitch,
+    boardStale,
+    staleGuests: staleSeats().map((s) => `Player ${s.index + 1}`),
   };
 }
 
@@ -278,6 +324,8 @@ export function createRoom(): string {
   refused = null;
   refusedPeers.length = 0;
   guestBoards.clear();
+  boardSwitch = null;
+  boardStale = false;
   matchOpen = false;
   const id = peerId();
   const code = randomToken(4);
@@ -305,6 +353,8 @@ export function joinRoom(code: string): string | null {
   clearJoinTimer();
   lobbyError = null;
   refused = null;
+  boardSwitch = null;
+  boardStale = false;
   matchOpen = false;
   ensureRelay(clean, "guest");
   room = { code: clean, hostId: "", started: false, turns: 10, seats: [], board: null };
@@ -504,20 +554,38 @@ function applySetup(setup: MatchSetup): void {
 /** Host: the lobby's board choice changed (already saved). Tell the guests. */
 export function announceLobbyBoard(): void {
   if (!room || room.started || !isHost()) return;
+  const before = room.board;
+  const guests = room.seats.some((s) => s.peerId && s.peerId !== room?.hostId);
   broadcastLobby();
+  if (guests && room.board !== before) boardSwitch = room.board;
   notify();
 }
 
 function broadcastLobby(): void {
   if (!relay || !room) return;
   if (isHost()) room.board = hostBoardRule();
+  const board = room.board ?? DEFAULT_BOARD;
+  const stale = staleSeats();
   relay.post({
     type: "lobby",
     code: room.code,
     hostId: room.hostId,
     seats: room.seats.map((seat) => ({ ...seat })),
-    board: room.board ?? DEFAULT_BOARD,
+    board,
+    need: boardTagsFor(board),
+    stale: stale.map((s) => s.peerId!),
   });
+  // Older builds ignore `need`/`stale` but show any error text in their
+  // lobby (reason "board" doesn't unseat them), so they see it too.
+  for (const seat of stale) {
+    relay.post({
+      type: "error",
+      code: room.code,
+      peerId: seat.peerId!,
+      message: updateBoardMessage(board),
+      reason: "board",
+    });
+  }
 }
 
 function onMessage(msg: PartyMessage): void {
@@ -541,6 +609,12 @@ function onMessage(msg: PartyMessage): void {
     else pendingMinigame = msg.result;
   } else if (msg.type === "leave") applyLeave(msg.peerId);
   else if (msg.type === "error" && msg.peerId === peerId()) {
+    // A board warning for older builds; this one already set boardStale from the lobby.
+    if (msg.reason === "board") {
+      boardStale = true;
+      notify();
+      return;
+    }
     lobbyError = msg.message;
     if (msg.reason === "update") {
       refused = msg.message;
@@ -597,7 +671,12 @@ function onLobby(msg: Extract<PartyMessage, { type: "lobby" }>): void {
   clearJoinTimer();
   room.hostId = msg.hostId;
   room.seats = msg.seats.map((seat) => ({ ...seat }));
+  const before = room.board;
   room.board = msg.board ?? DEFAULT_BOARD;
+  if (before !== null && room.board !== before) boardSwitch = room.board;
+  // Own check (need) or the host's (stale, from this join's `boards`).
+  boardStale =
+    (Array.isArray(msg.need) && !canPlay(myBoardTags(), msg.need)) || (msg.stale ?? []).includes(peerId());
   lobbyError = null;
   notify();
 }

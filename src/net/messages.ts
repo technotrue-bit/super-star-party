@@ -64,6 +64,10 @@ export type PartyMessage =
       seats: SeatSlot[];
       /** Host's board rule for this room, so guests can show it. */
       board?: BoardRule;
+      /** `id@rev` tags a guest needs for `board`; a guest missing one shows the update message. */
+      need?: string[];
+      /** Seated guests the host knows can't play `board` (from their join's `boards`). */
+      stale?: string[];
     }
   | { type: "seat"; code: string; peerId: string; kind: string }
   | { type: "start"; code: string; setup: MatchSetup }
@@ -88,5 +92,9 @@ export type PartyMessage =
       reason?: JoinRefusal;
     };
 
-/** `full`: no open seat. `update`: the guest's build lacks the host's board. */
-export type JoinRefusal = "full" | "update";
+/**
+ * `full`: no open seat. `update`: the guest's build lacks the host's board.
+ * `board`: a warning, not a refusal: the host switched to a board this seated
+ * guest lacks (an older build shows the text as its lobby error).
+ */
+export type JoinRefusal = "full" | "update" | "board";
