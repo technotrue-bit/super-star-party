@@ -21,6 +21,8 @@ import { hopsBetween } from "../board/boardData";
 import { activeBoard } from "../board/registry";
 import { addCoins } from "./economy";
 import { canPlaceTrap, placeTrap } from "./traps";
+import { settings } from "../config/settings";
+import { cpuSlips } from "./cpuPlay";
 import { shopStockAt, shopVisitLog } from "./shopStock";
 import type { TrapKind } from "../core/game";
 
@@ -30,7 +32,7 @@ export interface ItemDef {
   desc: string;
   price: number;
   icon: string;
-  /** Set when buying this item throws an orb onto a space instead of holding it. */
+  /** An orb: carried in the bag, then thrown onto a nearby space before a roll. */
   places?: TrapKind;
   /** Hidden in the shop until this many turns remain. */
   lateGame?: boolean;
@@ -470,8 +472,45 @@ export function grantItem(playerId: number, key: string): boolean {
 
 export interface ShopDecision {
   key: string;
-  /** Set when the purchase was an orb and it was thrown onto this space. */
-  placedOn?: number;
+}
+
+/**
+ * Spaces an orb can be thrown onto: at most `settings.orbThrowRange` steps
+ * from the thrower along the board's paths, either direction, and a legal
+ * trap spot (not their own space, the Grand Prize, a shop, or an orb already
+ * there). Ascending index, so a seeded rng pick replays. No rng.
+ */
+export function orbThrowSpaces(playerId: number): number[] {
+  const player = match.players[playerId];
+  if (!player) return [];
+  const def = activeBoard();
+  const n = def.spaces.length;
+  const adj: number[][] = Array.from({ length: n }, () => []);
+  def.next.forEach((outs, from) => {
+    for (const to of outs) {
+      adj[from].push(to);
+      adj[to].push(from);
+    }
+  });
+  const dist = new Array<number>(n).fill(-1);
+  dist[player.space] = 0;
+  const queue = [player.space];
+  for (let qi = 0; qi < queue.length; qi++) {
+    const at = queue[qi];
+    if (dist[at] >= settings.orbThrowRange) continue;
+    for (const to of adj[at]) {
+      if (dist[to] !== -1) continue;
+      dist[to] = dist[at] + 1;
+      queue.push(to);
+    }
+  }
+  const shopSpaces = def.spaces.filter((s) => s.type === "shop").map((s) => s.index);
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (dist[i] < 1) continue;
+    if (canPlaceTrap(playerId, i, match.starBalloonPos, shopSpaces)) out.push(i);
+  }
+  return out;
 }
 
 /**
@@ -495,11 +534,6 @@ export function decideShopPurchase(playerId: number, shopSpace?: number): ShopDe
 }
 
 function pickShopPurchase(playerId: number, player: PlayerState, stock: readonly string[]): ShopDecision | null {
-  const spaces = activeBoard().spaces;
-  const shopSpaces = spaces.filter((s) => s.type === "shop").map((s) => s.index);
-  const legal = spaces
-    .filter((s) => canPlaceTrap(playerId, s.index, match.starBalloonPos, shopSpaces))
-    .map((s) => s.index);
   const candidates: string[] = [];
   for (const key of stock) {
     const def = ITEM_DEFS[key];
@@ -507,23 +541,16 @@ function pickShopPurchase(playerId: number, player: PlayerState, stock: readonly
     if (def.lateGame && !starCannonAvailable()) continue;
     if (player.items.includes(key)) continue;
     if (player.coins < def.price) continue;
-    if (def.places && legal.length === 0) continue;
     candidates.push(key);
   }
   if (candidates.length === 0) return null;
+  // A Relaxed computer sometimes leaves the stall without buying.
+  if (cpuSlips()) return null;
   const key = rng.pick(candidates);
   const def = ITEM_DEFS[key];
   if (!def || !buyItem(playerId, key)) return null;
-  if (!def.places) return { key };
-  const held = match.players[playerId]?.items;
-  const at = held?.lastIndexOf(key) ?? -1;
-  if (held && at >= 0) held.splice(at, 1);
-  const spot = rng.pick(legal);
-  if (!placeTrap(playerId, spot, def.places)) {
-    addCoins(playerId, def.price);
-    return null;
-  }
-  return { key, placedOn: spot };
+  // Orbs go in the bag like everything else; they are thrown before a roll.
+  return { key };
 }
 
 /**
@@ -584,6 +611,8 @@ export interface UseItemResult {
   chomp?: boolean;
   /** Spaces were swapped with this rival. */
   swappedWith?: number;
+  /** An orb was thrown onto this space. */
+  placedOn?: number;
   targetId?: number;
 }
 
@@ -612,6 +641,7 @@ export function canUseItem(playerId: number, key: string): boolean {
   if (key === "warp_whistle") return greenSpacesAhead(player.space).length > 0;
   if (key === "zappy") return zappyTarget(playerId) !== null;
   if (key === "star_cannon") return starCannonAvailable();
+  if (ITEM_DEFS[key].places) return orbThrowSpaces(playerId).length > 0;
   if (TARGET_ITEMS.has(key)) return itemTargets(playerId, key).length > 0;
   return false;
 }
@@ -622,6 +652,8 @@ export function canUseItem(playerId: number, key: string): boolean {
  * No held item means no rng draw.
  */
 export function pickAutoItem(playerId: number): string | null {
+  // A Relaxed computer sometimes forgets its item this turn.
+  if (cpuSlips()) return null;
   const choices: string[] = [];
   for (const key of ITEM_ORDER) {
     if (key === "poison_mushroom") continue;
@@ -742,6 +774,19 @@ export function useItem(
   const def = ITEM_DEFS[key];
   if (!player || !def) return failItem("No such item.");
   if (!player.items.includes(key)) return failItem("Not in the bag.");
+
+  // Orbs: `targetId` is the space. No target (CPU, autoplay) picks one with rng.
+  if (def.places) {
+    const spots = orbThrowSpaces(playerId);
+    if (spots.length === 0) return failItem("No space in reach.");
+    const space = targetId ?? rng.pick(spots);
+    if (!spots.includes(space)) return failItem("That space is out of reach.");
+    consumeOne(player, key);
+    if (!placeTrap(playerId, space, def.places)) return failItem("Something is already there.");
+    audio.sfx.play("whoosh");
+    const where = activeBoard().spaces[space]?.name ?? `space ${space + 1}`;
+    return { ok: true, label: "ORB THROWN!", message: `${def.name} set on ${where}!`, placedOn: space };
+  }
 
   if (key === "poison_mushroom") {
     const targets = itemTargets(playerId, key);

@@ -21,7 +21,7 @@
  * the next step. ctx.rng only.
  */
 import * as THREE from "three";
-import { automatedSeatIds, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
+import { automatedSeatIds, cpuSkill, isPracticeBeat, localPlayerIndex, type Minigame, type MinigameContext } from "../framework";
 import { isAutoplay } from "../../core/debug";
 import { registerMinigame } from "../registry";
 import { box as frameBox, frameMinigame } from "../framing";
@@ -174,7 +174,6 @@ interface State {
   /** Human taps (balloon-plane hit points) waiting for the next fixed step. */
   taps: { x: number; y: number }[];
   t: number; // fixed-step clock (stepIndex * FIXED_DT)
-  shake: number;
   announcedGo: boolean;
   finished: boolean;
   camBase: [number, number, number];
@@ -647,13 +646,12 @@ function popBalloon(st: State, pid: number, b: Balloon, byHuman: boolean): void 
   st.ctx.playSfx(b.kind === "bomb" ? "boing" : "pop", { volume: byHuman ? 0.9 : 0.5, pitch: b.kind === "bomb" ? -3 : pitch });
   if (b.kind === "gold") st.ctx.playSfx("coin.gain", { volume: 0.9, pitch: 1.35 });
 
-  // juice: shards in balloon color + white, pop ring, small shake
+  // juice: shards in balloon color + white, pop ring (the camera never moves)
   const pos: [number, number, number] = [b.x, b.y, BALLOON_Z];
   spawnShards(st, pos, b.color, 9, 3.2, 0.5, 7, 0.09);
   spawnShards(st, pos, hex(SHARD_WHITES[Math.floor(st.ctx.rng() * SHARD_WHITES.length)]), 4, 2.6, 0.45, 6, 0.06);
   spawnRing(st, pos, b.r * 1.2);
   spawnPopup(st, pos, pts, P.color);
-  st.shake = Math.min(0.28, st.shake + (b.kind === "normal" ? 0.045 : 0.1));
 
   // character reaction: human always cheer-hops; CPUs cheer sometimes
   const ch = st.ctx.characters[pid] ?? null;
@@ -699,7 +697,6 @@ function endRound(st: State): void {
   st.ctx.announce(`${winnerName} POPS THE MOST!`, { durationMs: 1600, sound: null });
   st.ctx.playSfx("crowd.cheer", { volume: 0.9 });
   spawnConfetti(st);
-  st.shake = 0.3;
   const winCh = st.ctx.characters[ranking[0]] ?? null;
   if (winCh) winCh.anim.cheer();
   st.ctx.finish(ranking);
@@ -872,7 +869,6 @@ const balloonPop: Minigame = {
       taps: [],
       cpu: [],
       t: 0,
-      shake: 0,
       announcedGo: false,
       finished: false,
       camBase: L.cam,
@@ -889,7 +885,7 @@ const balloonPop: Minigame = {
     // ---- per-player state (id = playerId = column index) ----
     ctx.players.forEach((p, i) => {
       // CPU accuracy drawn once per player at setup (deterministic order)
-      const accuracy = CPU_ACCURACY + (ctx.rng() - 0.5) * CPU_ACCURACY_SPREAD;
+      const accuracy = Math.min(0.98, (CPU_ACCURACY + (ctx.rng() - 0.5) * CPU_ACCURACY_SPREAD) * cpuSkill());
       st.players.push({
         id: p.id,
         x: L.colX[i],
@@ -996,15 +992,6 @@ const balloonPop: Minigame = {
     /* ---- per-frame visuals (NOT gameplay — no ctx.rng draws) ---- */
     // sync t for visuals that read st.t (popups)
     st.t = st.stepIndex * FIXED_DT;
-    st.shake = Math.max(0, st.shake - dt * 0.9);
-    if (st.shake > 0) {
-      st.ctx.camera.position.set(
-        st.camBase[0] + Math.sin(st.t * 57) * st.shake,
-        st.camBase[1] + Math.cos(st.t * 43) * st.shake,
-        st.camBase[2] + Math.sin(st.t * 61) * st.shake
-      );
-      st.ctx.camera.lookAt(st.camLook[0], st.camLook[1], st.camLook[2]);
-    }
     updateFx(st, dt);
     updatePopups(st, dt);
     st.ctx.hud.timer(Math.max(0, TIME_CAP - st.t), TIME_CAP);

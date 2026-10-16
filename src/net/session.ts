@@ -16,6 +16,7 @@
  * the host's board, so a version mismatch reads as "update the game"
  * instead of BOARD OUT OF SYNC.
  */
+import { storedCpuLevel } from "../config/cpuLevel";
 import { roster } from "../characters/roster";
 import { match, snapshot, startMatch } from "../core/game";
 import { ui } from "../ui/kit";
@@ -455,6 +456,7 @@ function buildSetup(): MatchSetup {
     packs: ghosts.map((g) => g.pack ?? rules.humanPack),
     seats: seats.map((seat) => ({ ...seat })),
     board,
+    cpuLevel: storedCpuLevel(),
   };
 }
 
@@ -478,7 +480,7 @@ function applySetup(setup: MatchSetup): void {
   });
   // A setup without a board (an older host) is the carnival.
   const board = isBoardId(setup.board) ? setup.board : DEFAULT_BOARD;
-  startMatch(kinds, names, setup.turns, setup.seed, controllers, { board });
+  startMatch(kinds, names, setup.turns, setup.seed, controllers, { board, cpuLevel: setup.cpuLevel });
   match.enabledPacks = [...setup.enabledPacks];
   match.coinMultiplier = setup.coinMultiplier;
   match.humanPack = setup.humanPack;

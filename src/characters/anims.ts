@@ -19,10 +19,10 @@ export interface AnimController {
 }
 
 const TAU = Math.PI * 2;
-const PART_KEYS = ['ears', 'antenna', 'trunk', 'star', 'head', 'armL', 'armR', 'legL', 'legR'] as const;
+const PART_KEYS = ['ears', 'antenna', 'trunk', 'tail', 'star', 'head', 'armL', 'armR', 'legL', 'legR'] as const;
 type PartKey = (typeof PART_KEYS)[number];
 /** Floppy bits that trail the body on a spring (secondary motion). */
-const SPRING_KEYS = ['ears', 'antenna', 'trunk'] as const;
+const SPRING_KEYS = ['ears', 'antenna', 'trunk', 'tail'] as const;
 
 const smoothstep = (p: number): number => p * p * (3 - 2 * p);
 const clamp01 = (p: number): number => (p < 0 ? 0 : p > 1 ? 1 : p);
@@ -59,6 +59,15 @@ const WALK_SWING = 0.55;
 const WALK_TUCK = 0.7; // legs tuck up mid-hop
 const SAD_DROOP = 0.32;
 const SAD_LIMP = 0.35;
+
+// ---- floaters ----
+// Wisp (ghost) always hovers; Jack (pumpkin) sits on the ground and lifts
+// off to float whenever it moves. Neither has legs: they glide, not hop.
+const FLOATERS: Record<string, { always: boolean; height: number }> = {
+  wisp: { always: true, height: 0.22 },
+  jack: { always: false, height: 0.34 },
+};
+const LIFT_RATE = 7; // how fast a floater rises / settles (1/s)
 
 /**
  * Pose for one frame, relative to the rig's rest pose. Built fresh each frame
@@ -156,6 +165,13 @@ export function createAnimController(
   const spring = SPRING_KEYS.map(() => ({ x: 0, vx: 0, z: 0, vz: 0 }));
   let lastY = 0;
 
+  // An idle fidget may hold a face (Mallow's yawn) over the blink logic.
+  let fidgetExpr: Expression | null = null;
+
+  const floater = FLOATERS[kind.key];
+  let lift = floater?.always ? 1 : 0; // 0 = resting on the ground, 1 = fully afloat
+  const sparkles = parts.sparkles;
+
   const set = (name: AnimName): void => {
     if (currentName === name) return; // keep phase continuity for repeats
     copyPose(shown, from);
@@ -196,6 +212,28 @@ export function createAnimController(
         pose.parts.ears[2] = Math.sin(e * TAU * 2) * 0.3;
         pose.parts.trunk[0] = -Math.sin(Math.PI * e) * 0.6; // trunk lifts
         break;
+      case 'mallow': {
+        // A big sleepy yawn: head tips back, mouth pops open.
+        const w = Math.sin(Math.PI * e);
+        pose.parts.head[0] = -0.35 * w;
+        pose.sy *= 1 + w * 0.05;
+        if (w > 0.4) fidgetExpr = 'surprised';
+        arm('armL', -0.6 * w, 0.3 * w);
+        arm('armR', -0.6 * w, -0.3 * w);
+        break;
+      }
+      case 'rumble':
+        pose.parts.tail[1] = Math.sin(e * TAU * 3) * 0.6; // happy tail wag
+        pose.rz += Math.sin(e * TAU * 3) * 0.05;
+        break;
+      case 'jack':
+        pose.parts.head[1] = Math.sin(e * TAU) * 0.5; // a little side-to-side wobble
+        pose.parts.antenna[2] = Math.sin(e * TAU * 2) * 0.5;
+        break;
+      case 'wisp':
+        pose.yaw = e * TAU; // twirls round on the spot
+        pose.y += Math.sin(Math.PI * e) * 0.12;
+        break;
       default:
         break;
     }
@@ -211,6 +249,13 @@ export function createAnimController(
     const sway = Math.sin(t * 1.5) * 0.06;
     arm('armL', sway, 0.05);
     arm('armR', -sway, -0.05);
+    if (kind.key === 'wisp') {
+      // Drift: a slow floaty bob and lazily flapping nubs.
+      pose.y = Math.sin(t * 2.2) * 0.06;
+      pose.rz = Math.sin(t * 1.1) * 0.08;
+      arm('armL', Math.sin(t * 2.2) * 0.25, 0.35);
+      arm('armR', Math.sin(t * 2.2 + 0.6) * 0.25, -0.35);
+    }
 
     // Look around now and then: the head (and a bit of the body) turns aside.
     if (lookT < 0 && t >= nextLook) {
@@ -240,7 +285,24 @@ export function createAnimController(
     }
   };
 
+  const glide = (): void => {
+    // Floaters sail from space to space: a soft bob per space, leaning into
+    // the travel, arms fluttering, no squash and stretch.
+    const cycle = settings.hopDuration;
+    const p = (t % cycle) / cycle;
+    pose.y = Math.sin(p * TAU) * 0.05;
+    pose.rx = 0.22;
+    pose.rz = Math.sin(t * 5) * 0.07;
+    const flap = Math.sin(p * TAU * 2) * 0.35;
+    arm('armL', -0.5 + flap, 0.5);
+    arm('armR', -0.5 - flap, -0.5);
+  };
+
   const walk = (): void => {
+    if (floater) {
+      glide();
+      return;
+    }
     // One hop per board space (hopDuration): crouch, spring up stretched,
     // tuck the legs at the top, land squashed. Lean into the hop.
     const cycle = settings.hopDuration;
@@ -281,6 +343,9 @@ export function createAnimController(
       if (kind.key === 'bounce') pose.rx = p * TAU; // front flip
       if (kind.key === 'pip') pose.parts.star[1] = p * TAU; // star head spins
       if (kind.key === 'glimmer') pose.yaw = p * TAU; // pirouette
+      if (kind.key === 'jack') pose.parts.head[1] = p * TAU; // pumpkin spin
+      if (kind.key === 'wisp') pose.rz = Math.sin(p * TAU) * 0.5; // loop-de-sway
+      if (kind.key === 'rumble') pose.parts.tail[0] = -0.6; // tail up
       const up = ARMS_UP * smoothstep(Math.min(1, p * 3));
       arm('armL', up, 0.25);
       arm('armR', up, -0.25);
@@ -335,6 +400,22 @@ export function createAnimController(
         pose.parts.trunk[0] = -0.9 + Math.sin(t * 9) * 0.25; // trunk raised, trumpeting
         pose.parts.ears[2] = Math.sin(t * 10) * 0.35;
         break;
+      case 'mallow':
+        pose.parts.ears[2] = Math.sin(t * 16) * 0.3; // ears flick
+        pose.sx *= 1.04; // extra round with joy
+        break;
+      case 'rumble':
+        pose.parts.head[0] = -0.3; // chin up: ROAR
+        pose.parts.tail[1] = Math.sin(t * 14) * 0.7;
+        break;
+      case 'jack':
+        pose.y += 0.12 + hop * 0.1; // floats up in celebration
+        pose.parts.antenna[1] = t * 8; // stem twirls like a propeller
+        break;
+      case 'wisp':
+        pose.y += 0.1;
+        pose.rz += Math.sin(t * 6) * 0.15;
+        break;
       default:
         break;
     }
@@ -353,6 +434,9 @@ export function createAnimController(
     pose.rz = Math.sin(t * 1.1) * 0.05; // slow, mopey sway
     if (kind.key === 'tusk') pose.parts.trunk[0] = 0.35; // trunk droops
     if (kind.key === 'glimmer') pose.parts.antenna[0] = 0.6;
+    if (kind.key === 'jack') pose.parts.antenna[2] = 0.7; // stem wilts
+    if (kind.key === 'rumble') pose.parts.tail[0] = 0.5; // tail drags
+    if (kind.key === 'wisp') pose.y = -0.12; // sinks low
   };
 
   const squash = (): void => {
@@ -390,6 +474,7 @@ export function createAnimController(
     yawRate = dt > 0 ? angleDelta(prevYaw, yaw) / dt : 0;
 
     resetPose(pose);
+    fidgetExpr = null;
     switch (currentName) {
       case 'idle':
         idle(dt);
@@ -411,6 +496,27 @@ export function createAnimController(
         break;
     }
 
+    // Floaters: rise to hover height (always for Wisp, while moving for
+    // Jack) and settle back down gently.
+    if (floater) {
+      const target = floater.always || currentName === 'walk' || currentName === 'cheer' ? 1 : 0;
+      lift += (target - lift) * (1 - Math.exp(-dt * LIFT_RATE));
+      pose.y += lift * floater.height;
+      if (!floater.always) {
+        // Lift-off squash: a little stretch while rising, settle on landing.
+        const rising = (target - lift) * 0.12;
+        pose.sy *= 1 + rising;
+        pose.sx *= 1 - rising * 0.5;
+        pose.sz *= 1 - rising * 0.5;
+      }
+    }
+    if (sparkles) {
+      sparkles.visible = lift > 0.08;
+      sparkles.rotation.y = t * 3;
+      sparkles.scale.setScalar(Math.max(0.001, lift));
+      sparkles.position.y = -lift * 0.04;
+    }
+
     // Expressions owned by the idle/walk states: blink now and then.
     if (currentName === 'idle' || currentName === 'walk') {
       if (blinkT < 0 && t >= nextBlink) blinkT = 0;
@@ -424,7 +530,7 @@ export function createAnimController(
           if (animRng() < 0.25) nextBlink = t + 0.18;
         }
       } else {
-        setExpression('normal');
+        setExpression(fidgetExpr ?? 'normal');
       }
     }
 

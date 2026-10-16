@@ -103,6 +103,7 @@ function makeMarquee(): HTMLElement {
   const left = document.createElement("span");
   left.className = "ssp-last5__bulbs";
   const text = document.createElement("span");
+  text.className = "ssp-last5__text";
   text.textContent = "LAST 5 TURNS!";
   const right = document.createElement("span");
   right.className = "ssp-last5__bulbs";
@@ -110,6 +111,12 @@ function makeMarquee(): HTMLElement {
   if (prefersReducedMotion()) el.classList.add("ssp-last5--still");
   document.body.appendChild(el);
   return el;
+}
+
+/** Marquee line for the turns still to play, counting the current one. */
+export function lastTurnsText(turn: number, totalTurns: number): string {
+  const left = Math.max(1, totalTurns - turn + 1);
+  return left === 1 ? "FINAL TURN!" : `LAST ${left} TURNS!`;
 }
 
 // ---- debug ---------------------------------------------------------------------------
@@ -194,6 +201,8 @@ export function createNight(host: NightHost): Night {
   let progress = 0;
   const cur = blankTimeOfDay();
   let marquee: HTMLElement | null = null;
+  let marqueeLine = "";
+  let marqueeHidden = false;
   let fw: Fireworks | null = null;
   let fwWanted = false;
   let disposed = false;
@@ -264,12 +273,30 @@ export function createNight(host: NightHost): Night {
       }
 
       // LAST 5 marquee
-      if (target.last5 && !marquee) marquee = makeMarquee();
-      else if (!target.last5 && marquee) {
+      if (target.last5 && !marquee) {
+        marquee = makeMarquee();
+        marqueeLine = "";
+        marqueeHidden = false;
+      } else if (!target.last5 && marquee) {
         marquee.remove();
         marquee = null;
       }
-      if (marquee) marquee.classList.toggle("ssp-last5--still", reduced);
+      if (marquee) {
+        marquee.classList.toggle("ssp-last5--still", reduced);
+        // Count down with the match: LAST 5, LAST 4, ... FINAL TURN!
+        const line = lastTurnsText(lastTurn, lastTotal);
+        if (line !== marqueeLine) {
+          marqueeLine = line;
+          const text = marquee.querySelector(".ssp-last5__text");
+          if (text) text.textContent = line;
+        }
+        // Never sit on top of a popup (the shop, the lane choice, the star offer).
+        const covered = document.querySelector(".ssp-popup") !== null;
+        if (covered !== marqueeHidden) {
+          marqueeHidden = covered;
+          marquee.style.visibility = covered ? "hidden" : "";
+        }
+      }
 
       // Fireworks: the chunk is asked for the first time the last five turns
       // arrive (never under reduced motion), then kept for the page.

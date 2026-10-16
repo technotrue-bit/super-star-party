@@ -14,8 +14,8 @@
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.21.0",
     "@fontsource/fredoka": "^5.2.5",
-    "postprocessing": "^6.39.5",
     "partyserver": "^0.5.10",
+    "postprocessing": "^6.39.5",
     "three": "^0.182.0",
     "three-mesh-bvh": "^0.9.15"
   },
@@ -25,6 +25,7 @@
     "@types/three": "^0.182.0",
     "pngjs": "^7.0.0",
     "typescript": "^5.9.3",
-    "vite": "^7.1.7"
+    "vite": "^7.1.7",
+    "vitest": "3.2.4"
   }
 }

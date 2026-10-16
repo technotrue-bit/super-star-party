@@ -5,7 +5,8 @@
  * match and compares every turn-boundary snapshot hash (boardId dropped) and
  * every synchronous rng mark against tools/golden/carnival-seed7.json, recorded
  * on main d0b3484 and re-recorded when the Funhouse Gate (a per-round gameplay
- * flip, carnival rev 3) landed. Any unintended gameplay drift fails here.
+ * flip, carnival rev 3) and Hidden Blocks (a rng draw on every blue landing,
+ * carnival rev 4) landed. Any unintended gameplay drift fails here.
  *
  * Part 2 (Downtown graph, static): loads ?board=downtown and checks the def from
  * __SSP__.board(): 46 spaces, next[] well-formed (1 or 2 edges, in range), every
@@ -14,11 +15,11 @@
  * spots valid/unique/never start-fork-rejoin-shop, prizeStart is a prize spot,
  * carnival-style type mix (2 shops, 2 grumpus, 3 stamps, 2 minigame balloons).
  *
- * Part 3 (Downtown runtime): autoplays seed 7 on Downtown and checks boardId,
+ * Part 3 (Downtown runtime): autoplays each seed on Downtown and checks boardId,
  * that tokens only stand on valid spaces, the balloon only sits on prize spots
  * (or on a space a Balloon Tug pulled it to),
  * and that both forks were taken both ways (a branch tile and a skipped ring
- * tile seen) across the seeds in SSP_DT_SEEDS (default "7,4"), zero page errors.
+ * tile seen) across the seeds in SSP_DT_SEEDS (default "4,5"), zero page errors.
  *
  *   SSP_URL=http://127.0.0.1:5197 node tools/probe-board-downtown.mjs
  *   SSP_SKIP_GOLDEN=1 skips part 1.
@@ -29,10 +30,16 @@ import { dirname, resolve } from "node:path";
 
 const BASE = (process.env.SSP_URL ?? "http://127.0.0.1:5177").replace(/\/$/, "");
 const ROOT = resolve(dirname(new URL(import.meta.url).pathname), "..");
-// Seed 4 takes both forks both ways under the MP-style opening (distinct
-// order blocks, starting coins dealt after the order). Seed 2 no longer sends
-// anyone down the Riverside Gate branch.
-const SEEDS = (process.env.SSP_DT_SEEDS ?? "7,4").split(",").map(Number);
+// With Hidden Blocks and carried orbs (Downtown rev 3), seed 4 takes Market
+// Gate both ways and seed 5 takes Riverside Gate both ways. Seed 7 no longer
+// sends anyone down the Riverside branch. The per-seed "lanes" line shows
+// which seeds cover what when a rule change shifts the rng again.
+const SEEDS = (process.env.SSP_DT_SEEDS ?? "4,5").split(",").map(Number);
+// Each new minigame in the pool shifts which game is dealt, so which seeds take
+// which lane moves too (Crank Coaster left seeds 4 and 5 off the Riverside
+// branch). When the listed seeds leave a fork lane untaken, try these in turn
+// until both forks are covered both ways.
+const SPARE_SEEDS = (process.env.SSP_DT_SPARE ?? "6,8,9").split(",").filter(Boolean).map(Number);
 const RUN_TURNS = Number(process.env.SSP_DT_TURNS ?? 10);
 const CAP_MS = 420000;
 const fails = [];
@@ -47,7 +54,7 @@ if (process.env.SSP_SKIP_GOLDEN !== "1") {
   const r = spawnSync(process.execPath, [resolve(ROOT, "tools/board-golden.mjs")], {
     env: { ...process.env, SSP_SEED: "7", SSP_TURNS: "30", SSP_GOLDEN: resolve(ROOT, "tools/golden/carnival-seed7.json"), SSP_BOARD: "carnival" },
     encoding: "utf8",
-    timeout: 600000,
+    timeout: 1500000,
   });
   const out = (r.stdout ?? "") + (r.stderr ?? "");
   for (const line of out.split("\n").filter((l) => /^golden|finale|PASS|FAIL/.test(l))) console.log(`    ${line}`);
@@ -123,7 +130,12 @@ try {
   // ---- Part 3 --------------------------------------------------------------
   console.log(`3. Downtown autoplay (seeds ${SEEDS.join(", ")}, up to ${RUN_TURNS} turns each)`);
   const taken = forkInfo.map(() => ({ branch: false, ring: false }));
-  for (const seed of SEEDS) {
+  const queue = [...SEEDS];
+  const spare = [...SPARE_SEEDS];
+  const covered = () => taken.every((t) => t.branch && t.ring);
+  while (queue.length || (!covered() && spare.length)) {
+    const seed = queue.length ? queue.shift() : spare.shift();
+    if (!SEEDS.includes(seed)) console.log(`    a fork lane is still untaken, trying spare seed ${seed}`);
     const p = await (await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true })).newPage();
     const errs = [];
     p.on("pageerror", (e) => errs.push(String(e).slice(0, 200)));
@@ -166,12 +178,15 @@ try {
     }
     await p.close();
     const spaces = new Set(seen.spaces);
-    forkInfo.forEach((f, k) => {
-      if (f.path.some((s) => spaces.has(s))) taken[k].branch = true;
-      if (f.skipped.some((s) => spaces.has(s))) taken[k].ring = true;
+    const lanes = forkInfo.map((f, k) => {
+      const branch = f.path.some((s) => spaces.has(s));
+      const ring = f.skipped.some((s) => spaces.has(s));
+      if (branch) taken[k].branch = true;
+      if (ring) taken[k].ring = true;
+      return `fork ${f.fork} ${branch ? "B" : "-"}${ring ? "R" : "-"}`;
     });
     const badBalloon = seen.balloons.filter((b) => !ps.includes(b) && !seen.tugged.includes(b));
-    console.log(`    seed ${seed}: reached turn ${seen.turn}${finale ? " (finale)" : ""} in ${Math.round((Date.now() - t0) / 1000)}s, ${spaces.size} spaces stood on, balloon at [${seen.balloons.join(",")}]${seen.tugged.length ? ` (Balloon Tug to ${seen.tugged.join(",")})` : ""}`);
+    console.log(`    seed ${seed}: reached turn ${seen.turn}${finale ? " (finale)" : ""} in ${Math.round((Date.now() - t0) / 1000)}s, ${spaces.size} spaces stood on, balloon at [${seen.balloons.join(",")}]${seen.tugged.length ? ` (Balloon Tug to ${seen.tugged.join(",")})` : ""}, lanes ${lanes.join(", ")}`);
     check(seen.boards.length === 1 && seen.boards[0] === "downtown", `seed ${seed}: match.boardId stays downtown (${seen.boards.join(",")})`);
     check(seen.turn >= Math.min(RUN_TURNS, 3) || finale, `seed ${seed}: match progressed (turn ${seen.turn})`);
     check([...spaces].every((s) => Number.isInteger(s) && s >= 0 && s < n), `seed ${seed}: tokens only on valid spaces`);

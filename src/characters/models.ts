@@ -13,6 +13,10 @@ const HAND_COLORS: Record<string, string> = {
   bounce: palette.cream,
   glimmer: palette.white,
   tusk: palette.cream,
+  mallow: palette.cream,
+  rumble: palette.cream,
+  jack: palette.pumpkinStem,
+  wisp: palette.white,
 };
 
 // Darken a palette color toward the ink outline color. Legs read as a deeper
@@ -306,6 +310,222 @@ export function buildModel(kind: CharacterKind): BuiltModel {
       parts.armR = buildArm('R', [0.44, 0.84, 0]);
       parts.legL = buildLeg('L', [-0.2, 0.12, 0.05]);
       parts.legR = buildLeg('R', [0.2, 0.12, 0.05]);
+      break;
+    }
+    case 'mallow': {
+      // Lavender hippo: round and heavy, a wide pale muzzle with nostrils,
+      // tiny ears and peeking eye bumps on top of a broad head.
+      parts.body = buildBody(0.56, 0.88, 0.54, 0, true);
+      parts.head = buildHead(0.36, 1.08);
+      parts.head.children[0].scale.set(1.12, 0.92, 1);
+      parts.head.children[1].scale.set(1.12, 0.92, 1);
+      parts.face = buildFace(0.27, 0.1, 0.37, parts.head);
+      const muzzleGeo = new THREE.SphereGeometry(1, 18, 12);
+      muzzleGeo.scale(0.3, 0.17, 0.2);
+      const muzzle = addMesh(parts.head, muzzleGeo, bellyMat, [0, -0.18, 0.26]);
+      inkClone(muzzle, parts.head);
+      const nostrilGeo = new THREE.SphereGeometry(0.035, 8, 6);
+      nostrilGeo.scale(1, 0.6, 1);
+      const nostrilMat = new THREE.MeshBasicMaterial({ color: palette.ink });
+      addMesh(parts.head, nostrilGeo, nostrilMat, [-0.09, -0.1, 0.44]).castShadow = false;
+      addMesh(parts.head, nostrilGeo, nostrilMat, [0.09, -0.1, 0.44]).castShadow = false;
+      const ears = new THREE.Group();
+      ears.position.set(0, 1.38, -0.04);
+      const earGeo = new THREE.SphereGeometry(1, 12, 10);
+      earGeo.scale(0.08, 0.07, 0.05);
+      const el = addMesh(ears, earGeo, bodyMat, [-0.27, 0, 0], new THREE.Euler(0, 0, 0.4));
+      const er = addMesh(ears, earGeo, bodyMat, [0.27, 0, 0], new THREE.Euler(0, 0, -0.4));
+      inkClone(el, ears);
+      inkClone(er, ears);
+      group.add(ears);
+      parts.ears = ears;
+      parts.armL = buildArm('L', [-0.46, 0.78, 0]);
+      parts.armR = buildArm('R', [0.46, 0.78, 0]);
+      parts.legL = buildLeg('L', [-0.22, 0.12, 0.05]);
+      parts.legR = buildLeg('R', [0.22, 0.12, 0.05]);
+      break;
+    }
+    case 'rumble': {
+      // Coral baby dino: round head, a row of gold back spikes, a chunky
+      // tail that trails on a spring.
+      parts.body = buildBody(0.48, 0.92, 0.5, 0, true);
+      parts.head = buildHead(0.34, 1.02);
+      parts.face = buildFace(0.27, 0.02, 0.36, parts.head);
+      const spikeMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: palette.sun });
+      const spikeGeo = new THREE.ConeGeometry(0.1, 0.22, 8);
+      // A crest of spikes from the crown over the back of the head...
+      const crown: [number, number, number][] = [
+        [0.33, 0.06, -0.1],
+        [0.3, -0.12, -0.55],
+        [0.17, -0.29, -1.05],
+      ];
+      for (const [y, z, rx] of crown) {
+        const sp = addMesh(parts.head, spikeGeo, spikeMat, [0, y, z], new THREE.Euler(rx, 0, 0));
+        inkClone(sp, parts.head);
+      }
+      // ...and on down the back to the tail.
+      const back: [number, number, number][] = [
+        [0.78, -0.42, -1.15],
+        [0.55, -0.5, -1.5],
+        [0.32, -0.46, -1.9],
+      ];
+      for (const [y, z, rx] of back) {
+        const sp = addMesh(group, spikeGeo, spikeMat, [0, y, z], new THREE.Euler(rx, 0, 0));
+        inkClone(sp, outline);
+      }
+      // Darker freckle spots on the cheeks and flanks.
+      const spotMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: darken(kind.color, 0.3) });
+      const spotGeo = new THREE.SphereGeometry(1, 10, 8);
+      spotGeo.scale(0.07, 0.07, 0.025);
+      const spot = (parent: THREE.Object3D, x: number, y: number, z: number, r: number): void => {
+        const m = addMesh(parent, spotGeo, spotMat, [x, y, z]);
+        m.lookAt(m.position.clone().multiplyScalar(2));
+        m.scale.setScalar(r);
+        m.castShadow = false;
+      };
+      spot(parts.head, -0.24, 0.17, 0.17, 0.9);
+      spot(parts.head, 0.27, 0.12, 0.14, 0.7);
+      spot(parts.head, 0.05, 0.3, -0.12, 1);
+      const flank = new THREE.Group();
+      flank.position.set(0, 0.5, 0);
+      spot(flank, -0.42, 0.06, -0.2, 1.1);
+      spot(flank, 0.43, -0.04, -0.17, 1);
+      spot(flank, 0.3, 0.18, -0.33, 0.8);
+      group.add(flank);
+      const tail = new THREE.Group();
+      tail.position.set(0, 0.3, -0.36);
+      const tailGeo = new THREE.ConeGeometry(0.2, 0.62, 12);
+      tailGeo.rotateX(-Math.PI / 2);
+      tailGeo.translate(0, 0, -0.26);
+      const tm = addMesh(tail, tailGeo, bodyMat, [0, 0, 0], new THREE.Euler(0.25, 0, 0));
+      inkClone(tm, tail);
+      const tailSpike = addMesh(tail, spikeGeo, spikeMat, [0, 0.12, -0.3], new THREE.Euler(-1.2, 0, 0));
+      tailSpike.scale.setScalar(0.75);
+      inkClone(tailSpike, tail);
+      group.add(tail);
+      parts.tail = tail;
+      parts.armL = buildArm('L', [-0.38, 0.72, 0.04]);
+      parts.armR = buildArm('R', [0.38, 0.72, 0.04]);
+      parts.legL = buildLeg('L', [-0.17, 0.12, 0.05]);
+      parts.legR = buildLeg('R', [0.17, 0.12, 0.05]);
+      break;
+    }
+    case 'jack': {
+      // Cute pumpkin: one big ribbed gourd that is head and body at once,
+      // a curly stem with a leaf on top, leaf-green mitts, and no legs. It
+      // lifts off and floats whenever it moves (anims.ts), trailing sparkles.
+      const pumpkin = new THREE.Group();
+      pumpkin.position.set(0, 0.46, 0);
+      const pumpkinGeo = new THREE.SphereGeometry(0.5, 64, 32);
+      {
+        const pos = pumpkinGeo.getAttribute('position');
+        const v = new THREE.Vector3();
+        for (let k = 0; k < pos.count; k++) {
+          v.fromBufferAttribute(pos, k);
+          const a = Math.atan2(v.z, v.x);
+          const lat = Math.sqrt(Math.max(0, 1 - (v.y / 0.5) ** 2));
+          // Eight soft ribs, deepest round the middle; a dimple at both poles.
+          const rib = 1 + 0.07 * Math.cos(a * 8) * lat;
+          v.x *= rib * 1.06;
+          v.z *= rib * 1.06;
+          v.y *= 0.9;
+          if (Math.abs(v.y) > 0.36) v.y -= Math.sign(v.y) * (Math.abs(v.y) - 0.36) * 0.6;
+          pos.setXYZ(k, v.x, v.y, v.z);
+        }
+        pumpkinGeo.computeVertexNormals();
+      }
+      const pm = addMesh(pumpkin, pumpkinGeo, bodyMat, [0, 0, 0]);
+      inkClone(pm, pumpkin);
+      group.add(pumpkin);
+      parts.head = pumpkin;
+      parts.body = pumpkin;
+      parts.face = buildFace(0.36, 0.04, 0.6, pumpkin);
+      const stemMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: palette.pumpkinStem });
+      const stem = new THREE.Group();
+      stem.position.set(0, 0.36, 0);
+      const stemGeo = new THREE.CylinderGeometry(0.045, 0.07, 0.2, 8);
+      const sm = addMesh(stem, stemGeo, stemMat, [0, 0.09, 0], new THREE.Euler(0, 0, -0.25));
+      inkClone(sm, stem);
+      const curlGeo = new THREE.TorusGeometry(0.06, 0.02, 6, 12, Math.PI * 1.4);
+      const cm = addMesh(stem, curlGeo, stemMat, [0.07, 0.19, 0], new THREE.Euler(0, 0, -0.6));
+      inkClone(cm, stem);
+      const leafGeo = new THREE.SphereGeometry(1, 12, 8);
+      leafGeo.scale(0.15, 0.025, 0.09);
+      const lm = addMesh(stem, leafGeo, stemMat, [-0.13, 0.06, 0.02], new THREE.Euler(0.2, 0.3, 0.35));
+      inkClone(lm, stem);
+      pumpkin.add(stem);
+      parts.antenna = stem;
+      parts.armL = buildArm('L', [-0.55, 0.5, 0.02]);
+      parts.armR = buildArm('R', [0.55, 0.5, 0.02]);
+      parts.armL.scale.setScalar(0.8);
+      parts.armR.scale.setScalar(0.8);
+      // Float sparkles: little gold stars circling under Jack in the air.
+      const sparkles = new THREE.Group();
+      sparkles.name = 'sparkles';
+      const sparkMat = new THREE.MeshBasicMaterial({ color: palette.sun, transparent: true, opacity: 0.9 });
+      const sparkGeo = new THREE.OctahedronGeometry(0.055, 0);
+      for (let k = 0; k < 4; k++) {
+        const a = (k / 4) * Math.PI * 2;
+        const sp = new THREE.Mesh(sparkGeo, sparkMat);
+        sp.position.set(Math.cos(a) * 0.36, 0.02 + (k % 2) * 0.05, Math.sin(a) * 0.36);
+        sparkles.add(sp);
+      }
+      sparkles.visible = false;
+      group.add(sparkles);
+      parts.sparkles = sparkles;
+      break;
+    }
+    case 'wisp': {
+      // Chibi ghost: a big round head that flows into a wavy little skirt,
+      // stubby arm nubs, no legs. Always hovering (anims.ts).
+      const R = 0.42;
+      const profile: THREE.Vector2[] = [];
+      for (let k = 0; k <= 10; k++) {
+        const a = (Math.PI / 2) * (1 - k / 10); // top pole -> equator
+        profile.push(new THREE.Vector2(Math.cos(a) * R, Math.sin(a) * R));
+      }
+      profile.push(new THREE.Vector2(R * 1.02, -R * 0.4));
+      profile.push(new THREE.Vector2(R * 1.1, -R * 0.78));
+      profile.push(new THREE.Vector2(R * 0.85, -R * 0.74));
+      profile.push(new THREE.Vector2(R * 0.4, -R * 0.62));
+      profile.push(new THREE.Vector2(0.001, -R * 0.58));
+      // Lathe wants the profile bottom-to-top for outward-facing normals.
+      const ghostGeo = new THREE.LatheGeometry(profile.reverse(), 40);
+      {
+        // Scalloped hem: ripple the skirt edge into five soft points.
+        const pos = ghostGeo.getAttribute('position');
+        const v = new THREE.Vector3();
+        for (let k = 0; k < pos.count; k++) {
+          v.fromBufferAttribute(pos, k);
+          if (v.y < -R * 0.3) {
+            const a = Math.atan2(v.z, v.x);
+            const w = Math.min(1, (-v.y - R * 0.3) / (R * 0.45));
+            v.y -= Math.cos(a * 5) * 0.05 * w;
+            pos.setXYZ(k, v.x, v.y, v.z);
+          }
+        }
+        ghostGeo.computeVertexNormals();
+      }
+      const ghost = new THREE.Group();
+      ghost.position.set(0, 0.42, 0);
+      const gm = addMesh(ghost, ghostGeo, bodyMat, [0, 0, 0]);
+      inkClone(gm, ghost);
+      group.add(ghost);
+      parts.head = ghost;
+      parts.body = ghost;
+      parts.face = buildFace(0.27, 0.06, 0.47, ghost);
+      // A little curl of a tuft on top.
+      const tuft = new THREE.Group();
+      tuft.position.set(0, R - 0.02, 0);
+      const tuftGeo = new THREE.ConeGeometry(0.07, 0.16, 10);
+      const tf = addMesh(tuft, tuftGeo, bodyMat, [0.02, 0.06, 0], new THREE.Euler(0, 0, -0.5));
+      inkClone(tf, tuft);
+      ghost.add(tuft);
+      parts.antenna = tuft;
+      parts.armL = buildArm('L', [-0.42, 0.42, 0.04]);
+      parts.armR = buildArm('R', [0.42, 0.42, 0.04]);
+      parts.armL.scale.setScalar(0.7);
+      parts.armR.scale.setScalar(0.7);
       break;
     }
     default:
