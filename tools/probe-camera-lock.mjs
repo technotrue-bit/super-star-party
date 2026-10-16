@@ -3,10 +3,10 @@
 // "play" phase, then sample mgProbe().cam every 50 ms for 6 s while mashing Space
 // and holding an arrow key. Fixed-camera games must stay put (< 0.001); Cake Dash
 // may follow the race but with no step over 0.35 and no reversal over 0.05.
-// Prints PASS camera <id> or FAIL camera <id> ...; exit code 1 on any fail.
+// A page error during the round fails the game too. Prints PASS camera <id> or FAIL camera <id> ...; exit code 1 on any fail.
 import { chromium } from "@playwright/test";
 
-const DEFAULT_IDS = ["balloon_pop", "coin_cannon", "push_of_war", "memory_match", "drum_solo", "pipe_puzzle", "quick_draw", "cake_dash"];
+const DEFAULT_IDS = ["balloon_pop", "coin_cannon", "push_of_war", "memory_match", "drum_solo", "pipe_puzzle", "quick_draw", "cake_dash", "slingshot_summit", "pie_flick", "row_rumble", "crank_coaster", "chalk_trails"];
 const ids = process.argv.slice(2).length ? process.argv.slice(2) : DEFAULT_IDS;
 // Follow-camera races: the course axis index into cam [x, y, z] and the direction of travel.
 // The step limit is a speed: 0.35 world units per 50 ms (7 units/s), measured against the
@@ -91,15 +91,15 @@ async function probe(id) {
         maxAlong = Math.max(maxAlong, along);
         maxBack = Math.max(maxBack, maxAlong - along);
       }
-      const ok = maxStep <= 0.35 && maxBack <= 0.05;
-      return `${ok ? "PASS" : "FAIL"} camera ${id} maxStep=${maxStep.toFixed(4)} maxBack=${maxBack.toFixed(4)} samples=${samples.length}${errors.length ? " errors=" + errors[0] : ""}`;
+      const ok = maxStep <= 0.35 && maxBack <= 0.05 && errors.length === 0;
+      return `${ok ? "PASS" : "FAIL"} camera ${id} maxStep=${maxStep.toFixed(4)} maxBack=${maxBack.toFixed(4)} samples=${samples.length}${errors.length ? " page errors: " + errors.join(" | ") : ""}`;
     }
     let maxSpread = 0;
     for (let i = 0; i < samples.length; i++) {
       for (let j = i + 1; j < samples.length; j++) maxSpread = Math.max(maxSpread, dist(samples[i], samples[j]));
     }
-    const ok = maxSpread < 0.001;
-    return `${ok ? "PASS" : "FAIL"} camera ${id} maxStep=${maxSpread.toFixed(5)} samples=${samples.length}${errors.length ? " errors=" + errors[0] : ""}`;
+    const ok = maxSpread < 0.001 && errors.length === 0;
+    return `${ok ? "PASS" : "FAIL"} camera ${id} maxStep=${maxSpread.toFixed(5)} samples=${samples.length}${errors.length ? " page errors: " + errors.join(" | ") : ""}`;
   } catch (e) {
     return `FAIL camera ${id} ${String(e).slice(0, 160)}`;
   } finally {
