@@ -19,6 +19,7 @@ const KIND_COLORS: Record<string, string> = {
   rumble: palette.heroRumble,
   jack: palette.heroJack,
   wisp: palette.heroWisp,
+  rattle: palette.heroRattle,
 };
 
 const FALLBACKS = [

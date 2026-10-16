@@ -20,7 +20,7 @@ export interface AnimController {
 }
 
 const TAU = Math.PI * 2;
-const PART_KEYS = ['ears', 'antenna', 'trunk', 'tail', 'star', 'head', 'armL', 'armR', 'legL', 'legR'] as const;
+const PART_KEYS = ['ears', 'antenna', 'trunk', 'tail', 'star', 'head', 'jaw', 'armL', 'armR', 'legL', 'legR'] as const;
 type PartKey = (typeof PART_KEYS)[number];
 /** Floppy bits that trail the body on a spring (secondary motion). */
 const SPRING_KEYS = ['ears', 'antenna', 'trunk', 'tail'] as const;
@@ -198,6 +198,10 @@ export function createAnimController(
   const floater = FLOATERS[kind.key];
   const starArms = kind.key === 'pip';
   const roll = parts.star?.userData.roll as StarRoll | undefined;
+  // Rattle's skull lifts off his neck on a jump: a position offset on the
+  // head part, set by jump() each frame and applied after the pose.
+  const headBaseY = parts.head?.position.y ?? 0;
+  let headPop = 0;
   // Face held while cartwheeling (blinks still win for their few frames).
   let walkExpr: Expression | null = null;
   let lift = floater?.always ? 1 : 0; // 0 = resting on the ground, 1 = fully afloat
@@ -344,6 +348,11 @@ export function createAnimController(
         pose.yaw = e * TAU; // twirls round on the spot
         pose.y += Math.sin(Math.PI * e) * 0.12;
         break;
+      case 'rattle':
+        // Spins his skull all the way round on his neck, jaw clacking.
+        pose.parts.head[1] = smoothstep(e) * TAU;
+        pose.parts.jaw[0] = Math.abs(Math.sin(e * TAU * 3)) * 0.3;
+        break;
       default:
         break;
     }
@@ -458,6 +467,8 @@ export function createAnimController(
     arm('armR', -swing, -0.1);
     leg('legL', -WALK_TUCK * air + 0.15);
     leg('legR', -WALK_TUCK * air - 0.15);
+    // Rattle's jaw clacks open at the top of every hop.
+    if (kind.key === 'rattle') pose.parts.jaw[0] = air * 0.32;
   };
 
   const jump = (): void => {
@@ -482,6 +493,12 @@ export function createAnimController(
       if (kind.key === 'jack') pose.parts.head[1] = p * TAU; // pumpkin spin
       if (kind.key === 'wisp') pose.rz = Math.sin(p * TAU) * 0.5; // loop-de-sway
       if (kind.key === 'rumble') pose.parts.tail[0] = -0.6; // tail up
+      if (kind.key === 'rattle') {
+        // His skull pops clean off, spins once, and lands back on his neck.
+        headPop = Math.sin(Math.PI * p) * 0.6;
+        pose.parts.head[1] = smoothstep(p) * TAU;
+        pose.parts.jaw[0] = 0.4;
+      }
       const up = ARMS_UP * smoothstep(Math.min(1, p * 3));
       arm('armL', up, 0.25);
       arm('armR', up, -0.25);
@@ -554,6 +571,11 @@ export function createAnimController(
         pose.y += 0.1;
         pose.rz += Math.sin(t * 6) * 0.15;
         break;
+      case 'rattle':
+        // Cackles: the jaw chatters fast and the skull bobbles.
+        pose.parts.jaw[0] = 0.08 + (0.5 + 0.5 * Math.sin(t * 30)) * 0.32;
+        pose.parts.head[2] = Math.sin(t * 9) * 0.16;
+        break;
       default:
         break;
     }
@@ -575,6 +597,7 @@ export function createAnimController(
     if (kind.key === 'jack') pose.parts.antenna[2] = 0.7; // stem wilts
     if (kind.key === 'rumble') pose.parts.tail[0] = 0.5; // tail drags
     if (kind.key === 'wisp') pose.y = -0.12; // sinks low
+    if (kind.key === 'rattle') pose.parts.jaw[0] = 0.38; // jaw hangs open
   };
 
   const squash = (): void => {
@@ -623,6 +646,7 @@ export function createAnimController(
 
     resetPose(pose);
     walkExpr = null;
+    headPop = 0;
     fidgetExpr = null;
     switch (currentName) {
       case 'idle':
@@ -737,6 +761,7 @@ export function createAnimController(
     // star's lowest tip sink into the ground at its current spin.
     if (roll) shown.y = Math.max(shown.y, rollLift(roll, shown.parts.star[2]));
     applyPose(shown);
+    if (kind.key === 'rattle' && parts.head) parts.head.position.y = headBaseY + headPop;
   };
 
   const setFacing = (angle: number): void => {
