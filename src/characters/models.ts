@@ -17,6 +17,7 @@ const HAND_COLORS: Record<string, string> = {
   rumble: palette.cream,
   jack: palette.pumpkinStem,
   wisp: palette.white,
+  rattle: palette.bone,
 };
 
 // Darken a palette color toward the ink outline color. Legs read as a deeper
@@ -643,6 +644,150 @@ export function buildModel(kind: CharacterKind): BuiltModel {
       parts.armR = buildArm('R', [0.42, 0.42, 0.04]);
       parts.armL.scale.setScalar(0.7);
       parts.armR.scale.setScalar(0.7);
+      break;
+    }
+    case 'rattle': {
+      // Chibi skeleton: a big round skull with glowing lime eyes and a jaw
+      // that clacks, a tiny ribcage on a stubby spine, bony limbs, and a lime
+      // scarf whose tail flutters behind him (the scarf carries his color;
+      // the bones stay ivory). The skull can pop off on a jump (anims.ts).
+      const boneMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: palette.bone });
+      const mouthMat = new THREE.MeshBasicMaterial({ color: palette.ink });
+
+      // Feet and leg bones.
+      const buildBoneLeg = (side: 'L' | 'R', x: number): THREE.Group => {
+        const pivot = new THREE.Group();
+        pivot.name = 'leg' + side;
+        pivot.position.set(x, 0.3, 0.02);
+        const shin = addMesh(pivot, new THREE.CapsuleGeometry(0.05, 0.14, 4, 8), boneMat, [0, -0.13, 0]);
+        const footGeo = new THREE.SphereGeometry(1, 14, 10);
+        footGeo.scale(0.09, 0.055, 0.13);
+        const foot = addMesh(pivot, footGeo, boneMat, [0, -0.245, 0.04]);
+        inkClone(shin, pivot);
+        inkClone(foot, pivot);
+        group.add(pivot);
+        return pivot;
+      };
+      parts.legL = buildBoneLeg('L', -0.12);
+      parts.legR = buildBoneLeg('R', 0.12);
+
+      // Pelvis, a short spine, and the ribcage.
+      const pelvisGeo = new THREE.SphereGeometry(1, 16, 10);
+      pelvisGeo.scale(0.19, 0.085, 0.14);
+      inkClone(addMesh(group, pelvisGeo, boneMat, [0, 0.33, 0]), outline);
+      inkClone(addMesh(group, new THREE.CapsuleGeometry(0.045, 0.16, 4, 8), boneMat, [0, 0.43, -0.02]), outline);
+      const ribs = new THREE.Group();
+      ribs.position.set(0, 0.6, 0);
+      const cageGeo = new THREE.SphereGeometry(0.25, 28, 20);
+      cageGeo.scale(1, 1.05, 0.82);
+      // Its ink shell lives in the same group, so it sits where the cage does.
+      inkClone(addMesh(ribs, cageGeo, boneMat, [0, 0, 0]), ribs);
+      {
+        // Painted rib gaps on the front of the cage: a sternum down the
+        // middle and three curved gaps either side.
+        const c = document.createElement('canvas');
+        c.width = 128;
+        c.height = 128;
+        const g = c.getContext('2d')!;
+        g.strokeStyle = palette.ink;
+        g.lineCap = 'round';
+        g.lineWidth = 9;
+        for (let k = 0; k < 3; k++) {
+          const y = 34 + k * 26;
+          for (const dir of [-1, 1]) {
+            g.beginPath();
+            g.moveTo(64 + dir * 12, y);
+            g.quadraticCurveTo(64 + dir * 40, y - 4, 64 + dir * 54, y + 12);
+            g.stroke();
+          }
+        }
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        const ribMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
+        const ribGeo = new THREE.SphereGeometry(0.254, 20, 14, Math.PI / 2 - 0.95, 1.9, Math.PI / 2 - 0.75, 1.5);
+        ribGeo.scale(1, 1.05, 0.82);
+        const rm = addMesh(ribs, ribGeo, ribMat, [0, 0, 0]);
+        rm.castShadow = false;
+      }
+      group.add(ribs);
+      parts.body = ribs;
+
+      // Bony arms: a shoulder knob, an arm bone and a round mitt of a hand.
+      const buildBoneArm = (side: 'L' | 'R', x: number): THREE.Group => {
+        const pivot = new THREE.Group();
+        pivot.name = 'arm' + side;
+        pivot.position.set(x, 0.74, 0);
+        const knob = addMesh(pivot, new THREE.SphereGeometry(0.065, 10, 8), boneMat, [0, 0, 0]);
+        const bone = addMesh(pivot, new THREE.CapsuleGeometry(0.04, 0.2, 4, 8), boneMat, [0, -0.14, 0]);
+        const hand = addMesh(pivot, new THREE.SphereGeometry(0.08, 12, 10), boneMat, [0, -0.3, 0]);
+        inkClone(knob, pivot);
+        inkClone(bone, pivot);
+        inkClone(hand, pivot);
+        group.add(pivot);
+        return pivot;
+      };
+      parts.armL = buildBoneArm('L', -0.28);
+      parts.armR = buildBoneArm('R', 0.28);
+
+      // The scarf: a lime ring round the neck, its tail flying out behind.
+      const scarfGeo = new THREE.TorusGeometry(0.17, 0.065, 10, 28);
+      scarfGeo.rotateX(Math.PI / 2);
+      inkClone(addMesh(group, scarfGeo, bodyMat, [0, 0.84, 0]), outline);
+      const tail = new THREE.Group();
+      tail.position.set(0.1, 0.84, -0.14);
+      const flapGeo = new THREE.BoxGeometry(0.11, 0.26, 0.035);
+      flapGeo.translate(0, -0.13, 0);
+      const f1 = addMesh(tail, flapGeo, bodyMat, [0, 0, 0], new THREE.Euler(0.55, 0, -0.25));
+      const f2 = addMesh(tail, flapGeo, bodyMat, [0.07, -0.02, -0.02], new THREE.Euler(0.8, 0, 0.15));
+      f2.scale.set(0.9, 0.8, 1);
+      inkClone(f1, tail);
+      inkClone(f2, tail);
+      group.add(tail);
+      parts.tail = tail;
+
+      // The skull: a big round cranium. The face wraps it (a sphere slice,
+      // like Jack's and Pip's), so it never juts out from the side.
+      const head = new THREE.Group();
+      head.position.set(0, 1.17, 0);
+      const SQ = { x: 1, y: 0.94, z: 0.96 };
+      const skullGeo = new THREE.SphereGeometry(0.38, 36, 26);
+      skullGeo.scale(SQ.x, SQ.y, SQ.z);
+      inkClone(addMesh(head, skullGeo, boneMat, [0, 0, 0]), head);
+      {
+        const FACE_R = 0.386;
+        const faceW = 1.5;
+        const faceH = 1.25;
+        const faceGeo = new THREE.SphereGeometry(
+          FACE_R, 24, 16,
+          Math.PI / 2 - faceW / 2, faceW,
+          Math.PI / 2 - faceH / 2 + 0.16, faceH,
+        );
+        const face = new THREE.Group();
+        face.scale.set(SQ.x, SQ.y, SQ.z);
+        const fm = addMesh(face, faceGeo, faceMat, [0, 0, 0]);
+        fm.castShadow = false;
+        fm.receiveShadow = false;
+        head.add(face);
+        parts.face = face;
+      }
+      // The mouth's dark inside, tucked under the front of the skull: only
+      // seen when the jaw drops.
+      const mouthGeo = new THREE.SphereGeometry(1, 16, 10);
+      mouthGeo.scale(0.17, 0.06, 0.12);
+      addMesh(head, mouthGeo, mouthMat, [0, -0.27, 0.17]).castShadow = false;
+      // The jaw: hinged at the back of the skull's underside so it swings
+      // open at the front.
+      const jaw = new THREE.Group();
+      jaw.name = 'jaw';
+      jaw.position.set(0, -0.25, -0.04);
+      const jawGeo = new THREE.SphereGeometry(1, 20, 12, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2);
+      jawGeo.scale(0.22, 0.13, 0.21);
+      const jm = addMesh(jaw, jawGeo, boneMat, [0, 0.0, 0.2]);
+      inkClone(jm, jaw);
+      head.add(jaw);
+      parts.jaw = jaw;
+      group.add(head);
+      parts.head = head;
       break;
     }
     default:

@@ -86,7 +86,9 @@ export const palette = {
   heroRumble: "#F2605A", // Rumble — coral dino
   heroJack: "#FF8A1F", // Jack — floating pumpkin
   heroWisp: "#EEF0FF", // Wisp — chibi ghost
+  heroRattle: "#B6EE3A", // Rattle — chibi skeleton: lime scarf + glowing eyes
   pumpkinStem: "#4E8B3A", // Jack's stem + leaf
+  bone: "#F6F0DE", // Rattle's bones (warm ivory, not paper white)
 
   // ---- misc ----
   white: "#FFFFFF",
