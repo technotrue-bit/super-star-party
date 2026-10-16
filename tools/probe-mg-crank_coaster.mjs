@@ -296,6 +296,10 @@ for (const [key, level] of [["a", null], ["b", null], ["relaxed", "relaxed"], ["
 }
 if (JSON.stringify(runs.a.ranking) !== JSON.stringify(runs.b.ranking)) fail(`ranking differs between runs: ${JSON.stringify(runs.a.ranking)} vs ${JSON.stringify(runs.b.ranking)}`);
 if (JSON.stringify(runs.a.tel?.angle) !== JSON.stringify(runs.b.tel?.angle)) fail("heights differ between runs");
+// Normal CPUs crank at about the keyboard dial's 1.5 turns/s (the winner a little above it); every
+// level stays well under the 2.2 turns/s heat line.
+if (!(pace(runs.a) > 1.35 && pace(runs.a) < 1.75)) fail(`Normal winner pace ${pace(runs.a)} turns/s is not near the keyboard's 1.5`);
+for (const k of ["relaxed", "a", "challenge"]) if (!(pace(runs[k]) < 2.1)) fail(`${k} winner pace ${pace(runs[k])} is at the heat line`);
 if (!(pace(runs.challenge) >= pace(runs.relaxed))) {
   fail(`Challenge winner pace ${pace(runs.challenge)} < Relaxed winner pace ${pace(runs.relaxed)}`);
 }
@@ -304,10 +308,12 @@ await browser.close();
 // The camera must not move at all (the whole hill is framed), whatever the keys do.
 // It needs 40 samples in 6 s, which a loaded software-GL box can miss by one: allow one retry.
 const camScript = join(dirname(new URL(import.meta.url).pathname), "probe-camera-lock.mjs");
-let cam = spawnSync("node", [camScript, ID], { encoding: "utf8" });
+// A longer window (the round runs 36+ s) gives a loaded box its 40 samples.
+const camEnv = { ...process.env, CAM_PROBE_MS: process.env.CAM_PROBE_MS ?? "14000" };
+let cam = spawnSync("node", [camScript, ID], { encoding: "utf8", env: camEnv });
 process.stdout.write(cam.stdout);
 if (cam.status !== 0 && /only \d+ samples/.test(cam.stdout)) {
-  cam = spawnSync("node", [camScript, ID], { encoding: "utf8" });
+  cam = spawnSync("node", [camScript, ID], { encoding: "utf8", env: camEnv });
   process.stdout.write(cam.stdout);
 }
 if (cam.status !== 0) fail("camera lock probe failed");

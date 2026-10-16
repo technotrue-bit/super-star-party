@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { mulberry32 } from "../../core/rng";
+import { DIAL_TURNS_PER_SEC } from "../padKeys";
 import {
   CPU_EASE_MUL,
   CPU_IDEAL,
   CPU_SEGMENT,
   CPU_SEGMENT_DRAWS,
   HEAT_RATE,
+  TOP_TURNS,
   HEAT_TURNS,
   JAM_RELIEF,
   JAM_TIME,
@@ -308,31 +310,97 @@ describe("CPU", () => {
     expect(cpuCrank(brain, { heat: 0.4, jam: 0 }, 1.5, 1, rng)).toBeCloseTo(CPU_IDEAL, 9);
   });
 
-  it("tops the hill in 28 to 45 s at every level, and a sharper CPU is faster", () => {
-    const mean = (skill: number): { t: number; jams: number; top: number } => {
-      let t = 0;
-      let jams = 0;
-      let top = 0;
-      const N = 40;
+  it("paces: Normal is the keyboard dial's 1.5 turns/s, Relaxed about 1.3, Challenge about 1.75, all under the heat line", () => {
+    const N = 120;
+    const pace = (skill: number): number => {
+      let sum = 0;
       for (let seed = 1; seed <= N; seed++) {
         const r = run(seed, skill);
-        t += r.t;
-        jams += r.cart.jams;
-        if (atTop(r.cart)) top++;
+        sum += r.cart.angle / TURN / r.t;
       }
-      return { t: t / N, jams: jams / N, top: top / N };
+      return sum / N;
     };
-    const relaxed = mean(0.7);
-    const normal = mean(1);
-    const challenge = mean(1.3);
-    for (const m of [relaxed, normal, challenge]) {
-      expect(m.t).toBeGreaterThan(28);
-      expect(m.t).toBeLessThan(45);
-      expect(m.top).toBe(1);
+    const relaxed = pace(0.7);
+    const normal = pace(1);
+    const challenge = pace(1.3);
+    expect(Math.abs(normal - DIAL_TURNS_PER_SEC) / DIAL_TURNS_PER_SEC).toBeLessThan(0.05);
+    expect(relaxed).toBeGreaterThan(1.22);
+    expect(relaxed).toBeLessThan(1.4);
+    expect(challenge).toBeGreaterThan(1.65);
+    expect(challenge).toBeLessThan(1.9);
+    expect(relaxed).toBeLessThan(normal);
+    expect(normal).toBeLessThan(challenge);
+    expect(challenge).toBeLessThan(HEAT_TURNS - 0.3);
+  });
+
+  it("a CPU is never a mash: Challenge jams under half a time a round", () => {
+    let jams = 0;
+    const N = 120;
+    for (let seed = 1; seed <= N; seed++) jams += run(seed, 1.3).cart.jams;
+    expect(jams / N).toBeLessThan(0.5);
+  });
+});
+
+describe("the race", () => {
+  /** One race: a cart cranked at a steady `turns` per second against three CPUs. Returns the cart's place (0 best). */
+  function race(seed: number, turns: number, skill: number): number {
+    const rng = mulberry32(seed);
+    const me = newCart();
+    const cpus = [0, 1, 2].map(() => ({ cart: newCart(), brain: newCpuBrain() }));
+    let step = 0;
+    while (step * DT < TIME_CAP && !atTop(me) && !cpus.some((c) => atTop(c.cart))) {
+      const t = step * DT;
+      stepCart(me, turns * TURN * DT, DT);
+      for (const c of cpus) stepCart(c.cart, cpuCrank(c.brain, c.cart, t, skill, rng) * DT, DT);
+      step++;
     }
-    expect(challenge.t).toBeLessThan(normal.t);
-    expect(normal.t).toBeLessThan(relaxed.t);
-    // it can jam now and then, but a CPU is not a mash
-    expect(challenge.jams).toBeLessThan(0.5);
+    return cpus.filter((c) => c.cart.angle > me.angle).length;
+  }
+  const share = (turns: number, skill: number, ok: (place: number) => boolean): number => {
+    let n = 0;
+    const N = 100;
+    for (let seed = 1; seed <= N; seed++) if (ok(race(seed, turns, skill))) n++;
+    return n / N;
+  };
+
+  it("a steady 1.5 turns/s (the keyboard) beats Relaxed CPUs in most races", () => {
+    expect(share(DIAL_TURNS_PER_SEC, 0.7, (p) => p === 0)).toBeGreaterThan(0.6);
+  });
+
+  it("a steady 1.5 turns/s finishes in the top two against Normal CPUs in a fair share of races", () => {
+    expect(share(DIAL_TURNS_PER_SEC, 1, (p) => p <= 1)).toBeGreaterThanOrEqual(0.35);
+  });
+
+  it("a steady 2.15 turns/s (just under the heat line) wins against Challenge CPUs in most races", () => {
+    expect(share(2.15, 1.3, (p) => p === 0)).toBeGreaterThan(0.8);
+    // and builds no heat on the way
+    const c = newCart();
+    crankFor(c, 2.15, 30);
+    expect(c.jams).toBe(0);
+  });
+
+  it("nobody can top the hill in under 28 s: the heat line caps the pace", () => {
+    expect(TOP_TURNS / HEAT_TURNS).toBeGreaterThanOrEqual(28);
+    for (let seed = 1; seed <= 60; seed++) {
+      for (const skill of [0.7, 1, 1.3]) {
+        const rng = mulberry32(seed);
+        const brain = newCpuBrain();
+        const cart = newCart();
+        let step = 0;
+        while (step * DT < TIME_CAP && !atTop(cart)) {
+          stepCart(cart, cpuCrank(brain, cart, step * DT, skill, rng) * DT, DT);
+          step++;
+        }
+        if (atTop(cart)) expect(step * DT).toBeGreaterThanOrEqual(28);
+      }
+    }
+  });
+
+  it("a keyboard player at 1.5 turns/s tops the hill before the cap", () => {
+    expect(TOP_TURNS / DIAL_TURNS_PER_SEC).toBeLessThan(TIME_CAP);
+  });
+
+  it("the round, cap included, stays under a minute", () => {
+    expect(TIME_CAP).toBeLessThanOrEqual(60 - 3);
   });
 });

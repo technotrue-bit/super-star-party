@@ -3,14 +3,15 @@
  *
  * Four carts sit at the foot of four steep chain lifts in an abandoned gold mine.
  * Each seat has a crank: turn the wheel CLOCKWISE and your cart climbs the chain, a
- * straight line from the bottom to the summit hoop over 66 turns. Turn back and the
+ * straight line from the bottom to the summit hoop over 62 turns. Turn back and the
  * pawl just clicks. Crank faster than 2.2 turns a second and the crank heats up (the
  * thermometer by every winch); at full heat the chain JAMS for 1.5 s. The first cart
- * through the golden hoop wins; at 45 s the highest cart wins.
+ * through the golden hoop wins; at 50 s the highest cart wins.
  *
  * CPU seats (and your own seat under autoplay) crank in stretches of 0.6 s at
- * cpuDialRate(2 turns/s), now and then greedy, and ease off once the gauge has been
- * past 80% for a moment. Always 3 rng draws a stretch, at every skill.
+ * cpuDialRate (about 1.5 turns/s at Normal, 1.3 Relaxed, 1.75 Challenge: all under the
+ * heat line, and Normal is the keyboard dial's own pace), now and then greedy, and ease
+ * off once the gauge has been past 80% for a moment. Always 3 rng draws a stretch, at every skill.
  *
  * Determinism: the game runs in fixed 1/60 s steps with an integer step index. The
  * human's turn since the last frame is split evenly over the steps that frame runs;
@@ -69,7 +70,7 @@ const FIXED_DT = 1 / 60;
 const MAX_STEPS_PER_FRAME = 12;
 
 /** The framework force-finishes a round still running at this game time (s). */
-const TIME_LIMIT = 52;
+const TIME_LIMIT = 58;
 /** After the call, the winner cheers this long before the result shows (s). */
 const POST_FINISH = 2.6;
 /** Size of the riders in the carts. */
@@ -453,10 +454,10 @@ const crankCoaster: Minigame = {
   steer: false,
   rules: {
     format: "ffa",
-    length: "About 35 seconds",
-    win: "The first cart through the golden hoop wins; at 45 seconds the highest cart does",
-    touch: ["Circle your finger round the wheel, clockwise, to haul your cart up", "Turn faster than about 2 turns a second and the crank overheats and jams"],
-    keys: ["E or Right arrow: crank forward", "Q or Left arrow: turn back (does nothing), watch the heat"],
+    length: "About 40 seconds",
+    win: "The first cart through the golden hoop wins; at 50 seconds the highest cart does",
+    touch: ["Circle your finger round the wheel, clockwise, to haul your cart up", "Turn faster than about 2.2 turns a second and the crank overheats and jams"],
+    keys: ["E or Right arrow: crank forward (steady, it never overheats)", "Q or Left arrow: turn back, which does nothing"],
   },
 
   setup(ctx: MinigameContext) {

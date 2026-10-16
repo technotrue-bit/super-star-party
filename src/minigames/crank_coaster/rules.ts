@@ -27,10 +27,10 @@ type Rng = () => number;
 
 export const TURN = Math.PI * 2;
 /** Clockwise turns of the crank for the whole climb. */
-export const TOP_TURNS = 66;
+export const TOP_TURNS = 62;
 export const TOP_ANGLE = TOP_TURNS * TURN;
 /** The round is called by height at this game time if nobody has topped the hill (s). */
-export const TIME_CAP = 45;
+export const TIME_CAP = 50;
 
 /** Cranking faster than this builds heat (turns per second, and rad/s). */
 export const HEAT_TURNS = 2.2;
@@ -164,13 +164,28 @@ export function makeCoins(rng: Rng, seats: number): number[] {
 /*  CPU                                                                */
 /* ------------------------------------------------------------------ */
 
-/** What a CPU cranks at when it is in its stride (rad/s). */
-export const CPU_IDEAL = 2.0 * TURN;
+/**
+ * What a Normal CPU cranks at when it is in its stride (rad/s). Tuned so its mean pace
+ * (greedy stretches included) is the keyboard dial's 1.5 turns/s: a keyboard player can
+ * stay with Normal CPUs, and a touch player riding just under the heat line beats them.
+ */
+export const CPU_IDEAL = 1.395 * TURN;
+/**
+ * How much the ideal speed moves per unit of skill away from 1, sharper (Challenge) and
+ * duller (Relaxed), on top of cpuDialRate's own tilt. Mean paces: about 1.3, 1.5, 1.75 turns/s.
+ */
+export const CPU_SKILL_TILT_UP = 0.25;
+export const CPU_SKILL_TILT_DOWN = 0.06;
+
+/** The stride speed at this skill (rad/s). */
+export function cpuIdeal(skill: number): number {
+  return CPU_IDEAL * (1 + (skill >= 1 ? CPU_SKILL_TILT_UP : CPU_SKILL_TILT_DOWN) * (skill - 1));
+}
 /** A CPU picks a new crank speed this often (s). */
 export const CPU_SEGMENT = 0.6;
 /** A greedy segment (chance CPU_GREED * skill) cranks this much faster. */
 export const CPU_GREED = 0.15;
-export const CPU_GREED_MUL = 1.35;
+export const CPU_GREED_MUL = 1.5;
 /** Eases off above this heat, once it has noticed (CPU_REACT), and resumes below CPU_RESUME. */
 export const CPU_EASE_AT = 0.8;
 export const CPU_RESUME = 0.5;
@@ -200,7 +215,7 @@ export function newCpuBrain(): CpuBrain {
  */
 export function cpuCrank(brain: CpuBrain, cart: Pick<Cart, "heat" | "jam">, t: number, skill: number, rng: Rng): number {
   if (t >= brain.until) {
-    brain.rate = cpuDialRate(CPU_IDEAL, skill, rng);
+    brain.rate = cpuDialRate(cpuIdeal(skill), skill, rng);
     brain.greedy = rng() < CPU_GREED * skill;
     brain.until = t + CPU_SEGMENT;
   }
