@@ -68,6 +68,11 @@ const FLOATERS: Record<string, { always: boolean; height: number }> = {
   jack: { always: true, height: 0.3 },
 };
 const LIFT_RATE = 7; // how fast a floater rises / settles (1/s)
+
+/** True for characters that float instead of hopping (Wisp, Jack). */
+export function isFloater(key: string): boolean {
+  return key in FLOATERS;
+}
 const TRAIL_RATE = 5; // how fast Jack's pumpkin trail fades in / out (1/s)
 
 /**
@@ -288,16 +293,15 @@ export function createAnimController(
   };
 
   const glide = (): void => {
-    // Floaters sail from space to space: a soft bob per space, leaning into
-    // the travel, arms fluttering, no squash and stretch.
-    const cycle = settings.hopDuration;
-    const p = (t % cycle) / cycle;
-    pose.y = Math.sin(p * TAU) * 0.05;
-    pose.rx = 0.22;
-    pose.rz = Math.sin(t * 5) * 0.07;
-    const flap = Math.sin(p * TAU * 2) * 0.35;
-    arm('armL', -0.5 + flap, 0.5);
-    arm('armR', -0.5 - flap, -0.5);
+    // Floaters sail from space to space in one smooth drift: a slow swell
+    // that ignores the per-space step, a gentle lean into the travel, a lazy
+    // sway. No hop, no squash and stretch. Arms (Wisp's nubs) trail softly.
+    pose.y = Math.sin(t * 1.7) * 0.035;
+    pose.rx = 0.12;
+    pose.rz = Math.sin(t * 1.3) * 0.04;
+    const drift = Math.sin(t * 2.2) * 0.12;
+    arm('armL', 0.35 + drift, 0.4);
+    arm('armR', 0.35 - drift, -0.4);
   };
 
   const walk = (): void => {
