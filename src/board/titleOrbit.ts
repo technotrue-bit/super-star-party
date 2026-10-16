@@ -65,3 +65,13 @@ export function titleOrbitPose(
   out.look.set(cx, 0, cz);
   return out;
 }
+
+/**
+ * Near plane for the orbit camera: a quarter of the way to the board centre.
+ * Everything on the island is at least the board radius closer than the
+ * centre, which is far less than that, so nothing is clipped, and the depth
+ * buffer keeps enough precision to separate the lanes from the space disks.
+ */
+export function titleOrbitNear(pose: OrbitPose): number {
+  return Math.max(0.1, pose.pos.distanceTo(pose.look) * 0.25);
+}

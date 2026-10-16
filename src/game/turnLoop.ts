@@ -33,6 +33,7 @@ import { liveStayOf, branchOf, forkLabel, ahead } from "../board/boardData";
 import { activeBoard } from "../board/registry";
 import { stampLabel, jackpotWord } from "../board/boardText";
 import type { Character } from "../characters/characterFactory";
+import { isFloater, travelsSmoothly } from "../characters/anims";
 import type { HudHandle } from "../ui/hud";
 import type { ButtonHandle } from "../ui/button";
 import type { PopupHandle } from "../ui/popup";
@@ -987,7 +988,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     const a = board.spacePos(S.hopFrom);
     const b = board.spacePos(S.hopTo);
     ch.setFacing(Math.atan2(b.x - a.x, b.z - a.z));
-    audio.sfx.play("hop", { volume: 0.7 });
+    // Floaters drift rather than hop: a lighter, higher step. Pip's cartwheel
+    // swishes round once per space.
+    if (ch.kind.key === "pip") audio.sfx.play("whoosh", { volume: 0.28, pitch: 1.25 });
+    else if (isFloater(ch.kind.key)) audio.sfx.play("hop", { volume: 0.3, pitch: 1.35 });
+    else audio.sfx.play("hop", { volume: 0.7 });
     bus.emit("player:move", { player: pid, from: S.hopFrom, to: S.hopTo });
     const sc = activeBoard().shortcut;
     if (sc && S.hopTo === sc.to && wrap(S.hopFrom + 1) === sc.from) {
@@ -2862,7 +2867,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         if (!ch) break;
         S.hopT += dt;
         const p = Math.min(1, S.hopT / settings.hopDuration);
-        const e = ease.outCubic(p);
+        // Floaters (Jack, Wisp) and Pip's cartwheel keep a steady speed so the
+        // spaces chain into one smooth motion; hoppers surge and settle on each space.
+        const e = travelsSmoothly(ch.kind.key) ? p : ease.outCubic(p);
         const a = board.spaceWorldPos(S.hopFrom);
         const b = board.spaceWorldPos(S.hopTo);
         const off = PLAYER_OFFSETS[pid] ?? [0, 0];
