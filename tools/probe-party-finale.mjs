@@ -42,6 +42,8 @@ while (Date.now() - t0 < 240000) {
     const btns = Array.from(document.querySelectorAll("button")).filter((b) => b.offsetParent).map((b) => b.textContent?.trim()).filter(Boolean);
     return { screen: window.__SSP__.state().screen, txt: txt.slice(0, 220), btns };
   });
+  // The START MINI GAME card waits for a click even under autoplay (as in smoke-play).
+  await p.evaluate(() => document.querySelector("#mg-start-btn")?.click());
   if (s.screen === "finale" && !finaleAt) finaleAt = Date.now();
   if (/THAT.S THE GAME/.test(s.txt) && !seen.includes("game-shot")) { seen.push("game-shot"); await p.screenshot({ path: `${OUT}/thats-the-game.png` }); }
   const key = s.screen + s.txt.slice(0, 80);
