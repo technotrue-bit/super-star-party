@@ -71,6 +71,7 @@ export const PACK_OF_MINIGAME: Record<string, MinigamePackId> = {
   slingshot_summit: "midway",
   pie_flick: "sideshow",
   row_rumble: "bigtop",
+  crank_coaster: "midway",
 };
 
 export const LS_MINIGAME_PACKS = "ssp.minigamePacks";
