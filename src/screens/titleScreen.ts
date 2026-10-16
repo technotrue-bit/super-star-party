@@ -21,7 +21,7 @@ import { world } from "../main";
 import { screens } from "./screenManager";
 import { buildBoardScene, type BoardScene } from "../board/boardScene";
 import { fizzyFairground } from "../board/boardData";
-import { titleOrbitPose, type OrbitPose } from "../board/titleOrbit";
+import { titleOrbitNear, titleOrbitPose, type OrbitPose } from "../board/titleOrbit";
 import { getMusicGain, setMusicGain, getSfxGain, setSfxGain } from "../ui/sound";
 import { mountPackPicker } from "../ui/packPicker";
 import { setOnlineMatch } from "../net/mode";
@@ -237,6 +237,8 @@ const LS_SPEED = "ssp.speed";
 interface TitleState {
   _board?: BoardScene;
   _orbit?: OrbitPose;
+  /** Camera near plane before the title raised it for the far orbit. */
+  _savedNear?: number;
   _confettiTimer?: number;
   _t?: number;
   _onKeyDown?: (e: KeyboardEvent) => void;
@@ -283,6 +285,7 @@ const titleImpl: TitleState & Screen = {
     this._board = buildBoardScene(fizzyFairground);
     const cam = world.camera!;
     cam.fov = 45;
+    this._savedNear = cam.near;
     cam.updateProjectionMatrix();
     this._orbit = undefined;
     this._placeCamera();
@@ -454,6 +457,15 @@ const titleImpl: TitleState & Screen = {
     this._orbit = titleOrbitPose(fizzyFairground, this._t ?? 0, cam.aspect, cam.fov, this._orbit);
     cam.position.copy(this._orbit.pos);
     cam.lookAt(this._orbit.look);
+    // The orbit sits 100+ units out. With the game's close-up near plane
+    // (0.1) a 24-bit depth buffer can't tell the sandy lanes from the space
+    // disks a few hundredths above them, so the path bleeds through the disks.
+    // Nothing is closer than a quarter of that distance, so pull near out.
+    const near = titleOrbitNear(this._orbit);
+    if (Math.abs(cam.near - near) > 1e-3) {
+      cam.near = near;
+      cam.updateProjectionMatrix();
+    }
   },
 
   /* ---- highlight state ---- */
@@ -650,7 +662,11 @@ const titleImpl: TitleState & Screen = {
     if (cam) {
       cam.position.set(0, 2.6, 7.5);
       cam.lookAt(0, 1, 0);
+      // Give the close-up screens back their near plane.
+      cam.near = this._savedNear ?? 0.1;
+      cam.updateProjectionMatrix();
     }
+    this._savedNear = undefined;
     this._stage?.remove();
     this._stage = undefined;
     this._buttons = undefined;

@@ -106,16 +106,21 @@ export function createMapLook(opts: {
     pos: new THREE.Vector3(),
     quat: new THREE.Quaternion(),
     fov: 45,
+    near: 0.1,
   };
 
   const apply = (): void => {
     const cam = opts.camera;
     const { w, h } = viewportSize();
     const aspect = w / Math.max(1, h);
+    const dist = span * (aspect < 1 ? 1.55 : 1.15);
     cam.fov = 48;
     cam.aspect = aspect;
+    // Pulled far back, the 0.1 close-up near plane leaves too little depth
+    // precision to keep the sandy lanes from bleeding through the space
+    // disks; nothing on the board is anywhere near a fifth of the way out.
+    cam.near = Math.max(0.1, dist * 0.2);
     cam.updateProjectionMatrix();
-    const dist = span * (aspect < 1 ? 1.55 : 1.15);
     cam.position.set(cx + panX, dist * 0.92, cz + dist * 0.42 + panZ);
     cam.lookAt(cx + panX, 0, cz + panZ);
   };
@@ -164,6 +169,7 @@ export function createMapLook(opts: {
       saved.pos.copy(opts.camera.position);
       saved.quat.copy(opts.camera.quaternion);
       saved.fov = opts.camera.fov;
+      saved.near = opts.camera.near;
       root.style.display = "block";
       document.body.classList.add("ssp-maplook-on");
       apply();
@@ -178,6 +184,7 @@ export function createMapLook(opts: {
       opts.camera.position.copy(saved.pos);
       opts.camera.quaternion.copy(saved.quat);
       opts.camera.fov = saved.fov;
+      opts.camera.near = saved.near;
       opts.camera.updateProjectionMatrix();
       opts.onChange?.(false);
     },
