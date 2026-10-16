@@ -160,8 +160,10 @@ async function forceRoll(page, seat, space, face) {
 }
 /** Two dice, forced one at a time: rollDice(a), ROLL, wait for ROLL to come back, rollDice(b), ROLL. */
 async function forceRoll2(page, seat, space, a, b) {
+  // Up to ~20 s per die: on a slow runner the between-rolls pause can outlast 6 s, and the die then lands after the
+  // probe has already given up on it (a downtown I-H-DOUBLE run rolled [3,2] and landed right, yet failed on this).
   const press = async () => {
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 130; i++) {
       await page.evaluate(() => document.querySelector(".ssp-roll-wrap button")?.click());
       await sleep(150);
       if (await page.evaluate(() => window.__forcedDice === undefined)) return true;
@@ -630,7 +632,7 @@ function itemScenarios(board, G, B) {
     const ld = (await last(page)).ld;
     const cd = countdownIssues(frames, expectedTotal);
     check(tag(name), ok && barLeft === 0 && lands.length === 1 && lands[0] === expected && cd.length === 0 && (dice.length !== 2 || (ld.length === 2 && sum(ld) === expectedTotal)),
-      `bar buttons after click ${barLeft}, start ${start} dice [${dice}] lastDice [${ld}] lands [${lands}] expected ${expected} ${cd.join("; ")}`);
+      `${ok ? "" : "forced roll not taken in time, "}bar buttons after click ${barLeft}, start ${start} dice [${dice}] lastDice [${ld}] lands [${lands}] expected ${expected} ${cd.join("; ")}`);
   };
 
   /** CPU seat with only `key` in its bag: observe the whole turn. */
