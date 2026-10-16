@@ -158,8 +158,9 @@ function boot(): void {
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
-  // Hero face avatars for the HUD and cards, drawn in idle moments.
-  warmPortraits();
+  // Hero face avatars for the HUD and cards: drawn by this renderer into an
+  // offscreen target, one per idle moment.
+  warmPortraits(renderer);
 
   console.log(`[SSP] SUPER STAR PARTY booted — seed ${seed}, screen ${screen}`);
 }
