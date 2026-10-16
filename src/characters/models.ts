@@ -412,8 +412,8 @@ export function buildModel(kind: CharacterKind): BuiltModel {
     }
     case 'jack': {
       // Cute pumpkin: one big ribbed gourd that is head and body at once,
-      // a curly stem with a leaf on top, leaf-green mitts, and no legs. It
-      // lifts off and floats whenever it moves (anims.ts), trailing sparkles.
+      // a curly stem with a leaf on top, and no arms or legs. It always
+      // floats (anims.ts), and a trail of mini pumpkins follows it on the move.
       const pumpkin = new THREE.Group();
       pumpkin.position.set(0, 0.46, 0);
       const pumpkinGeo = new THREE.SphereGeometry(0.5, 64, 32);
@@ -455,24 +455,30 @@ export function buildModel(kind: CharacterKind): BuiltModel {
       inkClone(lm, stem);
       pumpkin.add(stem);
       parts.antenna = stem;
-      parts.armL = buildArm('L', [-0.55, 0.5, 0.02]);
-      parts.armR = buildArm('R', [0.55, 0.5, 0.02]);
-      parts.armL.scale.setScalar(0.8);
-      parts.armR.scale.setScalar(0.8);
-      // Float sparkles: little gold stars circling under Jack in the air.
-      const sparkles = new THREE.Group();
-      sparkles.name = 'sparkles';
-      const sparkMat = new THREE.MeshBasicMaterial({ color: palette.sun, transparent: true, opacity: 0.9 });
-      const sparkGeo = new THREE.OctahedronGeometry(0.055, 0);
-      for (let k = 0; k < 4; k++) {
-        const a = (k / 4) * Math.PI * 2;
-        const sp = new THREE.Mesh(sparkGeo, sparkMat);
-        sp.position.set(Math.cos(a) * 0.36, 0.02 + (k % 2) * 0.05, Math.sin(a) * 0.36);
-        sparkles.add(sp);
+      // Pumpkin trail: three mini pumpkins, each smaller, floating in a line
+      // behind Jack while he travels. anims.ts bobs them and fades them in.
+      const trail = new THREE.Group();
+      trail.name = 'trail';
+      const miniStemGeo = new THREE.CylinderGeometry(0.05, 0.07, 0.16, 6);
+      const TRAIL = [
+        { s: 0.34, z: -0.86, y: 0.42 },
+        { s: 0.25, z: -1.26, y: 0.48 },
+        { s: 0.18, z: -1.58, y: 0.54 },
+      ];
+      for (const m of TRAIL) {
+        const mini = new THREE.Group();
+        mini.position.set(0, m.y, m.z);
+        mini.scale.setScalar(m.s);
+        mini.userData.baseY = m.y;
+        const mm = addMesh(mini, pumpkinGeo, bodyMat, [0, 0, 0]);
+        inkClone(mm, mini);
+        const ms = addMesh(mini, miniStemGeo, stemMat, [0, 0.46, 0], new THREE.Euler(0, 0, -0.25));
+        inkClone(ms, mini);
+        trail.add(mini);
       }
-      sparkles.visible = false;
-      group.add(sparkles);
-      parts.sparkles = sparkles;
+      trail.visible = false;
+      group.add(trail);
+      parts.trail = trail;
       break;
     }
     case 'wisp': {

@@ -61,13 +61,14 @@ const SAD_DROOP = 0.32;
 const SAD_LIMP = 0.35;
 
 // ---- floaters ----
-// Wisp (ghost) always hovers; Jack (pumpkin) sits on the ground and lifts
-// off to float whenever it moves. Neither has legs: they glide, not hop.
+// Wisp (ghost) and Jack (floating pumpkin) always hover. Neither has legs:
+// they glide, not hop.
 const FLOATERS: Record<string, { always: boolean; height: number }> = {
   wisp: { always: true, height: 0.22 },
-  jack: { always: false, height: 0.34 },
+  jack: { always: true, height: 0.3 },
 };
 const LIFT_RATE = 7; // how fast a floater rises / settles (1/s)
+const TRAIL_RATE = 5; // how fast Jack's pumpkin trail fades in / out (1/s)
 
 /**
  * Pose for one frame, relative to the rig's rest pose. Built fresh each frame
@@ -170,7 +171,8 @@ export function createAnimController(
 
   const floater = FLOATERS[kind.key];
   let lift = floater?.always ? 1 : 0; // 0 = resting on the ground, 1 = fully afloat
-  const sparkles = parts.sparkles;
+  const trail = parts.trail;
+  let trailOn = 0; // 0 = hidden, 1 = the mini pumpkins are fully out
 
   const set = (name: AnimName): void => {
     if (currentName === name) return; // keep phase continuity for repeats
@@ -496,8 +498,7 @@ export function createAnimController(
         break;
     }
 
-    // Floaters: rise to hover height (always for Wisp, while moving for
-    // Jack) and settle back down gently.
+    // Floaters: rise to hover height and settle back down gently.
     if (floater) {
       const target = floater.always || currentName === 'walk' || currentName === 'cheer' ? 1 : 0;
       lift += (target - lift) * (1 - Math.exp(-dt * LIFT_RATE));
@@ -510,11 +511,22 @@ export function createAnimController(
         pose.sz *= 1 - rising * 0.5;
       }
     }
-    if (sparkles) {
-      sparkles.visible = lift > 0.08;
-      sparkles.rotation.y = t * 3;
-      sparkles.scale.setScalar(Math.max(0.001, lift));
-      sparkles.position.y = -lift * 0.04;
+    // Jack's pumpkin trail: out while he travels, tucked away at rest. Each
+    // mini pumpkin bobs and sways a beat behind the one in front of it.
+    if (trail) {
+      const want = currentName === 'walk' ? 1 : 0;
+      trailOn += (want - trailOn) * (1 - Math.exp(-dt * TRAIL_RATE));
+      trail.visible = trailOn > 0.03;
+      if (trail.visible) {
+        trail.scale.setScalar(Math.max(0.001, trailOn));
+        trail.children.forEach((mini, k) => {
+          const ph = t * 4.2 - (k + 1) * 0.9;
+          mini.position.y = (mini.userData.baseY as number) + Math.sin(ph) * 0.07;
+          mini.position.x = Math.sin(ph * 0.5) * 0.08 * (k + 1);
+          mini.rotation.y = Math.sin(ph * 0.7) * 0.4;
+          mini.rotation.z = Math.sin(ph) * 0.15;
+        });
+      }
     }
 
     // Expressions owned by the idle/walk states: blink now and then.
