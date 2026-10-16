@@ -135,7 +135,9 @@ async function waitHumanDice(page, ms = 150000) {
     () => {
       const e = window.__LAST;
       const b = document.querySelector(".ssp-roll-wrap button");
-      return !!e && e.scr === "board" && e.ph === "dice" && (e.cur === 0 || e.cur === 2) && !!b && !b.disabled && getComputedStyle(b).pointerEvents !== "none" &&
+      // match.phase is already "dice" during the turn's announce beat, when the ROLL button is only display:none.
+      // armDice() builds the item bar and shows ROLL together, so "shown" is the game accepting input.
+      return !!e && e.scr === "board" && e.ph === "dice" && (e.cur === 0 || e.cur === 2) && !!b && b.getClientRects().length > 0 && !b.disabled && getComputedStyle(b).pointerEvents !== "none" &&
         parseFloat(getComputedStyle(b.closest(".ssp-roll-wrap")).opacity) > 0.5 && !document.querySelector(".ssp-popup");
     },
     null,
@@ -195,13 +197,24 @@ async function grantWait(page, tg, items, key, ms = 120000) {
     const ee = await last(page);
     if (ee && (ee.scr !== "board" || ee.ph === "minigame")) until = Math.max(until, Date.now() + 15000);
     ok = await page.waitForFunction(
-      ([t, k]) => !!window.__GRANTED[t] && !!document.querySelector(`.ssp-item-bar [data-item-use="${k}"]`) && !document.querySelector(".ssp-popup"),
+      ([t, k]) => {
+        // The item bar is not cleared when ROLL is pressed, so a button alone can be left over from a turn that has
+        // already rolled. It counts only on the granted seat's own pre-roll: that seat is up and ROLL is shown.
+        const g = window.__GRANTED[t];
+        const e = window.__LAST;
+        const roll = document.querySelector(".ssp-roll-wrap button");
+        return !!g && !!e && e.scr === "board" && e.ph === "dice" && e.cur === g.cur && !!roll && roll.getClientRects().length > 0 && !roll.disabled &&
+          !!document.querySelector(`.ssp-item-bar [data-item-use="${k}"]`) && !document.querySelector(".ssp-popup");
+      },
       [tg, key], { timeout: 5000, polling: 60 },
     ).then(() => true, () => false);
     if (!ok && !(await page.evaluate((t) => !!window.__GRANTED[t], tg)) && (await last(page))?.scr === "board") {
       // Still queued: a human turn must have started before the push. Spend it, the grant lands on the next one.
       const seat = await waitHumanDice(page, 1500).catch(() => -1);
-      if (seat >= 0) {
+      // Re-check after the wait: the turn the grant is meant for may have started while we waited. Its ROLL is shown only
+      // once the item bar is built (armDice), by which point the sampler has applied the grant at that turn:start.
+      // Spending it here would burn the very turn the item was granted for.
+      if (seat >= 0 && !(await page.evaluate((t) => !!window.__GRANTED[t], tg))) {
         const sp = await page.evaluate(() => { const b = window.__SSP__.board(); return b.next.findIndex((n, i) => n.length === 1 && b.next[n[0]].length === 1 && i !== b.startIndex); });
         await forceRoll(page, seat, sp, 1);
         await driveWalk(page, seat, ["STAY"], null, 15000);
