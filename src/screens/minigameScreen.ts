@@ -1196,7 +1196,11 @@ const minigameScreenImpl: MgScreenState & Screen = {
       screens.goto(homeScreen());
       return;
     }
-    if (isContactMinigame(entry.id)) void loadRapier();
+    if (isContactMinigame(entry.id)) {
+      void loadRapier().catch(() => {
+        /* loadRapier already warned; the minigame keeps its own collision */
+      });
+    }
 
     this._active = true;
     mgProbeState.id = entry.id;
