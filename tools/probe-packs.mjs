@@ -64,7 +64,7 @@ if (!String(afterReload.packs).includes("midway") || String(afterReload.packs).i
 }
 
 console.log("2. character select layout");
-await page.getByRole("button", { name: /^play/i }).click();
+await page.getByRole("button", { name: /^play — start/i }).click();
 await page.waitForFunction(() => window.__SSP__.state().screen === "select");
 await page.waitForSelector("[data-ssp-pack-picker]");
 const startBox = await page.getByRole("button", { name: /start/i }).boundingBox();
@@ -81,6 +81,28 @@ if (!startWide || startWide.y + startWide.height > 932) fail("START is off the 4
 
 console.log("3. seeded exclusion");
 await page.setViewportSize({ width: 390, height: 844 });
+const expectPack = {
+  bumper_balls: "midway",
+  coin_cannon: "midway",
+  push_of_war: "midway",
+  drum_solo: "sideshow",
+  pipe_puzzle: "sideshow",
+  memory_match: "sideshow",
+  cake_dash: "bigtop",
+  balloon_pop: "bigtop",
+  coin_grab: "bigtop",
+};
+// Minigames register lazily after each reload; sample only once these nine are in.
+await page
+  .waitForFunction(
+    (ids) => {
+      const have = new Set(window.__SSP__.state().minigameRules.catalog.map((c) => c.id));
+      return ids.every((id) => have.has(id));
+    },
+    Object.keys(expectPack),
+    { timeout: 20000 },
+  )
+  .catch(() => {});
 const exclusion = await page.evaluate(() => {
   const ssp = window.__SSP__;
   ssp.setMinigamePacks(["midway", "bigtop"]);
@@ -100,17 +122,6 @@ const exclusion = await page.evaluate(() => {
 console.log("   player packs", JSON.stringify(exclusion.packs));
 console.log("   picks", exclusion.picks.map((p) => p.id).join(", "));
 const catalogPack = Object.fromEntries(exclusion.catalog.map((c) => [c.id, c.pack]));
-const expectPack = {
-  bumper_balls: "midway",
-  coin_cannon: "midway",
-  push_of_war: "midway",
-  drum_solo: "sideshow",
-  pipe_puzzle: "sideshow",
-  memory_match: "sideshow",
-  cake_dash: "bigtop",
-  balloon_pop: "bigtop",
-  coin_grab: "bigtop",
-};
 for (const [id, pack] of Object.entries(expectPack)) {
   if (catalogPack[id] !== pack) fail(`${id} catalog pack is ${catalogPack[id]} wanted ${pack}`);
 }
@@ -148,7 +159,7 @@ await page.evaluate(() => {
   window.__SSP__.setMinigameCoinMultiplier(4);
   window.__SSP__.setHumanPack("midway");
 });
-await page.getByRole("button", { name: /^play/i }).click();
+await page.getByRole("button", { name: /^play — start/i }).click();
 await page.waitForFunction(() => window.__SSP__.state().screen === "select");
 await page.getByRole("button", { name: /start/i }).click();
 await page.waitForFunction(() => window.__SSP__.state().screen === "board", null, { timeout: 15000 });
@@ -166,8 +177,10 @@ while (Date.now() - t0 < 90000) {
   await page.waitForTimeout(250);
 }
 console.log("   preview:", preview ? preview.replace(/\s+/g, " ").slice(0, 220) : "(none)");
+const prize = preview?.replace(/\s+/g, " ").match(/1st \d+ · 2nd \d+ · 3rd \d+ coins/)?.[0];
+console.log("   prize:", prize ?? "(none)");
 if (!preview) fail("never reached a minigame preview");
-else if (!preview.includes("Winner takes 160 coins")) fail("preview did not show the scaled payout");
+else if (prize !== "1st 160 · 2nd 96 · 3rd 48 coins") fail("preview did not show the scaled payout: " + (prize ?? "(no prize line)"));
 else {
   await page.screenshot({ path: `${OUT}/04-preview.png` });
   await page.locator("#mg-start-btn").click();
