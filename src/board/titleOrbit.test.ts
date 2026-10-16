@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fizzyFairground } from "./boardData";
-import { titleOrbitPose, TITLE_ORBIT_PERIOD } from "./titleOrbit";
+import { titleOrbitNear, titleOrbitPose, TITLE_ORBIT_PERIOD } from "./titleOrbit";
 
 describe("titleOrbitPose", () => {
   const center = (() => {
@@ -21,6 +21,21 @@ describe("titleOrbitPose", () => {
       const p = titleOrbitPose(fizzyFairground, 13, aspect, 45);
       const elev = Math.atan2(p.pos.y, Math.hypot(p.pos.x - center.x, p.pos.z - center.z)) * (180 / Math.PI);
       expect(elev).toBeGreaterThanOrEqual(60);
+    }
+  });
+
+  it("pulls the near plane out for depth precision without clipping the island", () => {
+    for (const aspect of [1280 / 800, 390 / 844]) {
+      const p = titleOrbitPose(fizzyFairground, 21, aspect, 45);
+      const near = titleOrbitNear(p);
+      // Far more precise than the 0.1 close-up near plane...
+      expect(near).toBeGreaterThan(5);
+      // ...and nothing on the board (spaces plus ~10u of tall scenery) gets near it.
+      let closest = Infinity;
+      for (const s of fizzyFairground.spaces) {
+        closest = Math.min(closest, Math.hypot(p.pos.x - s.x, p.pos.y - 10, p.pos.z - s.y));
+      }
+      expect(near).toBeLessThan(closest * 0.5);
     }
   });
 

@@ -101,7 +101,16 @@ async function holdCases(page, cdp) {
   if (await visible(page, ".ssp-stick")) return "stick is showing on a hold pad without steer";
   await send(cdp, "touchStart", [P(1, b.x, b.y)], null);
   await page.waitForTimeout(400);
-  const ring1 = await page.evaluate(() => Number(document.querySelector(".ssp-hold__fill")?.getAttribute("stroke-dashoffset") ?? "NaN"));
+  // Read the ring and how long the finger has really been down in the same
+  // instant: on a slow runner the hold can already be past holdMax here, and
+  // a full ring is then correct, not a failure.
+  const ring1 = await page.evaluate(() => {
+    const down = (window.__ptr ?? []).filter((e) => e.type === "pointerdown").at(-1);
+    return {
+      offset: Number(document.querySelector(".ssp-hold__fill")?.getAttribute("stroke-dashoffset") ?? "NaN"),
+      held: down ? (performance.now() - down.t) / 1000 : null,
+    };
+  });
   await page.waitForTimeout(300);
   await send(cdp, "touchEnd", [P(1, b.x, b.y)], null);
   await page.waitForTimeout(200);
@@ -114,7 +123,14 @@ async function holdCases(page, cdp) {
   const real = (up.t - down.t) / 1000;
   // The hold reports the browser's own press-to-release time, capped at holdMax.
   if (Math.abs(Number(m[1]) - Math.min(real, 1.5)) > 0.1) return `held ${real.toFixed(2)} s but hold reported ${m[1]}`;
-  if (!(ring1 > 0 && ring1 < 100)) return `charge ring did not fill while held (dashoffset ${ring1})`;
+  if (!(ring1.offset < 100)) return `charge ring did not fill while held (dashoffset ${ring1.offset})`;
+  if (ring1.held !== null) {
+    // The ring paints (1 - held/holdMax) * 100 each frame; allow a few frames of lag.
+    const want = (1 - Math.min(1, ring1.held / 1.5)) * 100;
+    if (Math.abs(ring1.offset - want) > 20) {
+      return `charge ring at ${ring1.offset.toFixed(0)} after ${ring1.held.toFixed(2)} s held, want about ${want.toFixed(0)}`;
+    }
+  }
   const ring2 = await page.evaluate(() => Number(document.querySelector(".ssp-hold__fill")?.getAttribute("stroke-dashoffset") ?? "NaN"));
   if (!(ring2 >= 99)) return `charge ring did not empty on release (dashoffset ${ring2})`;
   // A long hold is capped at holdMax (1.5 s).
