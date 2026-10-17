@@ -9,6 +9,8 @@ const STEP_127 = 60 / 127.2 / 4;
 
 /** The simulated audio time of the plan() call in progress; anchors read it as audioNow(). */
 let simNow = 0;
+/** The `now` of the plan() call that returned each collected step. */
+const plannedAt = new WeakMap<PlannedStep, number>();
 
 /** Call plan(now) for now = from, from + dt, ..., to and concatenate the steps. */
 function collect(clock: StepClock, from: number, to: number, dt = 0.025): PlannedStep[] {
@@ -16,9 +18,34 @@ function collect(clock: StepClock, from: number, to: number, dt = 0.025): Planne
   const n = Math.round((to - from) / dt);
   for (let i = 0; i <= n; i++) {
     simNow = from + i * dt;
-    out.push(...clock.plan(simNow));
+    for (const s of clock.plan(simNow)) {
+      plannedAt.set(s, simNow);
+      out.push(s);
+    }
   }
   return out;
+}
+
+/** No step starts before the plan() call that returned it, and t never goes backwards. */
+function expectNoPastInOrder(steps: PlannedStep[]): void {
+  steps.forEach((s, i) => {
+    expect(s.t).toBeGreaterThanOrEqual(plannedAt.get(s) as number);
+    if (i > 0) expect(s.t).toBeGreaterThanOrEqual(steps[i - 1].t);
+  });
+}
+
+/**
+ * An anchored start like Drum Solo's: pickup from step 8 at t0 0, so main bar k lies on the
+ * grid at 1.0 + 2k. The game clock runs at 1x and reads audio time plus `ahead(audio time)`.
+ */
+function anchoredClock(ahead: (a: number) => number, over: Partial<StepClockOpts> = {}): StepClock {
+  const clock = make({ pickupStartStep: 8, ...over });
+  clock.setAnchor({ beat0: 1.0, barSec: 2.0, speed: 1, audioNow: () => simNow, gameNow: () => simNow + ahead(simNow) });
+  return clock;
+}
+
+function mainStep(steps: PlannedStep[], step: number, bar: number): PlannedStep | undefined {
+  return steps.find((s) => !s.pickup && s.step === step && s.bar === bar);
 }
 
 /** 120 BPM, straight, from t 0, four looping bars (plus any overrides). */
@@ -153,6 +180,54 @@ describe("StepClock", () => {
       expect(afterStall).toBeGreaterThan(0);
       expect(clock.barTimes()).toEqual(bars.slice(-8).map((s) => s.t)); // recorded after correction
     }
+  });
+
+  it("an anchor after a 2 s gap skips whole bars, never planning in the past", () => {
+    const clock = anchoredClock(() => 0, { hasFill: true }); // the game clock kept running through the gap
+    const before = collect(clock, 0, 1.0); // the pickup and main step 0 (t 1.0)
+    clock.queueChange({ transpose: 1, fill: true }); // its fill bar (bar 1) will be skipped
+    const steps = [...before, ...collect(clock, 3.5, 3.5), ...collect(clock, 3.525, 9)];
+    expectNoPastInOrder(steps);
+    const main = steps.filter((s) => !s.pickup);
+    // The resync resumes bar 0 at step 1 (t 3.53); steps 2-15 follow, up to t 5.28.
+    expect(main.slice(0, 16).map((s) => s.step)).toEqual([...Array(16).keys()]);
+    expect(main[1].t).toBeCloseTo(3.53, 12);
+    for (const s of main.slice(0, 16)) expect(s).toMatchObject({ bar: 0, transpose: 0, fill: false });
+    // Bars 1 and 2 (grid 3.0 and 5.0) are behind plan(5.175) + 0.03 and are skipped whole;
+    // bar 3 starts on its grid time 7.0 with the change applied and its fill dropped.
+    expect(main[16]).toMatchObject({ step: 48, bar: 3, transpose: 1, fill: false });
+    expect(main[16].t).toBeCloseTo(7.0, 9);
+    expect(steps.some((s) => s.bar === 1 || s.bar === 2 || s.fill)).toBe(false);
+    const times = clock.barTimes();
+    expect(times).toHaveLength(3); // bar lines 0, 3 and 4: skipped bars leave no trace
+    expect(times[0]).toBe(1.0);
+    expect(times[1]).toBeCloseTo(7.0, 9);
+    expect(times[2]).toBeCloseTo(9.0, 9);
+  });
+
+  it("an anchor that moves a bar earlier starts it at the target, never before the previous step", () => {
+    // The game clock jumps ahead at audio 4. Bar line 2 (grid 5.0) is first looked at by
+    // plan(4.775), just after main step 31 (t 4.875) was returned.
+    for (const [ahead, start] of [
+      [0.1, 4.9], // target 4.9 is after the previous step: the bar starts at the target
+      [0.15, 4.875], // target 4.85 is before the previous step: the bar starts with it
+    ]) {
+      const steps = collect(anchoredClock((a) => (a < 4 ? 0 : ahead)), 0, 7);
+      expectNoPastInOrder(steps);
+      expect(mainStep(steps, 31, 1)?.t).toBe(4.875);
+      expect(mainStep(steps, 32, 2)?.t).toBeCloseTo(start, 9);
+      expect(mainStep(steps, 33, 2)?.t).toBeCloseTo(start + STEP, 9); // the bar's steps follow its new start
+    }
+  });
+
+  it("a non-looping anchored clock ends when it skips past its last bar", () => {
+    const clock = anchoredClock(() => 0, { totalSteps: 32, loop: false });
+    const steps = [...collect(clock, 0, 1.0), ...collect(clock, 3.5, 3.5), ...collect(clock, 3.525, 6)];
+    expectNoPastInOrder(steps);
+    // Bar 0 resumes after the gap; bar 1 (grid 3.0) is behind plan(5.175) + 0.03, and it is the last.
+    expect(steps.filter((s) => !s.pickup).map((s) => s.step)).toEqual([...Array(16).keys()]);
+    expect(clock.ended).toBe(true);
+    expect(clock.plan(6.025)).toEqual([]);
   });
 
   it("barTimes keeps the last 8 bar lines", () => {

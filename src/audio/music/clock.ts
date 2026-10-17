@@ -12,7 +12,9 @@
  * - If plan() calls stall (hidden tab), the next step re-grids to
  *   now + 0.03 instead of replaying a backlog.
  * - With an anchor, each main bar line is moved onto the game clock's grid
- *   when it has drifted more than 5 ms. Steps inside a bar never move.
+ *   when it has drifted more than 5 ms. Steps inside a bar never move. Bars
+ *   whose grid time is already behind now + 0.03 are skipped whole, and a
+ *   bar line never starts before the step planned ahead of it.
  */
 
 export interface PlannedStep {
@@ -84,6 +86,8 @@ export class StepClock {
   private pending: ClockChange | null = null;
   /** The current bar is a fill; `pending` applies at the next bar line. */
   private filling = false;
+  /** Start time of the last step returned. */
+  private prevT = -Infinity;
   private anchor: ClockAnchor | null = null;
   private lastNow: number | null = null;
   private bars: number[] = [];
@@ -151,8 +155,8 @@ export class StepClock {
     const horizon = now + lookahead;
     while (!this._ended) {
       const barLine = !this.inPickup && this.step % STEPS_PER_BAR === 0;
-      const t = barLine ? this.anchoredTime(this.nextT) : this.nextT;
-      if (t >= horizon) break;
+      const t = barLine && this.anchor ? this.anchoredTime(this.anchor, now) : this.nextT;
+      if (this._ended || t >= horizon) break; // ended: the anchor skipped past the last bar
       this.nextT = t;
       if (barLine) this.enterBar(t);
       const stepDur = 60 / this._bpm / 4;
@@ -167,6 +171,7 @@ export class StepClock {
         fill: this.filling,
         pickup: this.inPickup,
       });
+      this.prevT = t;
       this.nextT += stepDur;
       this.advance();
     }
@@ -178,12 +183,36 @@ export class StepClock {
     return this.bars.slice();
   }
 
-  /** Where the next main bar line starts: on the anchor's grid if it has drifted. */
-  private anchoredTime(t: number): number {
-    const a = this.anchor;
-    if (!a) return t;
-    const target = a.audioNow() + (a.beat0 + this.bar * a.barSec - a.gameNow()) / a.speed;
-    return Math.abs(target - t) > ANCHOR_TOLERANCE ? target : t;
+  /**
+   * Where the next main bar line starts: on the anchor's grid if it has
+   * drifted. Bars already behind now + 0.03 are skipped whole; the result is
+   * never before the previous step. Ends a non-looping track that runs out.
+   */
+  private anchoredTime(a: ClockAnchor, now: number): number {
+    const target = () => a.audioNow() + (a.beat0 + this.bar * a.barSec - a.gameNow()) / a.speed;
+    let t = target();
+    while (t < now + RESYNC_LEAD) {
+      if (!this.skipBar()) return t;
+      t = target();
+    }
+    if (Math.abs(t - this.nextT) <= ANCHOR_TOLERANCE) t = this.nextT;
+    return Math.max(t, this.prevT);
+  }
+
+  /** Skip the bar at the current bar line. False when a non-looping track runs out. */
+  private skipBar(): boolean {
+    // A fill not yet started would have played in this bar: drop it, keep the change.
+    if (this.pending && !this.filling) this.pending = { ...this.pending, fill: false };
+    this.step += STEPS_PER_BAR;
+    if (this.step >= this.totalSteps) {
+      if (!this.loop) {
+        this._ended = true;
+        return false;
+      }
+      this.step %= this.totalSteps;
+    }
+    this.bar += 1;
+    return true;
   }
 
   /** A main bar line is being planned: start or finish a fill, apply the pending change. */
