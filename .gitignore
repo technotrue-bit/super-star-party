@@ -6,6 +6,8 @@ dist/
 tools/critic/frames/
 *.wav
 *.mp3
+# chosen sound effect files (see sfx/credits.txt) are source, not render output
+!sfx/*.mp3
 coverage/
 
 # probe/critic evidence and render output — regenerable, not source
