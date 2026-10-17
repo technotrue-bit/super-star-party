@@ -13,8 +13,8 @@
  *   now + 0.03 instead of replaying a backlog.
  * - With an anchor, each main bar line is moved onto the game clock's grid
  *   when it has drifted more than 5 ms. Steps inside a bar never move. Bars
- *   whose grid time is already behind now + 0.03 are skipped whole, and a
- *   bar line never starts before the step planned ahead of it.
+ *   whose grid time is already behind now are skipped whole, and a bar line
+ *   never starts before the step planned ahead of it.
  */
 
 export interface PlannedStep {
@@ -185,13 +185,13 @@ export class StepClock {
 
   /**
    * Where the next main bar line starts: on the anchor's grid if it has
-   * drifted. Bars already behind now + 0.03 are skipped whole; the result is
+   * drifted. Bars already behind now are skipped whole; the result is
    * never before the previous step. Ends a non-looping track that runs out.
    */
   private anchoredTime(a: ClockAnchor, now: number): number {
     const target = () => a.audioNow() + (a.beat0 + this.bar * a.barSec - a.gameNow()) / a.speed;
     let t = target();
-    while (t < now + RESYNC_LEAD) {
+    while (t < now) {
       if (!this.skipBar()) return t;
       t = target();
     }

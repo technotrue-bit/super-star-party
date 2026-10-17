@@ -193,7 +193,7 @@ describe("StepClock", () => {
     expect(main.slice(0, 16).map((s) => s.step)).toEqual([...Array(16).keys()]);
     expect(main[1].t).toBeCloseTo(3.53, 12);
     for (const s of main.slice(0, 16)) expect(s).toMatchObject({ bar: 0, transpose: 0, fill: false });
-    // Bars 1 and 2 (grid 3.0 and 5.0) are behind plan(5.175) + 0.03 and are skipped whole;
+    // Bars 1 and 2 (grid 3.0 and 5.0) are behind plan(5.175)'s now and are skipped whole;
     // bar 3 starts on its grid time 7.0 with the change applied and its fill dropped.
     expect(main[16]).toMatchObject({ step: 48, bar: 3, transpose: 1, fill: false });
     expect(main[16].t).toBeCloseTo(7.0, 9);
@@ -220,11 +220,23 @@ describe("StepClock", () => {
     }
   });
 
+  it("an anchored bar 0 just after the first plan() call is planned at its target, not skipped", () => {
+    const clock = make(); // no pickup; the clock's own bar 0 would be at t0 0
+    clock.setAnchor({ beat0: 0.01, barSec: 2.0, speed: 1, audioNow: () => simNow, gameNow: () => simNow });
+    const steps = collect(clock, 0, 1.0);
+    expectNoPastInOrder(steps);
+    expect(steps[0]).toMatchObject({ step: 0, bar: 0, pickup: false });
+    expect(steps[0].t).toBeCloseTo(0.01, 12);
+    steps.forEach((s, i) => expect(s.t).toBeCloseTo(0.01 + i * STEP, 12));
+    expect(clock.barTimes()).toHaveLength(1);
+    expect(clock.barTimes()[0]).toBeCloseTo(0.01, 12);
+  });
+
   it("a non-looping anchored clock ends when it skips past its last bar", () => {
     const clock = anchoredClock(() => 0, { totalSteps: 32, loop: false });
     const steps = [...collect(clock, 0, 1.0), ...collect(clock, 3.5, 3.5), ...collect(clock, 3.525, 6)];
     expectNoPastInOrder(steps);
-    // Bar 0 resumes after the gap; bar 1 (grid 3.0) is behind plan(5.175) + 0.03, and it is the last.
+    // Bar 0 resumes after the gap; bar 1 (grid 3.0) is behind plan(5.175)'s now, and it is the last.
     expect(steps.filter((s) => !s.pickup).map((s) => s.step)).toEqual([...Array(16).keys()]);
     expect(clock.ended).toBe(true);
     expect(clock.plan(6.025)).toEqual([]);
