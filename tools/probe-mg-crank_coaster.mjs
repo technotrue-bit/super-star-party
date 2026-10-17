@@ -17,6 +17,7 @@
 import { chromium } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const ID = "crank_coaster";
 const BASE = process.env.SSP_URL ?? "http://127.0.0.1:5177";
@@ -307,7 +308,7 @@ await browser.close();
 
 // The camera must not move at all (the whole hill is framed), whatever the keys do.
 // It needs 40 samples in 6 s, which a loaded software-GL box can miss by one: allow one retry.
-const camScript = join(dirname(new URL(import.meta.url).pathname), "probe-camera-lock.mjs");
+const camScript = join(dirname(fileURLToPath(import.meta.url)), "probe-camera-lock.mjs");
 // A longer window (the round runs 36+ s) gives a loaded box its 40 samples.
 const camEnv = { ...process.env, CAM_PROBE_MS: process.env.CAM_PROBE_MS ?? "14000" };
 let cam = spawnSync("node", [camScript, ID], { encoding: "utf8", env: camEnv });

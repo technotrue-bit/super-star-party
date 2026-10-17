@@ -27,9 +27,10 @@
 import { chromium } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const BASE = (process.env.SSP_URL ?? "http://127.0.0.1:5177").replace(/\/$/, "");
-const ROOT = resolve(dirname(new URL(import.meta.url).pathname), "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // With Hidden Blocks and carried orbs (Downtown rev 3), seed 4 takes Market
 // Gate both ways and seed 5 takes Riverside Gate both ways. Seed 7 no longer
 // sends anyone down the Riverside branch. The per-seed "lanes" line shows
