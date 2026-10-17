@@ -542,13 +542,7 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
       top.receiveShadow = true;
       top.name = "cruise:sponson";
       root.add(top);
-      const outer: P2[] = [
-        { x: side * S.hull.halfX, z: zr[0] },
-        { x: x1, z: zr[0] },
-        { x: x1, z: zr[1] },
-        { x: side * S.hull.halfX, z: zr[1] },
-      ];
-      void outer;
+      // White platform sides under the teak.
       solid.box(Math.abs(x1 - x0), 0.5, zr[1] - zr[0], (x0 + x1) / 2, -0.28, (zr[0] + zr[1]) / 2, palette.white);
       for (let z = zr[0] + 0.6; z < zr[1]; z += 2.4) {
         solid.add(new THREE.CylinderGeometry(0.16, 0.16, 2.6, 6), palette.white, new THREE.Matrix4().makeRotationZ(side * 0.75).setPosition(side * (S.hull.halfX + 1.6), -1.4, z));

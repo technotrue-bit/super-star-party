@@ -19,7 +19,9 @@
  * to SSP_CR_TURNS turns and checks boardId, that tokens only stand on valid
  * spaces, the balloon only on prize spots (or where a Balloon Tug pulled it),
  * zero page errors, and reports which fork lanes were walked. At least half
- * of the 13 forks must have been taken both ways across the seeds.
+ * of the 13 fork lanes must have been walked across the seeds. CPUs head
+ * for the balloon by the shortest way, so a detour's long side is often
+ * never taken; tools/probe-fork-walk.mjs drives both sides of a fork.
  *
  *   SSP_URL=http://127.0.0.1:5181 node tools/probe-board-cruise.mjs
  *   SSP_SKIP_GOLDEN=1 skips part 2.
@@ -187,8 +189,9 @@ try {
   }
   const lanes = forkInfo.map((f, k) => `${f.fork}:${taken[k].branch ? "B" : "-"}${taken[k].stay ? "S" : "-"}`);
   console.log(`    fork lanes walked: ${lanes.join(" ")}`);
+  const branched = taken.filter((t) => t.branch).length;
   const both = taken.filter((t) => t.branch && t.stay).length;
-  check(both * 2 >= forkInfo.length, `forks taken both ways: ${both}/${forkInfo.length}`);
+  check(branched * 2 >= forkInfo.length, `fork lanes walked: ${branched}/${forkInfo.length} (both ways: ${both})`);
 } finally {
   await browser.close();
 }
