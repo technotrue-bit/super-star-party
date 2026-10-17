@@ -218,7 +218,7 @@ function onJam(st: State, lane: Lane): void {
   lane.char?.anim.squash();
   note(st, `jam lane ${lane.idx} t=${(st.step * FIXED_DT).toFixed(2)}`);
   if (lane === st.human) {
-    st.ctx.playSfx("land", { volume: 0.75, pitch: 0.6 });
+    st.ctx.playSfx("land", { volume: 0.75, rate: 0.6 });
     st.ctx.playSfx("crowd.ooh", { volume: 0.45 });
   }
 }
@@ -229,7 +229,7 @@ function onFree(st: State, lane: Lane): void {
   w.root.localToWorld(scratch);
   st.fx.sparks(scratch.x, scratch.y + 0.6, scratch.z + 0.4, 8);
   st.fx.ring(scratch.x, scratch.y, scratch.z + 0.5, 0.9, palette.mint);
-  if (lane === st.human) st.ctx.playSfx("pop", { volume: 0.5, pitch: 1.2 });
+  if (lane === st.human) st.ctx.playSfx("pop", { volume: 0.5, rate: 1.2 });
 }
 
 function stepFixed(st: State, humanShare: number): void {
@@ -266,7 +266,7 @@ function callRace(st: State, t: number, timeUp: boolean): void {
   const mine = st.human === win;
   ctx.announce(timeUp ? "TIME!" : mine ? "YOU TOPPED THE HILL!" : `${win.name.toUpperCase()} TOPS THE HILL!`, { durationMs: 1900, sound: null });
   ctx.playSfx(mine ? "fanfare.win" : "crowd.cheer", { volume: 0.7 });
-  ctx.playSfx("coin.gain", { volume: 0.5, pitch: 1.1 });
+  ctx.playSfx("coin.gain", { volume: 0.5, rate: 1.1 });
   st.env.celebrate();
   win.hoopFlash = 1;
   scratch.set(win.x, TOP.y + 1.2, TOP.z + 0.8);
@@ -356,7 +356,7 @@ function placeLane(st: State, lane: Lane, dt: number, t: number): void {
     if (band === 3) st.fx.soot(scratch.x, scratch.y, scratch.z, 1);
   }
   if (band !== lane.lastBand) {
-    if (lane === st.human && band === 2 && lane.lastBand < 2) st.ctx.playSfx("whistle", { volume: 0.3, pitch: 1.4 });
+    if (lane === st.human && band === 2 && lane.lastBand < 2) st.ctx.playSfx("whistle", { volume: 0.3, rate: 1.4 });
     lane.lastBand = band;
   }
 
@@ -392,7 +392,7 @@ function updateVisuals(st: State, dt: number): void {
     const a = me.cart.angle;
     if (a - me.clickAt >= CLICK_ANGLE) {
       me.clickAt = a;
-      st.ctx.playSfx("ui.click", { volume: 0.16, pitch: 0.9 + clamp(turnsPerSec(me.cart.rate) / 3, 0, 1) * 0.5 });
+      st.ctx.playSfx("ui.click", { volume: 0.16, rate: 0.9 + clamp(turnsPerSec(me.cart.rate) / 3, 0, 1) * 0.5 });
     }
     me.clickAt = Math.max(me.clickAt, a - 2 * CLICK_ANGLE);
   }

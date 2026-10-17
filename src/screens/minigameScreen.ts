@@ -951,7 +951,7 @@ function teachTap(self: MgScreenState): void {
   self._touch?.pulse();
   spawnBurst(self);
   if (phase === "practice") {
-    if (mg.tapSfx) self._ctx?.playSfx(mg.tapSfx, { volume: 0.45, pitch: 1.12 });
+    if (mg.tapSfx) self._ctx?.playSfx(mg.tapSfx, { volume: 0.45, rate: 1.12 });
     const ch = localSeat(self).char;
     const cam = world.camera;
     if (ch && cam) {

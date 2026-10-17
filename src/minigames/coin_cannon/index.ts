@@ -670,7 +670,7 @@ function fireCoin(st: State, P: PlayerSt): void {
   st.coins.push({ lane: P.lane, fireT: st.simT, landT: st.simT + FLIGHT, resolved: false, caught: false, group, popped: false });
   P.recoil = 1;
   if (P.cheerT <= 0) st.ctx.characters[P.id]?.anim.squash();
-  st.ctx.playSfx("whoosh", { volume: P.id === st.humanId ? 0.6 : 0.25, pitch: 1.2 });
+  st.ctx.playSfx("whoosh", { volume: P.id === st.humanId ? 0.6 : 0.25, rate: 1.2 });
 }
 
 /** Coin reaches the rim plane: the nearest open basket within CATCH_R takes it. */
@@ -706,7 +706,7 @@ function resolveCoin(st: State, c: Coin): void {
   st.root.add(pop);
   st.popups.push({ sprite: pop, life: 0.8 });
   if (pts === 2) {
-    st.ctx.playSfx("coin.gain", { volume: mine ? 0.9 : 0.35, pitch: 1.3 });
+    st.ctx.playSfx("coin.gain", { volume: mine ? 0.9 : 0.35, rate: 1.3 });
     if (mine) st.ctx.playSfx("crowd.ooh", { volume: 0.5 });
     burst(st, at, hex(palette.sun), 10, 3.2, 0.5, 7, 0.08);
     burst(st, at, hex(palette.white), 6, 2.6, 0.45, 6, 0.06);

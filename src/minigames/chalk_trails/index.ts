@@ -245,7 +245,7 @@ function onEvent(st: State, e: WorldEvent, t: number): void {
       seat.mood = "cheer";
       seat.char?.anim.cheer();
     }
-    if (seat === st.human) ctx.playSfx("coin.gain", { volume: 0.5, pitch: 1.1 });
+    if (seat === st.human) ctx.playSfx("coin.gain", { volume: 0.5, rate: 1.1 });
   } else if (e.type === "respawn") {
     const seat = st.seats[e.seat];
     const view = seat.gems[e.slot];
@@ -259,7 +259,7 @@ function onEvent(st: State, e: WorldEvent, t: number): void {
     note(st, `rain ${e.k} t=${t.toFixed(2)} erased=${e.erased}`);
     st.tel.rains.push(Math.round(t * 100) / 100);
     st.tel.erased.push(e.erased);
-    ctx.playSfx("whoosh", { volume: 0.55, pitch: 0.7 });
+    ctx.playSfx("whoosh", { volume: 0.55, rate: 0.7 });
   } else {
     st.washing = -1;
     st.chalk.clear();
