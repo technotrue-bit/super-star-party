@@ -174,7 +174,7 @@ async function run(bName, W, H) {
       if (SCREENS.has("board")) {
         await page.getByRole("button", { name: /Start the match/ }).tap({ timeout: 10000 });
         let onBoard = false;
-        for (let i = 0; i < 25; i++) {
+        for (let i = 0; i < 45; i++) { // ~90s: CPUs may all move before the human (turn order is random)
           await sleep(2000);
           const v = await visibleLabels(page);
           if (v.includes("NO THANKS")) { await btn(/^NO THANKS$/).tap().catch(() => {}); continue; }
