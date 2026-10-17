@@ -8,15 +8,18 @@
  */
 import { fizzyFairground, type BoardDef } from "./boardData";
 import { downtown } from "./boards/downtownData";
+import { cruiseShip } from "./boards/cruiseData";
 
 /** Registered board ids. Adding a board = one union member + one BOARDS entry. */
-export type BoardId = "fizzy-fairground" | "downtown";
+export type BoardId = "fizzy-fairground" | "downtown" | "cruise-ship";
 
 export interface BoardEntry {
   /** Graph and gameplay data. */
   def: BoardDef;
   /** Picker title. */
   name: string;
+  /** Short picker button label (absent: `name`). */
+  short?: string;
   /** Picker one-liner. */
   blurb: string;
   /** Bumped whenever def or movement rules change in a way peers must agree on (net checks). */
@@ -37,6 +40,13 @@ export const BOARDS: Record<BoardId, BoardEntry> = {
     name: "Downtown",
     blurb: "A city Ring Road with Market Street and the Riverside Walk.",
     rev: 3,
+  },
+  "cruise-ship": {
+    def: cruiseShip,
+    name: "The Cruise Ship",
+    short: "Cruise",
+    blurb: "A party liner at sea: 132 spaces on two decks, with stairways, a pool bridge and lifeboats.",
+    rev: 1,
   },
 };
 
@@ -61,6 +71,9 @@ const BOARD_ALIASES: Record<string, string> = {
   fairground: "fizzy-fairground",
   downtown: "downtown",
   city: "downtown",
+  cruise: "cruise-ship",
+  ship: "cruise-ship",
+  "cruise-ship": "cruise-ship",
 };
 
 /** Registered ids in BOARDS order. "random" and the seeded pick index into this. */
@@ -78,7 +91,7 @@ export function boardTags(): string[] {
 }
 
 /**
- * Parse a saved or URL board value. Aliases ("carnival", "downtown") map to
+ * Parse a saved or URL board value. Aliases ("carnival", "downtown", "cruise") map to
  * ids. Unknown or not-yet-registered boards fall back to the carnival with a
  * console warning, never an error. Empty input returns null.
  */

@@ -2,7 +2,7 @@
 // "How does this board work?" prompt (with its tour), the order-block roll,
 // then deals the starting coins and begins turn 1 in roll order.
 //
-//   node tools/probe-opening.mjs            (carnival; SSP_BOARD=downtown for Downtown)
+//   node tools/probe-opening.mjs            (carnival; SSP_BOARD=downtown or cruise for the others)
 //
 // Uses ?intro=1 to force the opening on a URL-direct board. Checks:
 //   - coins are 0 for everyone until the opening ends, then settings.startCoins

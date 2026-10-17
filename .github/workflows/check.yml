@@ -15,6 +15,8 @@ on:
 #   twin-carnival   ~19 min  Twin match
 #   twin-downtown   ~16 min  Twin match on Downtown, fork walk, playtest
 #   probe-registry  ~27 min  Board registry (carnival seed-7 + Downtown graph)
+#   probe-cruise    ~20 min  Cruise Ship graph, seed-7 replay to the finale,
+#                            autoplay fork coverage, match opening, fork walk (estimate)
 #   check           <1 min   gate
 jobs:
   core:
@@ -191,8 +193,8 @@ jobs:
       - name: Twin match on Downtown
         run: SSP_BOARD=downtown node tools/twin-seed.mjs
 
-      - name: Fork walk-through and item-then-roll (both boards)
-        run: node tools/probe-fork-walk.mjs --ci
+      - name: Fork walk-through and item-then-roll (carnival + Downtown)
+        run: SSP_FW_BOARDS=carnival,downtown node tools/probe-fork-walk.mjs --ci
 
       - name: Playtest
         run: node tools/smoke-play.mjs
@@ -232,9 +234,50 @@ jobs:
       - name: Board registry (carnival seed-7 parity + Downtown graph)
         run: node tools/probe-board-downtown.mjs
 
+  probe-cruise:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.0"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the game
+        run: |
+          RUNNER_TRACKING_ID="" nohup npm run dev -- --host 127.0.0.1 > "$RUNNER_TEMP/vite.log" 2>&1 < /dev/null &
+          disown
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:5177/; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "The game did not listen on port 5177."
+          cat "$RUNNER_TEMP/vite.log"
+          exit 1
+
+      - name: Cruise Ship (graph, seed-7 replay to the finale, autoplay)
+        run: node tools/probe-board-cruise.mjs
+
+      - name: Match opening on the Cruise Ship
+        run: SSP_BOARD=cruise node tools/probe-opening.mjs
+
+      - name: Fork walk-through and item-then-roll (Cruise Ship)
+        run: SSP_FW_BOARDS=cruise node tools/probe-fork-walk.mjs --ci
+
   check:
     if: always()
-    needs: [core, twin-carnival, twin-downtown, probe-registry]
+    needs: [core, twin-carnival, twin-downtown, probe-registry, probe-cruise]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

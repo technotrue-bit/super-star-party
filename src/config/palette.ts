@@ -62,6 +62,15 @@ export const palette = {
   rock: "#B9B2C6",
   sand: "#FFE3A3",
 
+  // ---- The Cruise Ship (board 3) ----
+  hullNavy: "#24306B", // lower hull below the red boot stripe
+  teak: "#D9A066", // promenade deck planks
+  teakDark: "#B98048", // plank seams, stair treads
+  lidoTile: "#CFF3FF", // Lido Deck tiles round the pool
+  glass: "#3A78D8", // bridge and superstructure windows
+  lifeboat: "#FF7B1C", // safety-orange lifeboats and life rings
+  carpet: "#8A2D63", // Grand Ballroom carpet
+
   // ---- time of day (lively board: day -> golden dusk -> night) ----
   // Day is the boot look (ink background, white hemi over ink ground, white key).
   duskSky: "#E8734F", // coral sunset background + fog

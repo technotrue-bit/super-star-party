@@ -5,7 +5,8 @@
  *   ITEM section (P3b): I-H-WARP, I-H-DOUBLE, I-H-ZIP, I-CPU-WARP, I-CPU-DOUBLE (grants via the sampler's
  *   __GRANTQ hook at turn:start, so items arrive during the announce beat).
  *
- * One chromium browser, six small (480x360) pages per board in parallel (carnival fork 6, downtown fork 5),
+ * One chromium browser, six small (480x360) pages per board in parallel (carnival fork 6, downtown fork 5,
+ * cruise fork 42 = Ballroom Doors),
  * one scenario group each. Each page starts ["local","cpu","local","cpu"] on seed 2; the probe uses forced
  * dice, so it never needs a golden. Grand Prize / shop popups are answered so no scenario blocks the next.
  * Expected paths come from __SSP__.board().next and the LIVE starBalloonPos (never hard-coded).
@@ -15,6 +16,9 @@
  *
  *   node tools/probe-fork-walk.mjs [--ci]
  *   SSP_URL (default http://127.0.0.1:5177)   SSP_SHOTS=<dir> (ignored with --ci)
+ *   SSP_FW_BOARDS=carnival,downtown,cruise (default: all) picks the boards. CI runs the carnival and
+ *   Downtown in one job and the cruise in its own: six more software-rendered pages on one runner
+ *   pushed the shared run past the 240 s budget.
  *
  * Exits 1 on any FAIL or page error. --ci drops the EXACT follow-up, MULTI and shots, self-fails > 240 s.
  */
@@ -48,7 +52,11 @@ const note = (m) => console.log(`NOTE ${m}`);
   }, cap * 1000).unref();
 }
 
-const FORKS = { carnival: 6, downtown: 5 };
+const FORKS = { carnival: 6, downtown: 5, cruise: 42 };
+const BOARDS = (process.env.SSP_FW_BOARDS ?? Object.keys(FORKS).join(","))
+  .split(",")
+  .map((b) => b.trim())
+  .filter((b) => b in FORKS);
 const KINDS = ["pip", "bounce", "glimmer", "tusk"];
 const NAMES = ["Pip", "Bounce", "Glimmer", "Player 4"];
 const CTRL = ["local", "cpu", "local", "cpu"];
@@ -719,7 +727,7 @@ async function runBoard(browser, board, group) {
 
 const browser = await chromium.launch();
 try {
-  const jobs = Object.keys(FORKS).flatMap((b) => ["forkA", "forkB", "forkC", "itemA", "itemB", "itemC"].map((g) => [b, g]));
+  const jobs = BOARDS.flatMap((b) => ["forkA", "forkB", "forkC", "itemA", "itemB", "itemC"].map((g) => [b, g]));
   await Promise.all(jobs.map(([b, g]) => runBoard(browser, b, g).catch((e) => check(`${b}/${g}:run`, false, String(e).slice(0, 250)))));
 } finally {
   await browser.close();
