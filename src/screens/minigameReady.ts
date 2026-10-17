@@ -34,16 +34,17 @@ function injectStyles(): void {
   const s = document.createElement("style");
   s.id = STYLE_ID;
   s.textContent = `
-    .ssp-mgr{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;gap:8px;
-      padding:calc(10px + env(safe-area-inset-top,0px)) 14px calc(14px + env(safe-area-inset-bottom,0px));
-      box-sizing:border-box;font-family:Fredoka,sans-serif;color:${palette.cream};pointer-events:none}
+    .ssp-mgr{position:fixed;inset:0;max-height:100vh;max-height:100dvh;z-index:20;display:flex;flex-direction:column;align-items:center;gap:8px;
+      padding:calc(10px + env(safe-area-inset-top,0px)) calc(14px + env(safe-area-inset-right,0px)) calc(14px + env(safe-area-inset-bottom,0px)) calc(14px + env(safe-area-inset-left,0px));
+      box-sizing:border-box;font-family:Fredoka,sans-serif;color:${palette.cream};pointer-events:none;
+      overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y}
     .ssp-mgr > *{pointer-events:auto}
     .ssp-mgr__top{display:flex;align-items:center;justify-content:space-between;width:100%;max-width:560px}
     .ssp-mgr__ready{font-size:15px;font-weight:700;color:${palette.sun};letter-spacing:1px;text-shadow:2px 2px 0 ${palette.ink}}
     .ssp-mgr__name{font-size:clamp(24px,7vw,34px);font-weight:700;line-height:1.05;text-align:center;
       text-shadow:3px 3px 0 ${palette.ink};max-width:560px}
     .ssp-mgr__clip{position:relative;width:min(100%,520px);aspect-ratio:16/10;border:5px solid ${palette.cream};
-      border-radius:18px;overflow:hidden;background:${palette.inkSoft};box-shadow:0 6px 0 ${palette.ink};flex:none}
+      border-radius:18px;overflow:hidden;background:${palette.inkSoft};box-shadow:0 6px 0 ${palette.ink};flex:0 1 auto;min-height:clamp(72px,16dvh,140px)}
     .ssp-mgr__clip img{width:100%;height:100%;object-fit:cover;display:block}
     .ssp-mgr__tag{position:absolute;left:8px;top:8px;font-size:12px;font-weight:700;padding:3px 8px;border-radius:9px;
       background:${palette.candy};color:${palette.cream};letter-spacing:.5px;box-shadow:0 2px 0 ${palette.ink}}
@@ -56,7 +57,38 @@ function injectStyles(): void {
       background:${palette.cream};color:${palette.ink};border:3px solid ${palette.ink};white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .ssp-mgr__seat.is-you{background:${palette.sun}}
     .ssp-mgr__seat b{display:inline-block;width:9px;height:9px;border-radius:50%;border:2px solid ${palette.ink};margin-right:4px;vertical-align:-1px}
-    .ssp-mgr__play{width:min(100%,520px);min-height:60px;font-size:28px;letter-spacing:1px;flex:none}
+    /* PLAY! is the last flex item and sticky, so it stays on screen even if the card has to scroll */
+    .ssp-mgr__play{width:min(100%,520px);min-height:60px;font-size:28px;letter-spacing:1px;flex:none;position:sticky;bottom:0;z-index:1}
+    /* The preview crops (shrinks in height first) so seats + PLAY! fit; the line-up slot keeps a floor. */
+    @media (max-height:700px){
+      .ssp-mgr{gap:6px;padding-top:calc(6px + env(safe-area-inset-top,0px));padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
+      .ssp-mgr__top .ssp-btn--sm{min-height:44px}
+      .ssp-mgr__name{font-size:clamp(22px,6.5vw,30px)}
+      .ssp-mgr__info{gap:4px;font-size:13px;line-height:1.25}
+      .ssp-mgr__win{padding:4px 10px;font-size:14px}
+      .ssp-mgr__stage{min-height:110px}
+      .ssp-mgr__play{min-height:48px;font-size:22px;padding-top:8px;padding-bottom:8px}
+    }
+    @media (max-height:600px){
+      .ssp-mgr__stage{min-height:96px}
+      .ssp-mgr__info{font-size:12px}
+      .ssp-mgr__clip{border-width:4px}
+    }
+    /* Landscape phones: preview + rules on the left, line-up + seats + PLAY! on the right. */
+    @media (orientation:landscape) and (max-height:500px){
+      .ssp-mgr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+        grid-template-rows:auto auto minmax(0,1fr) auto auto;
+        grid-template-areas:"top top" "name stage" "clip stage" "info seats" "info play";
+        column-gap:14px;row-gap:6px;justify-items:center;align-items:stretch}
+      .ssp-mgr__top{grid-area:top;max-width:none}
+      .ssp-mgr__top .ssp-btn--sm{min-height:40px;padding-top:4px;padding-bottom:4px}
+      .ssp-mgr__name{grid-area:name;font-size:24px}
+      .ssp-mgr__clip{grid-area:clip;width:auto;height:100%;max-width:100%;min-height:0;aspect-ratio:16/10;justify-self:center}
+      .ssp-mgr__info{grid-area:info;align-self:start}
+      .ssp-mgr__stage{grid-area:stage;min-height:0;height:100%}
+      .ssp-mgr__seats{grid-area:seats;align-self:end}
+      .ssp-mgr__play{grid-area:play;align-self:end;min-height:48px;font-size:22px}
+    }
   `;
   document.head.appendChild(s);
 }
@@ -249,6 +281,8 @@ const readyImpl: ReadyState & Screen & { _fit(): void; _play(): void; _back(): v
     };
     window.addEventListener("keydown", this._onKey);
     this._offResize = onViewportChange(() => this._fit());
+    // If the card has to scroll (very short screens), keep the line-up on its slot.
+    root.addEventListener("scroll", () => this._fit(), { passive: true });
     requestAnimationFrame(() => this._fit());
     audio.music.play("shop", { intensity: 0.4 });
   },

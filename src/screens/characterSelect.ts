@@ -64,14 +64,16 @@ function injectSelectStyles(): void {
   const style = document.createElement("style");
   style.id = "ssp-select-styles";
   style.textContent = `
-    .ssp-sel-stage{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;z-index:10;padding:calc(10px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px));box-sizing:border-box;overflow:hidden}
+    .ssp-sel-stage{position:fixed;inset:0;max-height:100vh;max-height:100dvh;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;z-index:10;padding:calc(10px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));box-sizing:border-box;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
     .ssp-sel-top{display:flex;justify-content:space-between;align-items:center;width:100%;max-width:520px;pointer-events:auto;flex:none}
     .ssp-sel-title{font-size:22px;font-weight:700;color:${palette.cream};text-shadow:3px 3px 0 ${palette.ink},6px 6px 0 rgba(43,29,78,.35);pointer-events:none;letter-spacing:1px}
     .ssp-sel-hero{position:relative;flex:1 1 auto;min-height:150px;width:100%;max-width:520px;pointer-events:auto;touch-action:none;user-select:none}
     .ssp-sel-arrow{position:absolute;top:calc(50% - 25px);min-width:48px;padding-left:0;padding-right:0;z-index:2}
     .ssp-sel-arrow--l{left:0}
     .ssp-sel-arrow--r{right:0}
-    .ssp-sel-side{display:flex;flex-direction:column;gap:8px;width:100%;max-width:520px;flex:none;pointer-events:none}
+    /* side = scrolling body (plate, rivals, settings) + START pinned under it, outside the scroller */
+    .ssp-sel-side{display:flex;flex-direction:column;gap:8px;width:100%;max-width:520px;flex:0 1 auto;min-height:0;pointer-events:none}
+    .ssp-sel-body{display:flex;flex-direction:column;gap:8px;flex:0 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;pointer-events:auto;padding:2px 6px 6px 2px;margin:-2px -6px -6px -2px;scrollbar-width:thin}
     .ssp-sel-plate{align-self:center;display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 22px 6px;border-radius:16px;background:${palette.cream};border:4px solid var(--sel-color);box-shadow:0 0 0 3px ${palette.ink},4px 5px 0 3px ${palette.ink};pointer-events:none;max-width:92%;box-sizing:border-box}
     .ssp-sel-plate__name{font-size:24px;font-weight:700;line-height:1.05;color:var(--sel-color);-webkit-text-stroke:1.5px ${palette.ink};paint-order:stroke fill;text-shadow:2px 2px 0 ${palette.ink};letter-spacing:.5px}
     .ssp-sel-plate__tag{font-size:14px;font-weight:600;line-height:1.15;color:${palette.inkSoft};text-align:center}
@@ -99,13 +101,43 @@ function injectSelectStyles(): void {
     .ssp-sel-pick__opt[aria-pressed="true"]{outline:4px solid ${palette.sun};outline-offset:2px}
     .ssp-sel-pick__name{display:flex;flex-direction:column;gap:2px;font-size:15px;font-weight:700;line-height:1.05;min-width:0}
     .ssp-sel-pick__tag{font-size:10px;font-weight:700;letter-spacing:.5px;padding:2px 5px;border-radius:7px;background:${palette.ink};color:${palette.cream};align-self:flex-start;white-space:nowrap}
-    .ssp-sel-start{width:100%;flex:none;pointer-events:auto;min-height:60px;font-size:28px;letter-spacing:1px}
+    .ssp-sel-start{width:100%;flex:none;pointer-events:auto;min-height:60px;font-size:28px;letter-spacing:1px;position:relative;z-index:1}
     @media (max-height:720px) and (orientation:portrait){.ssp-ms-tile__blurb{font-size:10px}.ssp-sel-start{min-height:52px;font-size:24px}.ssp-sel-plate__name{font-size:20px}}
+    @media (max-height:840px) and (orientation:portrait){.ssp-sel-hero{min-height:140px}}
+    /* Short phones (XS / SE Safari with toolbars): tighter gaps, smaller plate + START, smaller hero slot. */
+    @media (max-height:700px){
+      .ssp-sel-stage{gap:6px;padding-top:calc(6px + env(safe-area-inset-top, 0px));padding-bottom:calc(8px + env(safe-area-inset-bottom, 0px))}
+      .ssp-sel-side,.ssp-sel-body{gap:6px}
+      .ssp-sel-title{font-size:19px}
+      .ssp-sel-top .ssp-btn--sm{min-height:44px}
+      .ssp-sel-hero{min-height:130px}
+      .ssp-sel-plate{padding:3px 18px 4px}
+      .ssp-sel-plate__name{font-size:20px}
+      .ssp-sel-plate__tag{font-size:12.5px}
+      .ssp-sel-start{min-height:48px;font-size:22px;padding-top:8px;padding-bottom:8px}
+    }
+    @media (max-height:600px){
+      .ssp-sel-hero{min-height:110px}
+      .ssp-sel-card{padding:4px 5px}
+      .ssp-sel-card .ssp-avatar{width:26px;height:26px}
+      .ssp-sel-plate__tag{font-size:11.5px}
+      .ssp-sel-body .ssp-ms-tile__blurb{display:none}
+      .ssp-sel-body .ssp-ms-chip{min-height:26px}
+      .ssp-sel-body .ssp-ms-mult{min-height:34px}
+    }
     @media (orientation:landscape){
       .ssp-sel-stage{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,400px);grid-template-rows:auto minmax(0,1fr);grid-template-areas:"top top" "hero side";column-gap:12px;row-gap:6px;justify-items:stretch}
       .ssp-sel-top{grid-area:top;max-width:none}
-      .ssp-sel-hero{grid-area:hero;max-width:none;min-height:0}
-      .ssp-sel-side{grid-area:side;max-width:none;min-height:0;overflow-y:auto;pointer-events:auto;padding:2px 6px 6px 2px;box-sizing:border-box}
+      .ssp-sel-hero{grid-area:hero;max-width:none;min-height:0;align-self:stretch}
+      /* bounded by its grid row, so the body scrolls inside it and START stays pinned at the column's foot */
+      .ssp-sel-side{grid-area:side;max-width:none;min-height:0;max-height:100%;align-self:center;box-sizing:border-box}
+    }
+    @media (orientation:landscape) and (max-height:500px){
+      .ssp-sel-stage{row-gap:4px;column-gap:10px}
+      .ssp-sel-top .ssp-btn--sm{min-height:40px;padding-top:4px;padding-bottom:4px}
+      .ssp-sel-title{font-size:18px}
+      .ssp-sel-side{align-self:stretch}
+      .ssp-sel-body .ssp-ms-tile__blurb{display:none}
     }
   `;
   document.head.appendChild(style);
@@ -420,7 +452,12 @@ const characterSelectImpl: SelectScreenState & Screen = {
       okBtn.setLabel("NEXT ▶");
       okBtn.el.setAttribute("aria-label", "Next: pick a minigame");
     }
-    side.append(plate, rivalsLabel, cardRow, settingsCard, okBtn.el);
+    // The body scrolls when the settings don't fit (short phones, landscape);
+    // START sits outside it so it is always on screen.
+    const body = document.createElement("div");
+    body.className = "ssp-sel-body";
+    body.append(plate, rivalsLabel, cardRow, settingsCard);
+    side.append(body, okBtn.el);
     stage.append(topBar, slot, side);
 
     this._applySelection();
@@ -461,6 +498,8 @@ const characterSelectImpl: SelectScreenState & Screen = {
       this._slotObserver = new ResizeObserver(() => this._fitCamera());
       this._slotObserver.observe(slot);
     }
+    // Last resort on very short screens the whole stage scrolls: keep the hero on its slot.
+    stage.addEventListener("scroll", () => this._fitCamera(), { passive: true });
     void document.fonts?.ready.then(() => this._fitCamera());
     requestAnimationFrame(() => this._fitCamera());
 
