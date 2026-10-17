@@ -43,7 +43,11 @@ async function boot(page) {
   for (let attempt = 1; ; attempt++) {
     try {
       await page.goto(`${BASE}/?audio=0&fx=off&seed=7`, { waitUntil: "domcontentloaded", timeout: FIRST_LOAD_MS });
-      await page.waitForFunction(() => window.__SSP__?.state?.()?.screen === "title", null, { timeout: FIRST_LOAD_MS });
+      await page.waitForFunction(
+        () => window.__SSP__?.state?.()?.screen === "title" && !!document.querySelector(".ssp-title-stage"),
+        null,
+        { timeout: FIRST_LOAD_MS },
+      );
       return;
     } catch (e) {
       if (attempt >= 2) throw new Error(`title screen never loaded (2 tries): ${String(e).split("\n")[0]}`);
@@ -64,7 +68,14 @@ async function openGame(page, id) {
     },
     id,
     { timeout: FIRST_LOAD_MS },
-  ).catch((e) => { throw new Error(`${id} never opened: ${String(e).split("\n")[0]}`); });
+  ).catch(async (e) => {
+    // Say what the page was showing, so a stall explains itself in CI.
+    const st = await page.evaluate(() => {
+      const s = window.__SSP__?.state?.() ?? {};
+      return { screen: s.screen, isWiping: s.isWiping, mgPhase: document.body.dataset.mgPhase ?? null, href: location.href };
+    }).catch((err) => ({ error: String(err).split("\n")[0] }));
+    throw new Error(`${id} never opened: ${String(e).split("\n")[0]} state ${JSON.stringify(st)}`);
+  });
 }
 
 async function readMirror(page, id) {
@@ -524,6 +535,10 @@ const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: VIEW, hasTouch: true });
 const errors = [];
 page.on("pageerror", (err) => errors.push(String(err).slice(0, 240)));
+const consoleErrors = [];
+page.on("console", (msg) => {
+  if (msg.type() === "error") consoleErrors.push(msg.text().slice(0, 240));
+});
 
 try {
   console.log(`contact control probe @ ${BASE} viewport ${VIEW.width}x${VIEW.height}${PROD ? " prod" : ""}`);
@@ -536,6 +551,8 @@ try {
   if (errors.length) fail(`page errors: ${errors.join(" | ")}`);
 } catch (err) {
   fail(err?.message ?? String(err));
+  if (errors.length) console.log(`   page errors: ${errors.join(" | ")}`);
+  if (consoleErrors.length) console.log(`   console errors: ${consoleErrors.slice(-8).join(" | ")}`);
 } finally {
   await browser.close();
 }

@@ -23,9 +23,13 @@ const BASE = "http://127.0.0.1:5177/";
 const browser = await chromium.launch({ args: ["--disable-dev-shm-usage", "--disable-gpu"] });
 let failed = false;
 
+// How long a page may take to reach the minigame's play phase. A software-GL
+// CI runner rendering a 2x phone canvas can take well over a minute here.
+const REACH_PLAY_MS = 120000;
+
 // `early(page, cdp)` runs once, at the first countdown / practice / go phase, before play begins.
-async function boot(query, early) {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+// The caller owns `ctx` and closes it whether or not boot succeeds.
+async function boot(ctx, query, early) {
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
   page.on("pageerror", (e) => console.log("pageerror", String(e).slice(0, 150)));
@@ -40,7 +44,7 @@ async function boot(query, early) {
   const t0 = Date.now();
   let phase = "";
   let earlyDone = false;
-  while (Date.now() - t0 < 60000) {
+  while (Date.now() - t0 < REACH_PLAY_MS) {
     phase = await page.evaluate(() => window.__SSP__.mgProbe().phase);
     if (phase === "play") break;
     if (phase === "vs-splash") await page.keyboard.press("Space");
@@ -435,16 +439,20 @@ const CASES = [
 for (const [name, query, fn, early] of CASES) {
   if (ONLY.length && !ONLY.includes(name)) continue;
   let why;
-  let env;
+  // Created here, not in boot(): a case whose boot throws must still close its
+  // page, or that page keeps rendering in the background, starves the next
+  // case on a software-GL runner, and one slow case fails every case after it.
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
   try {
-    env = await boot(query, early);
+    const env = await boot(ctx, query, early);
     why = await fn(env.page, env.cdp);
   } catch (e) {
     why = `threw ${String(e).slice(0, 200)}`;
+  } finally {
+    await ctx.close().catch(() => {});
   }
   if (why) failed = true;
   console.log(why ? `FAIL touch ${name} ${why}` : `PASS touch ${name}`);
-  await env?.ctx.close();
 }
 
 await browser.close();

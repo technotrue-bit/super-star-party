@@ -4,8 +4,9 @@
 //   node tools/check-lively-imports.mjs   -> exit 1 on any violation
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, resolve, dirname, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = resolve(dirname(new URL(import.meta.url).pathname), "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIRS = ["src/board/lively", "src/board/downtown", "src/board/cruise"];
 const CORE_RNG = resolve(ROOT, "src/core/rng");
 const files = [];
