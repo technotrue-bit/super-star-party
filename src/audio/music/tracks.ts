@@ -16,7 +16,7 @@
  * Q count tick, D low tom.
  */
 
-export type Layer = "base" | "perc2" | "counter" | "bright";
+export type Layer = "base" | "perc2" | "counter" | "bright" | "lift";
 
 export interface StepEvent {
   s: number; // step within the bar (0..15)
@@ -44,6 +44,9 @@ export interface TrackDef {
   swing: number; // 0.5 = straight; 0.62 = light shuffle; 0.7 = heavy
   loop: boolean;
   voices: VoiceDef[];
+  sets?: string[]; // sample sets the track needs; defaults to ["core"]
+  fill?: VoiceDef[]; // one-bar section (e.g. a drum fill), outside voices
+  pickup?: VoiceDef[]; // one-bar section leading into the loop, outside voices
 }
 
 export interface ParsedVoice {
@@ -125,16 +128,16 @@ export function parseBar(str: string, barIndex: number): StepEvent[] {
   return out;
 }
 
-/** Validate + parse a whole track definition. */
-export function parseTrack(def: TrackDef): ParsedVoice[] {
+/** Parse a list of voices; every voice must have the same bar count. */
+function parseVoices(defId: string, voices: VoiceDef[]): ParsedVoice[] {
   const out: ParsedVoice[] = [];
   let barCount = -1;
-  for (const v of def.voices) {
+  for (const v of voices) {
     let bars: StepEvent[][] = [];
     let chordNames: string[] = [];
     if (v.source !== undefined) {
       const src = out[v.source];
-      if (!src) throw new Error(`track ${def.id}: voice ${v.source} not yet parsed for source ref`);
+      if (!src) throw new Error(`track ${defId}: voice ${v.source} not yet parsed for source ref`);
       bars = src.bars;
       chordNames = src.chordNames;
     } else if (v.pattern) {
@@ -143,15 +146,15 @@ export function parseTrack(def: TrackDef): ParsedVoice[] {
       chordNames = v.chords;
       bars = v.chords.map((c) => {
         const freqs = CHORDS[c];
-        if (!freqs) throw new Error(`unknown chord '${c}' in track ${def.id}`);
+        if (!freqs) throw new Error(`unknown chord '${c}' in track ${defId}`);
         return [{ s: 0, kind: "note", freqs, token: c, len: 16, vel: 0.8, slide: 0 }];
       });
     } else {
-      throw new Error(`track ${def.id}: voice ${out.length} has no pattern/chords/source`);
+      throw new Error(`track ${defId}: voice ${out.length} has no pattern/chords/source`);
     }
     if (barCount === -1) barCount = bars.length;
     else if (bars.length !== barCount) {
-      throw new Error(`track ${def.id}: voice '${v.style}' has ${bars.length} bars, expected ${barCount}`);
+      throw new Error(`track ${defId}: voice '${v.style}' has ${bars.length} bars, expected ${barCount}`);
     }
     out.push({
       style: v.style,
@@ -163,7 +166,27 @@ export function parseTrack(def: TrackDef): ParsedVoice[] {
       chordNames,
     });
   }
+  return out;
+}
+
+/** Validate + parse a whole track definition. */
+export function parseTrack(def: TrackDef): ParsedVoice[] {
+  const out = parseVoices(def.id, def.voices);
   if (out.length === 0) throw new Error(`track ${def.id}: no voices`);
+  return out;
+}
+
+/** The sample sets a track needs loaded; ["core"] unless it names its own. */
+export function trackSets(def: TrackDef): string[] {
+  return def.sets ?? ["core"];
+}
+
+/** Parse a track's one-bar `fill` or `pickup` section ([] when absent). */
+export function parseSection(def: TrackDef, which: "fill" | "pickup"): ParsedVoice[] {
+  const out = parseVoices(def.id, def[which] ?? []);
+  if (out.some((v) => v.barCount !== 1)) {
+    throw new Error(`track ${def.id}: ${which} must be one bar`);
+  }
   return out;
 }
 
@@ -1011,4 +1034,9 @@ export function trackIds(): string[] {
 }
 
 /** Validate every track at module load (cheap; ~2k events total). */
-for (const id of trackIds()) parseTrack(TRACKS[id]);
+for (const id of trackIds()) {
+  const def = TRACKS[id];
+  parseTrack(def);
+  parseSection(def, "fill");
+  parseSection(def, "pickup");
+}

@@ -50,6 +50,7 @@ export interface LayerBus {
   perc2: GainNode;
   counter: GainNode;
   bright: GainNode;
+  lift?: GainNode; // no bus yet: voices on the "lift" layer are skipped
 }
 
 /**
