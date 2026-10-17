@@ -179,7 +179,8 @@ async function run(bName, W, H) {
           const v = await visibleLabels(page);
           if (v.includes("NO THANKS")) { await btn(/^NO THANKS$/).tap().catch(() => {}); continue; }
           if (v.includes("HIT!")) { await btn(/^HIT!$/).tap().catch(() => {}); continue; }
-          if (v.some((l) => /Look at the map/.test(l))) { onBoard = true; break; }
+          // On the board: the map button, or the ROLL pad when the human moves first (a tip can cover the map button).
+          if (v.some((l) => /Look at the map|^ROLL/.test(l))) { onBoard = true; break; }
         }
         check(`${tag} board: reached HUD after START`, onBoard);
         await sleep(1200);
