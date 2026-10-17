@@ -5,6 +5,8 @@
  *   audio.ready                      Promise (resolved)
  *   audio.unlock()                   create/resume context (first gesture)
  *   audio.master.gain                0..1 master volume
+ *   audio.music.volume               [added] 0..1 music bus volume
+ *   audio.sfx.volume                 [added] 0..1 sfx bus volume
  *   audio.music.play(track, opts?)   start a looping track
  *   audio.music.stop(fade?)          fade out current track
  *   audio.music.track()              name of current track / 'silence'
@@ -32,7 +34,7 @@ import { TRACKS, trackIds } from "./music/tracks";
 import { Sequencer, scheduleTrackInto } from "./music/sequencer";
 import { startCrowdMurmur, wireCrowdReactions } from "./music/crowd";
 import type { CrowdHandle } from "./music/crowd";
-import { SFX } from "./sfx/sounds";
+import { SFX, resolvePitch } from "./sfx/sounds";
 import type { SfxPlayOpts } from "./sfx/sounds";
 import type { StopFn } from "./sfx/synth";
 
@@ -70,6 +72,28 @@ let visibilityWired = false;
 
 const lastPlay = new Map<string, number>();
 const activeStops: Array<{ stop: StopFn; until: number }> = [];
+
+// Bus volumes live here, not on the nodes, so they can be set before the
+// first gesture builds the graph. Saved slider values load at startup so
+// every entry point (not only the title screen) gets them.
+const LS_MUSIC = "ssp.musicVolume";
+const LS_SFX = "ssp.sfxVolume";
+
+function clampVolume(v: number, fallback: number): number {
+  return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : fallback;
+}
+
+function savedVolume(key: string, fallback: number): number {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw === null ? fallback : clampVolume(parseFloat(raw), fallback);
+  } catch {
+    return fallback; // no storage (node, private mode)
+  }
+}
+
+let musicVolume = savedVolume(LS_MUSIC, settings.musicVolume);
+let sfxVolume = savedVolume(LS_SFX, settings.sfxVolume);
 
 try {
   if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("audio") === "0") {
@@ -137,7 +161,7 @@ function buildGraph(c: AudioContext): void {
   //   trackGain (board track) -> duckGain -> musicGain -> musicComp -> master
   //   stingerGain (stinger track) -> musicGain (bypasses duck — plays at full level)
   musicGain = c.createGain();
-  musicGain.gain.value = settings.musicVolume;
+  musicGain.gain.value = musicVolume;
   const musicComp = makeCompressor(c, -18, 2.5, 2.5, 0.01, 0.22);
   musicGain.connect(musicComp);
   musicComp.connect(master);
@@ -155,7 +179,7 @@ function buildGraph(c: AudioContext): void {
 
   // sfx bus
   sfxGain = c.createGain();
-  sfxGain.gain.value = settings.sfxVolume;
+  sfxGain.gain.value = sfxVolume;
   const sfxComp = makeCompressor(c, -14, 3, 2, 0.004, 0.12);
   sfxGain.connect(sfxComp);
   sfxComp.connect(master);
@@ -278,7 +302,7 @@ function playSfx(name: string, opts?: SfxPlayOpts, internal = false): void {
   const t = ctx.currentTime + 0.01;
   const out = def.route === "crowd" ? crowdGain! : sfxGain!;
   const vol = opts?.volume ?? 1;
-  const pitch = opts?.pitch ?? 0;
+  const pitch = resolvePitch(opts);
   const stop = def.build(ctx, out, t, { vol, pitch });
   activeStops.push({ stop, until: t + 6 });
   if (!internal) bus.emit("audio:sfx", { name });
@@ -362,6 +386,15 @@ export const audio = {
   },
 
   music: {
+    /** [added] Music bus volume 0..1 (applies now, or when audio starts). */
+    get volume(): number {
+      return musicVolume;
+    },
+    set volume(v: number) {
+      musicVolume = clampVolume(v, musicVolume);
+      if (musicGain) musicGain.gain.value = musicVolume;
+    },
+
     play(track: string, opts?: { intensity?: number }): void {
       console.log(`[AUDIO_PLAY] ${track} t=${performance.now().toFixed(1)}`);
       if (!TRACKS[track]) {
@@ -518,6 +551,15 @@ export const audio = {
   },
 
   sfx: {
+    /** [added] SFX bus volume 0..1 (applies now, or when audio starts). */
+    get volume(): number {
+      return sfxVolume;
+    },
+    set volume(v: number) {
+      sfxVolume = clampVolume(v, sfxVolume);
+      if (sfxGain) sfxGain.gain.value = sfxVolume;
+    },
+
     play(name: string, opts?: SfxPlayOpts): void {
       console.log(`[AUDIO_SFX] ${name} t=${performance.now().toFixed(1)}`);
       pruneStops();

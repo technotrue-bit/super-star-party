@@ -370,7 +370,7 @@ function startPeek(st: St): void {
   st.phase = "peek";
   st.phaseT = 0;
   for (const c of st.cards) flip(c, true);
-  st.ctx.playSfx("whoosh", { volume: 0.5, pitch: 1.1 });
+  st.ctx.playSfx("whoosh", { volume: 0.5, rate: 1.1 });
 }
 
 function startHide(st: St): void {
@@ -381,7 +381,7 @@ function startHide(st: St): void {
   st.phase = "hide";
   st.phaseT = 0;
   for (const c of st.cards) flip(c, false);
-  st.ctx.playSfx("whoosh", { volume: 0.5, pitch: 0.8 });
+  st.ctx.playSfx("whoosh", { volume: 0.5, rate: 0.8 });
 }
 
 function startRound(st: St): void {
@@ -415,7 +415,7 @@ function startRound(st: St): void {
   st.phaseT = 0;
   const label = st.round === ROUNDS - 1 ? "FINAL ROUND!" : st.round === 0 ? "FIND ITS TWIN!" : `ROUND ${st.round + 1}/${ROUNDS}`;
   ctx.announce(label, { durationMs: 1000, sound: null });
-  ctx.playSfx("whoosh", { volume: 0.55, pitch: 1.3 });
+  ctx.playSfx("whoosh", { volume: 0.55, rate: 1.3 });
 }
 
 function lockPick(st: St, id: number, card: number): void {
@@ -427,7 +427,7 @@ function lockPick(st: St, id: number, card: number): void {
   if (id === st.human) {
     const c = st.cards[card];
     c.pop = 1;
-    ctx.playSfx("pop", { volume: 0.7, pitch: 1.1 });
+    ctx.playSfx("pop", { volume: 0.7, rate: 1.1 });
     st.youFrame.visible = true;
     const tok = st.tokens[id];
     tok.mesh.visible = true;
@@ -474,7 +474,7 @@ function startReveal(st: St): void {
   for (const i of shown) flip(st.cards[i], true);
   placeTokens(st);
   if (anyRight) {
-    ctx.playSfx("coin.gain", { volume: 0.6, pitch: 1.3 });
+    ctx.playSfx("coin.gain", { volume: 0.6, rate: 1.3 });
     const t = st.cards[st.twin];
     st.burst.spawn([{ x: t.x, y: CARD_Y + 0.3, z: t.z }], {
       colors: [palette.sun, palette.white, palette.candy],
