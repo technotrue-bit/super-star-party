@@ -47,9 +47,16 @@ function injectTitleStyles(): void {
       pointer-events: none;
       font-family: 'Fredoka', 'Comic Sans MS', sans-serif;
       box-sizing: border-box;
-      padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(20px + env(safe-area-inset-bottom, 0px));
+      padding: calc(16px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px))
+        calc(20px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px));
+      max-height: 100vh; max-height: 100dvh;
+      /* centred when it fits, scrolls from the top when it doesn't (never clips the menu) */
+      justify-content: safe center;
+      overflow-x: hidden; overflow-y: auto;
+      -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
     }
     .ssp-title-stage > * { pointer-events: auto; }
+    .ssp-title-stage > .ssp-title-sparkles { pointer-events: none; }
     .ssp-title-logo {
       font-size: clamp(30px, 8.5vw, 68px);
       font-weight: 700;
@@ -124,6 +131,19 @@ function injectTitleStyles(): void {
                   0 0 22px rgba(255,210,63,.65) !important;
     }
     .ssp-title-btn:hover { transform: scale(1.05) !important; }
+    /* Short screens: tighter logo + menu. Landscape phones: logo left, menu right. */
+    @media (max-height: 600px) {
+      .ssp-title-logo { margin-bottom: 10px; }
+      .ssp-title-menu { gap: 9px; margin-top: 6px; }
+      .ssp-title-btn.ssp-btn--lg { min-height: 50px; padding-top: 9px; padding-bottom: 9px; font-size: 23px; }
+      .ssp-title-btn.ssp-btn--md { min-height: 44px; padding-top: 7px; padding-bottom: 7px; }
+    }
+    @media (orientation: landscape) and (max-height: 500px) {
+      .ssp-title-stage { flex-direction: row; justify-content: center; align-items: safe center; gap: clamp(16px, 5vw, 48px); }
+      .ssp-title-logo { margin: 0; font-size: clamp(30px, 6vw, 52px); max-width: 46vw; }
+      .ssp-title-menu { margin-top: 0; gap: 8px; }
+      .ssp-title-btn { width: min(260px, 40vw); }
+    }
     .ssp-title-settings-overlay {
       position: fixed; inset: 0; z-index: 200;
       background: ${palette.overlay};
