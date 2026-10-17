@@ -16,7 +16,7 @@ on:
 #   twin-downtown   ~16 min  Twin match on Downtown, fork walk, playtest
 #   probe-registry  ~27 min  Board registry (carnival seed-7 + Downtown graph)
 #   probe-cruise    ~20 min  Cruise Ship graph, seed-7 replay to the finale,
-#                            autoplay fork coverage, match opening (estimate)
+#                            autoplay fork coverage, match opening, fork walk (estimate)
 #   check           <1 min   gate
 jobs:
   core:
@@ -189,8 +189,8 @@ jobs:
       - name: Twin match on Downtown
         run: SSP_BOARD=downtown node tools/twin-seed.mjs
 
-      - name: Fork walk-through and item-then-roll (all boards)
-        run: node tools/probe-fork-walk.mjs --ci
+      - name: Fork walk-through and item-then-roll (carnival + Downtown)
+        run: SSP_FW_BOARDS=carnival,downtown node tools/probe-fork-walk.mjs --ci
 
       - name: Playtest
         run: node tools/smoke-play.mjs
@@ -267,6 +267,9 @@ jobs:
 
       - name: Match opening on the Cruise Ship
         run: SSP_BOARD=cruise node tools/probe-opening.mjs
+
+      - name: Fork walk-through and item-then-roll (Cruise Ship)
+        run: SSP_FW_BOARDS=cruise node tools/probe-fork-walk.mjs --ci
 
   check:
     if: always()

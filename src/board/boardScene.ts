@@ -500,8 +500,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
     const E = cruise ? settings.board.cruiseShadowExtent : settings.board.shadowExtent;
     if (cruise) cam.near = -40;
     const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
-    // The ship's box is twice the carnival's across, so it gets twice the texels on desktop.
-    const size = coarse ? (cruise ? 2048 : 1024) : cruise ? 4096 : 2048;
+    const size = coarse ? 1024 : 2048;
     cam.left = -E;
     cam.right = E;
     cam.top = E;
