@@ -177,6 +177,8 @@ export const settings = {
       pierAngle: Math.PI / 2 - 0.45, // heading on the coast (0 = east, pi/2 = south)
     },
     shadowExtent: 26, // key-light shadow box half-size while the carnival board is up
+    cruiseShadowExtent: 50, // the same for the cruise ship (bow to stern, sponsons to lifeboats)
+    cruiseFogScale: 2.4, // dusk/night fog distances x this on the ship (its overview sits further out)
   },
 
   // ---- lively board (cosmetic only; `?lively=0` turns it off) ----

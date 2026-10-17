@@ -1,7 +1,7 @@
 import { chromium } from "@playwright/test";
 
 const BASE = (process.env.SSP_URL ?? "http://127.0.0.1:5177").replace(/\/$/, "");
-// SSP_BOARD=downtown|carnival|random plays that board (default: none = saved rule / carnival).
+// SSP_BOARD=downtown|carnival|cruise|random plays that board (default: none = saved rule / carnival).
 const boardQuery = process.env.SSP_BOARD ? `&board=${process.env.SSP_BOARD}` : "";
 const URL = `${BASE}/?seed=7&screen=board&autoplay=1&audio=0&speed=4${boardQuery}`;
 const TURNS = 9;
@@ -98,7 +98,7 @@ try {
     failed = true;
   }
   const boards = [...new Set([...a.ends, ...b.ends].filter((r) => r.coins.length > 0).map((r) => r.board).filter(Boolean))];
-  const want = process.env.SSP_BOARD === "downtown" ? "downtown" : process.env.SSP_BOARD === "carnival" ? "fizzy-fairground" : null;
+  const want = process.env.SSP_BOARD === "downtown" ? "downtown" : process.env.SSP_BOARD === "cruise" ? "cruise-ship" : process.env.SSP_BOARD === "carnival" ? "fizzy-fairground" : null;
   console.log(`board ${JSON.stringify(boards)}${want ? ` expected ${want}` : ""}`);
   if (boards.length !== 1 || (want && boards[0] !== want)) failed = true;
   for (let turn = 1; turn <= TURNS; turn++) {

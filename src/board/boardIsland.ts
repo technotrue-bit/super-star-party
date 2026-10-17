@@ -198,7 +198,7 @@ function buildCliff(shape: IslandShape, kit: BoardTextures): THREE.Mesh {
 }
 
 /** Wavy ripple marks on the sea (tiles). Linear + mipmaps: it is seen at a glance angle. */
-function rippleTexture(): THREE.CanvasTexture {
+export function rippleTexture(): THREE.CanvasTexture {
   const S = 128;
   const c = document.createElement("canvas");
   c.width = S;
@@ -363,7 +363,7 @@ function luminance(c: THREE.Color): number {
 }
 
 /** Gradient sky dome: zenith over a pale horizon that meets the sea. */
-function buildSkyDome(): { mesh: THREE.Mesh; set: (top: number, horizon: number) => void } {
+export function buildSkyDome(): { mesh: THREE.Mesh; set: (top: number, horizon: number) => void } {
   const geo = new THREE.SphereGeometry(I.skyRadius, 32, 16);
   const uniforms = {
     uTop: { value: new THREE.Color(palette.skyTop) },

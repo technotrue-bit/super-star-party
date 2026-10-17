@@ -5,7 +5,8 @@
  *   ITEM section (P3b): I-H-WARP, I-H-DOUBLE, I-H-ZIP, I-CPU-WARP, I-CPU-DOUBLE (grants via the sampler's
  *   __GRANTQ hook at turn:start, so items arrive during the announce beat).
  *
- * One chromium browser, six small (480x360) pages per board in parallel (carnival fork 6, downtown fork 5),
+ * One chromium browser, six small (480x360) pages per board in parallel (carnival fork 6, downtown fork 5,
+ * cruise fork 42 = Ballroom Doors),
  * one scenario group each. Each page starts ["local","cpu","local","cpu"] on seed 2; the probe uses forced
  * dice, so it never needs a golden. Grand Prize / shop popups are answered so no scenario blocks the next.
  * Expected paths come from __SSP__.board().next and the LIVE starBalloonPos (never hard-coded).
@@ -48,7 +49,7 @@ const note = (m) => console.log(`NOTE ${m}`);
   }, cap * 1000).unref();
 }
 
-const FORKS = { carnival: 6, downtown: 5 };
+const FORKS = { carnival: 6, downtown: 5, cruise: 42 };
 const KINDS = ["pip", "bounce", "glimmer", "tusk"];
 const NAMES = ["Pip", "Bounce", "Glimmer", "Player 4"];
 const CTRL = ["local", "cpu", "local", "cpu"];
