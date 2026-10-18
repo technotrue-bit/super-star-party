@@ -9,6 +9,7 @@
 import { fizzyFairground, type BoardDef } from "./boardData";
 import { downtown } from "./boards/downtownData";
 import { cruiseShip } from "./boards/cruiseData";
+import type { BoardTheme } from "./boardTheme";
 
 /** Registered board ids. Adding a board = one union member + one BOARDS entry. */
 export type BoardId = "fizzy-fairground" | "downtown" | "cruise-ship";
@@ -24,8 +25,12 @@ export interface BoardEntry {
   blurb: string;
   /** Bumped whenever def or movement rules change in a way peers must agree on (net checks). */
   rev: number;
-  /** Lazy scenery chunk. Absent: boardScene builds the theme in the main bundle. */
-  loadScene?: () => Promise<unknown>;
+  /**
+   * Lazy scenery chunk; resolves once its assets are decoded. Absent:
+   * boardScene builds the theme from the main bundle. Load through
+   * loadBoardTheme(), which memoizes it and falls back on failure.
+   */
+  loadScene?: () => Promise<BoardTheme>;
 }
 
 export const BOARDS: Record<BoardId, BoardEntry> = {
@@ -42,6 +47,8 @@ export const BOARDS: Record<BoardId, BoardEntry> = {
     // 4: slice 2 (city scenery, Downtown item/giver names). Older clients get
     // the "update the game" refusal instead of a mismatched board.
     rev: 4,
+    // Kenney city scenery (GLTFLoader, meshopt, the packed GLB): its own chunk.
+    loadScene: () => import("./downtown/downtownScene").then((m) => m.loadDowntownTheme()),
   },
   "cruise-ship": {
     def: cruiseShip,
@@ -85,6 +92,54 @@ export function boardIds(): BoardId[] {
 
 export function boardTag(id: BoardId): string {
   return `${id}@${BOARDS[id]?.rev ?? 0}`;
+}
+
+const themeLoads = new Map<BoardId, Promise<BoardTheme | null>>();
+const themesSettled = new Map<BoardId, BoardTheme | null>();
+
+/**
+ * Start (or join) loading `id`'s lazy scenery, once per page. Resolves null
+ * when the board has no lazy scenery or the chunk failed to load: the board
+ * then builds its placeholder scenery. With `waitMs`, also null once that
+ * long has passed: the load carries on and a later build picks it up, and
+ * until then loadedBoardTheme() says null, so nobody waits twice. Never
+ * rejects. Display only; the match never waits on it.
+ */
+export function loadBoardTheme(id: BoardId, waitMs?: number): Promise<BoardTheme | null> {
+  let job = themeLoads.get(id);
+  if (!job) {
+    const load = BOARDS[id]?.loadScene;
+    job = (load ? load() : Promise.resolve(null))
+      .catch((err: unknown) => {
+        console.warn(`[SSP] ${id} scenery failed to load; the board uses its placeholder scenery.`, err);
+        return null;
+      })
+      .then((theme) => {
+        themesSettled.set(id, theme);
+        return theme;
+      });
+    themeLoads.set(id, job);
+  }
+  if (waitMs === undefined) return job;
+  const settled = job;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (!themesSettled.has(id)) {
+        console.warn(`[SSP] ${id} scenery is slow to load; the board uses its placeholder scenery for now.`);
+        themesSettled.set(id, null);
+      }
+      resolve(null);
+    }, waitMs);
+    void settled.then((theme) => {
+      clearTimeout(timer);
+      resolve(theme);
+    });
+  });
+}
+
+/** `id`'s theme once its load settled (null: none, failed, or gave up waiting). Undefined while loading or not asked yet. */
+export function loadedBoardTheme(id: BoardId): BoardTheme | null | undefined {
+  return themesSettled.get(id);
 }
 
 /** `id@rev` for every registered board. A guest's join carries this list. */

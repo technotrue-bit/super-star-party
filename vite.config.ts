@@ -3,21 +3,26 @@ import { execSync } from "node:child_process";
 import { defineConfig, type Plugin } from "vite";
 
 /**
- * three-mesh-bvh reads Line, Points, and BatchedMesh at init. A Mesh never
- * uses those paths. Redirect the package's `three` import so those classes
- * stay out of the shared Three module (that module lives in the boot bundle).
+ * Redirect one lazy library's `three` import to a facade module. Three is a
+ * single module shared with the boot bundle, so every class a lazy chunk
+ * names is hoisted into the main chunk; the facade passes through what the
+ * game already ships and stands in for the rest.
+ * - three-mesh-bvh reads Line, Points, and BatchedMesh at init. A Mesh never
+ *   uses those paths.
+ * - GLTFLoader (Downtown chunk) names skins, animation, lines, points and
+ *   PBR materials the packed city GLB never uses.
  *
  * fileURLToPath, not URL.pathname: on Windows pathname is `/C:/...`, which
  * the loader cannot open.
  */
-function bvhThreeFacade(): Plugin {
-  const facade = fileURLToPath(new URL("./src/render/bvhThreeFacade.ts", import.meta.url));
+function threeFacade(name: string, importerPath: string, facadeFile: string): Plugin {
+  const facade = fileURLToPath(new URL(facadeFile, import.meta.url));
   return {
-    name: "bvh-three-facade",
+    name,
     enforce: "pre",
     resolveId(source, importer) {
       if (source !== "three" || !importer) return null;
-      if (!importer.replaceAll("\\", "/").includes("/three-mesh-bvh/")) return null;
+      if (!importer.replaceAll("\\", "/").includes(importerPath)) return null;
       return facade;
     },
   };
@@ -41,10 +46,13 @@ export default defineConfig({
   define: {
     __BUILD_ID__: JSON.stringify(buildId()),
   },
-  plugins: [bvhThreeFacade()],
+  plugins: [
+    threeFacade("bvh-three-facade", "/three-mesh-bvh/", "./src/render/bvhThreeFacade.ts"),
+    threeFacade("gltf-three-facade", "/three/examples/jsm/loaders/GLTFLoader.js", "./src/board/downtown/gltfThreeFacade.ts"),
+  ],
   optimizeDeps: {
-    // Serve the package as source so the facade alias applies in dev too.
-    exclude: ["three-mesh-bvh", "@dimforge/rapier3d-compat"],
+    // Serve these as source so the facade aliases apply in dev too.
+    exclude: ["three-mesh-bvh", "@dimforge/rapier3d-compat", "three/examples/jsm/loaders/GLTFLoader.js"],
   },
   server: {
     host: true, // reachable over LAN/Tailscale for phone testing
