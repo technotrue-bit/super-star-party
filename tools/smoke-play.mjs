@@ -1,8 +1,9 @@
 /**
  * smoke-play.mjs — "does the game work?" answered by playing it.
  *
- * Drives the real UI the way a player does: title -> PLAY -> character select ->
- * START! -> ROLL! -> then lets a full match autoplay to the finale. Reports what
+ * Drives the real UI the way a player does: title -> PLAY -> PARTY -> character
+ * select -> NEXT -> board menu -> NEXT -> line-up -> PLAY! -> ROLL! -> then lets
+ * a full match autoplay to the finale. Reports what
  * actually happened (screens reached, phases, minigames, errors) rather than
  * trusting any prior claim.
  *
@@ -98,16 +99,27 @@ console.log("   screen:", st.screen, "| canvas:", await page.evaluate(() => {
 }), "| effects:", await page.evaluate(() => window.__SSP__?.effectsQuality?.() ?? window.__SSP__?.state?.()?.effectsQuality ?? "n/a"));
 await page.screenshot({ path: `${OUT}/01-title.png` });
 
-console.log("2. PLAY ->");
+console.log("2. PLAY -> PARTY ->");
 await clickText(/play/i, "PLAY");
+await page.waitForTimeout(1800);
+console.log("   screen:", (await state()).screen);
+await clickText(/PARTY/, "PARTY");
 await page.waitForTimeout(1800);
 st = await state();
 console.log("   screen:", st.screen);
 await page.screenshot({ path: `${OUT}/02-selected.png` });
 
-console.log("3. START! ->");
-await clickText(/start/i, "START");
-await page.waitForTimeout(2200);
+console.log("3. NEXT -> board menu -> NEXT -> line-up -> PLAY! ->");
+await clickText(/next/i, "NEXT (hero)");
+await page.waitForTimeout(1800);
+console.log("   screen:", (await state()).screen);
+await clickText(/next/i, "NEXT (board)");
+await page.waitForTimeout(1800);
+console.log("   screen:", (await state()).screen);
+await clickText(/^play!$/i, "PLAY!");
+// The heroes hop into the screen one by one, then the board loads.
+await page.waitForFunction(() => window.__SSP__?.state?.().screen === "board", null, { timeout: 30000 }).catch(() => {});
+await page.waitForTimeout(1200);
 st = await state();
 console.log("   screen:", st.screen, "| phase:", st.phase, "| coins:", JSON.stringify(st.coins));
 await page.screenshot({ path: `${OUT}/03-board.png` });

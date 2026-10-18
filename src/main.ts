@@ -109,6 +109,9 @@ function boot(): void {
     import("./screens/matchFinale").then((m) => screens.register(m.matchFinale)),
     import("./screens/minigameMenu").then((m) => screens.register(m.minigameMenuScreen)),
     import("./screens/minigameReady").then((m) => screens.register(m.minigameReadyScreen)),
+    import("./screens/modeMenu").then((m) => screens.register(m.modeMenuScreen)),
+    import("./screens/boardMenu").then((m) => screens.register(m.boardMenuScreen)),
+    import("./screens/partyLineup").then((m) => screens.register(m.partyLineupScreen)),
   ];
   void Promise.all(screenImports).then(() => {
     // A debug hook (__SSP__.goto / openMinigame, from a test) can navigate before

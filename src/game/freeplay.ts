@@ -1,7 +1,7 @@
 /**
  * SUPER STAR PARTY — minigame free play.
  *
- * Title -> MINIGAMES -> character select -> minigame menu -> ready screen ->
+ * Title -> PLAY -> MINIGAMES -> character select -> minigame menu -> ready screen ->
  * the minigame -> back to the menu. While free play is on, the character
  * select starts a throwaway match (so the minigame screen has its four
  * players) and every "back to the board" exit returns to the menu instead.
