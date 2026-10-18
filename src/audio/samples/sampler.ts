@@ -32,8 +32,8 @@ function cycle(candidates: Zone[], counter: number): Zone | null {
   return candidates[counter % candidates.length];
 }
 
-/** The zone for a pitched note: nearest root on the layer (the higher root on a tie), then the round robin for `rrCounter`. */
-export function pickZone(zones: Zone[], midi: number, layer: number, rrCounter: number): Zone | null {
+/** The root nearest `midi` among the zones on `layer`; the higher root on a tie. */
+function nearestRoot(zones: Zone[], midi: number, layer: number): number | undefined {
   let best: number | undefined;
   for (const z of zones) {
     if (z.layer !== layer || z.root === undefined) continue;
@@ -45,9 +45,15 @@ export function pickZone(zones: Zone[], midi: number, layer: number, rrCounter: 
     const bestD = Math.abs(best - midi);
     if (d < bestD || (d === bestD && z.root > best)) best = z.root;
   }
-  if (best === undefined) return null;
+  return best;
+}
+
+/** The zone for a pitched note: nearest root on the layer (the higher root on a tie), then the round robin for `rrCounter`. */
+export function pickZone(zones: Zone[], midi: number, layer: number, rrCounter: number): Zone | null {
+  const root = nearestRoot(zones, midi, layer);
+  if (root === undefined) return null;
   return cycle(
-    zones.filter((z) => z.layer === layer && z.root === best),
+    zones.filter((z) => z.layer === layer && z.root === root),
     rrCounter,
   );
 }
@@ -142,8 +148,8 @@ function playSample(
  * to the oscillator engine. `zones` is read per event so tables can load
  * after the player is made; `buffer` returns a decoded buffer or null while
  * it is still loading. Round-robin counters live in the player, one per
- * instrument. `onStandIn` fires each time a synth voice or drum covers for a
- * sample that is not there.
+ * instrument and kit token (or melodic zone root). `onStandIn` fires each
+ * time a synth voice or drum covers for a sample that is not there.
  */
 export function createSamplerPlayer(deps: {
   table: Record<string, SampledInstrument>;
@@ -155,10 +161,12 @@ export function createSamplerPlayer(deps: {
   const counters = new Map<string, number>();
   const warned = new Set<string>();
 
-  /** Round-robin position of an instrument's next sample. */
-  const rrOf = (name: string): number => counters.get(name) ?? 0;
-  /** Advance an instrument past a sample that played; stand-ins do not count. */
-  const played = (name: string): void => void counters.set(name, rrOf(name) + 1);
+  // One counter per instrument and sound: a kit token or a melodic zone root. A shared counter would
+  // lock a regular pattern to one slot (K S K S with two round robins each plays K rr 0 every time).
+  /** Round-robin position of the next sample under `key`. */
+  const rrOf = (key: string): number => counters.get(key) ?? 0;
+  /** Advance `key` past a sample that played; stand-ins do not count. */
+  const played = (key: string): void => void counters.set(key, rrOf(key) + 1);
 
   function warnUnknown(name: string): void {
     if (warned.has(name)) return;
@@ -173,13 +181,16 @@ export function createSamplerPlayer(deps: {
       if (route === "kit") return; // kits answer drum tokens, not pitches
 
       const name = instrumentName(style);
+      const inst = table[name];
       const zones = deps.zones();
       for (const freq of freqs) {
         const midi = midiFromHz(freq);
-        const r = resolveNote(table, zones, style, midi, vel, rrOf(name), buffer);
+        const root = inst && nearestRoot(zones[name]?.zones ?? [], midi, layerFor(inst.velUpper, vel));
+        const key = `${name}:${root}`;
+        const r = resolveNote(table, zones, style, midi, vel, rrOf(key), buffer);
         if (r.kind === "sample") {
-          played(name);
-          playSample(ctx, out, t, table[name], r.buf, rateFor(midi, r.zone), lenSec, vel, opts.slide);
+          played(key);
+          playSample(ctx, out, t, table[r.instrument], r.buf, rateFor(midi, r.zone), lenSec, vel, opts.slide);
         } else if (r.standIn) {
           VOICES[r.standIn]?.(ctx, out, t, [freq], lenSec, vel, opts);
           onStandIn();
@@ -195,14 +206,15 @@ export function createSamplerPlayer(deps: {
       const name = instrumentName(style);
       const inst = table[name];
       if (!inst) warnUnknown(name);
-      const zone = inst ? pickKitZone(deps.zones()[name]?.zones ?? [], token, layerFor(inst.velUpper, vel), rrOf(name)) : null;
+      const key = `${name}:${token}`;
+      const zone = inst ? pickKitZone(deps.zones()[name]?.zones ?? [], token, layerFor(inst.velUpper, vel), rrOf(key)) : null;
       const buf = zone ? buffer(name, zone) : null;
       if (!inst || !buf) {
         drumHit(ctx, out, t, token, vel);
         onStandIn();
         return;
       }
-      played(name);
+      played(key);
       playSample(ctx, out, t, inst, buf, 1, 0, vel, undefined);
     },
   };

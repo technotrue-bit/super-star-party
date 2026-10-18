@@ -365,7 +365,7 @@ describe("createSamplerPlayer: sampled notes", () => {
     };
     const rrTable = { piano, bell: { ...piano, standIn: "glock" } };
 
-    it("count per instrument, one step per sample played", () => {
+    it("count per instrument and zone, one step per sample played", () => {
       const { c, out, player, asked } = setup({ table: rrTable, zones: () => rrZones });
       for (let i = 0; i < 3; i++) player.note(c, out, i, "s:piano", [C4], 0.2, 0.5, opts);
       player.note(c, out, 3, "s:bell", [C4], 0.2, 0.5, opts);
@@ -377,6 +377,32 @@ describe("createSamplerPlayer: sampled notes", () => {
         ["bell", "60.l0.rr0"],
         ["piano", "60.l0.rr1"],
       ]);
+    });
+
+    it("cycle independently on each zone when notes on different zones alternate", () => {
+      const two: Record<string, InstrumentZones> = {
+        piano: {
+          source: "fixture",
+          zones: [60, 64].flatMap((root) => [0, 1].map((rr) => zone({ root, layer: 0, rr }))),
+        },
+      };
+      const { c, out, player, asked } = setup({ zones: () => two });
+      const E4 = 329.6276;
+      for (let i = 0; i < 8; i++) player.note(c, out, i, "s:piano", [i % 2 === 0 ? C4 : E4], 0.2, 0.5, opts);
+      expect(asked.map(([, f]) => f)).toEqual([
+        "60.l0.rr0", "64.l0.rr0", "60.l0.rr1", "64.l0.rr1",
+        "60.l0.rr0", "64.l0.rr0", "60.l0.rr1", "64.l0.rr1",
+      ]);
+    });
+
+    it("share a counter between pitches that fall on the same zone", () => {
+      const one: Record<string, InstrumentZones> = {
+        piano: { source: "fixture", zones: [0, 1].map((rr) => zone({ root: 60, layer: 0, rr })) },
+      };
+      const { c, out, player, asked } = setup({ zones: () => one });
+      // midi 59, 60 and 61 all take the root 60 zone
+      for (const f of [246.9417, C4, 277.1826]) player.note(c, out, 0, "s:piano", [f], 0.2, 0.5, opts);
+      expect(asked.map(([, f]) => f)).toEqual(["60.l0.rr0", "60.l0.rr1", "60.l0.rr0"]);
     });
 
     it("do not advance for a note a stand-in covered", () => {
@@ -487,6 +513,21 @@ describe("createSamplerPlayer: kits", () => {
     const { c, out, player, asked } = setup();
     for (let i = 0; i < 3; i++) player.drum(c, out, i, "s:kit.core", "S", 0.5);
     expect(asked.map(([, f]) => f)).toEqual(["S.l0.rr0", "S.l0.rr1", "S.l0.rr0"]);
+  });
+
+  it("a K S K S pattern cycles each token's round robins independently", () => {
+    const twoEach: Record<string, InstrumentZones> = {
+      "kit.core": {
+        source: "fixture",
+        zones: ["K", "S"].flatMap((token) => [0, 1].map((rr) => zone({ token, layer: 0, rr }))),
+      },
+    };
+    const { c, out, player, asked } = setup({ zones: () => twoEach });
+    for (let i = 0; i < 8; i++) player.drum(c, out, i, "s:kit.core", i % 2 === 0 ? "K" : "S", 0.5);
+    expect(asked.map(([, f]) => f)).toEqual([
+      "K.l0.rr0", "S.l0.rr0", "K.l0.rr1", "S.l0.rr1",
+      "K.l0.rr0", "S.l0.rr0", "K.l0.rr1", "S.l0.rr1",
+    ]);
   });
 
   it("an unmapped token does not advance the kit's round robins", () => {
