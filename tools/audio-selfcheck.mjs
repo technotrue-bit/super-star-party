@@ -42,7 +42,7 @@ try {
 }
 
 const REQUIRED_TRACKS = [
-  "title", "board", "minigame_a", "minigame_b", "happening", "grumpus",
+  "title", "board.fairground", "mg.action", "mg.puzzle", "happening", "grumpus",
   "shop", "results", "star_fanfare", "minigame_intro", "win", "lose",
 ];
 

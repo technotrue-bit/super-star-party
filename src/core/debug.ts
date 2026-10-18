@@ -137,6 +137,8 @@ export interface SSPDebug {
   mgProbe(): { phase: string; id: string | null; cam: [number, number, number]; ranking: number[] | null; inputs: string[] };
   reset(): void;
   audioLevels(): { rms: number; peak: number };
+  /** AudioContext time now and the times of the main track's last 8 scheduled bar lines. */
+  audioBars(): { audioNow: number; bars: number[] };
   /**
    * Frame cost. `ms` is the last frame, `avgMs` the mean of the last 120.
    * `calls`/`triangles`/`points`/`lines` are renderer.info summed over every
@@ -471,6 +473,7 @@ export function installDebugAPI(): void {
   const api: SSPDebug = {
     state() {
       const cam = world.camera;
+      const { bars: _bars, ...music } = audio.debug();
       return {
         version: "0.1.0",
         screen: screens.current,
@@ -488,6 +491,7 @@ export function installDebugAPI(): void {
           duck: audio.music.duckLevel(),
           levels: audio.levels(),
           master: audio.master.gain,
+          ...music,
         },
         rngSeed: rng.seed,
         rngDraws: rng.draws,
@@ -547,6 +551,9 @@ export function installDebugAPI(): void {
     },
     audioLevels() {
       return audio.levels();
+    },
+    audioBars() {
+      return audio.debug().bars;
     },
     perf() {
       return {

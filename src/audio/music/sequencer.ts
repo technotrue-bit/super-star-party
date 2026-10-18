@@ -157,14 +157,15 @@ function totalStepsOf(voices: ParsedVoice[]): number {
 /**
  * Offline scheduling: schedule the full arrangement for `seconds`.
  * One-shot tracks stop after their last step; looping tracks wrap.
- * Every layer plays at full level; `lift` only with `opts.lift`.
+ * Every layer plays at full level; `lift` only with `opts.lift`. `bpm` and
+ * `transpose` start the clock away from the track's own (a lifted render).
  */
 export function scheduleTrackInto(
   ctx: BaseAudioContext,
   trackId: string,
   out: AudioNode,
   seconds: number,
-  opts: { lift?: boolean; player?: NotePlayer } = {},
+  opts: { lift?: boolean; bpm?: number; transpose?: number; player?: NotePlayer } = {},
 ): TrackDef {
   const def = TRACKS[trackId];
   if (!def) throw new Error(`scheduleTrackInto: unknown track '${trackId}'`);
@@ -174,11 +175,12 @@ export function scheduleTrackInto(
   const player = opts.player ?? synthPlayer;
   const layers = createLayers(ctx, out, 1, lift); // render = full arrangement
   const clock = new StepClock({
-    bpm: def.bpm,
+    bpm: opts.bpm ?? def.bpm,
     swing: def.swing,
     totalSteps: totalStepsOf(voices),
     loop: def.loop,
     t0: 0,
+    transpose: opts.transpose,
     lift,
     hasFill: sections.fill.length > 0,
   });

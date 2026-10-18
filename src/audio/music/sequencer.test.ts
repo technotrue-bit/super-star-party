@@ -248,6 +248,16 @@ describe("scheduleTrackInto", () => {
     expect(layerGains(on, outOn).map((g) => g.gain.value)).toEqual([1, 1, 1, 1, 1]);
   });
 
+  it("starts at the tempo and transpose it is given (a lifted render)", () => {
+    const id = `__test${ids.length}`;
+    ids.push(id);
+    TRACKS[id] = track([{ style: "pad", pattern: ["C4:16", "C4:16"] }], { id });
+    const { player, hits } = recorder();
+    scheduleTrackInto(new FakeCtx() as unknown as BaseAudioContext, id, {} as AudioNode, 4, { bpm: 240, transpose: 1, player });
+    expect(hits.map((h) => h.t)).toEqual([0, 1, 2, 3]); // a bar lasts 1 s at 240 BPM
+    expect(hits[0].freqs[0]).toBeCloseTo(hz("C#4"), 9);
+  });
+
   it("rejects an unknown track", () => {
     expect(() => scheduleTrackInto(new FakeCtx() as unknown as BaseAudioContext, "nope", {} as AudioNode, 1)).toThrow(/unknown track/);
   });

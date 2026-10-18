@@ -282,8 +282,8 @@ export const TRACKS: Record<string, TrackDef> = {
   },
 
   /* Bouncy carnival calliope. Swung skip-rhythm hook, call + answer, oom-pah bass. */
-  board: {
-    id: "board",
+  "board.fairground": {
+    id: "board.fairground",
     bpm: 132,
     swing: 0.62,
     loop: true,
@@ -364,8 +364,8 @@ export const TRACKS: Record<string, TrackDef> = {
   },
 
   /* High-energy hype. Driving 8ths, Am-F-C-G. */
-  minigame_a: {
-    id: "minigame_a",
+  "mg.action": {
+    id: "mg.action",
     bpm: 140,
     swing: 0.5,
     loop: true,
@@ -446,8 +446,8 @@ export const TRACKS: Record<string, TrackDef> = {
   },
 
   /* Quirky comedic staccato. C-F-G-C, woodblocks, chromatic spice. */
-  minigame_b: {
-    id: "minigame_b",
+  "mg.puzzle": {
+    id: "mg.puzzle",
     bpm: 118,
     swing: 0.5,
     loop: true,
@@ -1024,7 +1024,7 @@ export const TRACKS: Record<string, TrackDef> = {
 };
 
 export const TRACK_ORDER = [
-  "title", "board", "minigame_a", "minigame_b", "happening", "grumpus",
+  "title", "board.fairground", "mg.action", "mg.puzzle", "happening", "grumpus",
   "shop", "results", "star_fanfare", "minigame_intro", "win", "lose",
   "drumroll", "drumroll_hit",
 ];
