@@ -79,6 +79,17 @@ export const LS_MINIGAME_PACKS = "ssp.minigamePacks";
 export const LS_MINIGAME_COIN_MULT = "ssp.minigameCoinMultiplier";
 export const LS_HUMAN_PACK = "ssp.humanPack";
 export const LS_BOARD = "ssp.board";
+export const LS_TURNS = "ssp.turns";
+
+export const MIN_TURNS = 1;
+export const MAX_TURNS = 50;
+export const DEFAULT_TURNS = 10;
+
+/** Whole number of turns in 1..MAX_TURNS, or null when `n` is not a number. */
+export function clampTurns(n: number): number | null {
+  if (!Number.isFinite(n)) return null;
+  return Math.max(MIN_TURNS, Math.min(MAX_TURNS, Math.floor(n)));
+}
 
 function storage(): Storage | null {
   try {
@@ -177,6 +188,19 @@ export type PersistedRules = Pick<LiveMatchRules, "enabledPacks" | "coinMultipli
   /** Board for the next match. "random" is resolved once, at match start. */
   board: BoardRule;
 };
+
+/** Turns for the next match: storage, else 10. */
+export function readTurnsRule(): number {
+  const raw = readKey(LS_TURNS);
+  return (raw === null ? null : clampTurns(Number(raw))) ?? DEFAULT_TURNS;
+}
+
+/** Save the turn count for future matches (clamped to 1..50); returns what was saved. */
+export function setTurnsRule(turns: number): number {
+  const next = clampTurns(turns) ?? DEFAULT_TURNS;
+  writeKey(LS_TURNS, String(next));
+  return next;
+}
 
 /** `?board=` wins for this page load (never saved), then storage, then the carnival. */
 function readBoardRule(): BoardRule {

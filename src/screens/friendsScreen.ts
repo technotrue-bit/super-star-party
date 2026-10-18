@@ -9,7 +9,7 @@ import { ui } from "../ui/kit";
 import { screens } from "./screenManager";
 import type { Screen } from "./screenManager";
 import { DEFAULT_BOARD } from "../board/registry";
-import { boardRuleLabel, mountBoardPicker } from "../ui/boardPicker";
+import { boardRuleLabel, mountBoardPicker, mountTurnsStepper } from "../ui/boardPicker";
 import {
   announceLobbyBoard,
   createRoom,
@@ -22,7 +22,6 @@ import {
   subscribeParty,
 } from "../net/session";
 
-const TURN_CHOICES = [3, 5, 10];
 
 let styleInjected = false;
 
@@ -205,19 +204,7 @@ const friendsImpl = {
       }
 
       if (view.host) {
-        const turns = document.createElement("div");
-        turns.className = "ssp-friends__row";
-        for (const n of TURN_CHOICES) {
-          const btn = ui.button({
-            label: `${n} TURNS`,
-            kind: view.turns === n ? "gold" : "ghost",
-            size: "sm",
-            onClick: () => setPlannedTurns(n),
-          });
-          btn.el.dataset.partyTurns = String(n);
-          turns.appendChild(btn.el);
-        }
-        card.appendChild(turns);
+        card.appendChild(mountTurnsStepper({ get: () => view.turns, set: setPlannedTurns }).el);
         card.appendChild(mountBoardPicker({ compact: true, onChange: () => announceLobbyBoard() }).el);
         const start = ui.button({
           label: "START MATCH",
