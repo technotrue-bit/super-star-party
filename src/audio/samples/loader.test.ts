@@ -192,6 +192,23 @@ describe("load", () => {
     expect([...aac.fetched].sort()).toEqual(pianoZones.map((z) => urlOf(z, "m4a")).sort());
   });
 
+  it("a file two zones share is fetched and decoded once", async () => {
+    // A kit token recorded at one dynamic lists the same file on both velocity layers.
+    const soft = { token: "B", layer: 0, rr: 0, tune: 0, frames: 4800, file: "core/kit/B-v0.abc" };
+    const loud = { ...soft, layer: 1 };
+    const kit: SampledInstrument = { ...instrument("core"), kind: "kit", velUpper: [0.6, 1] };
+    const h = harness({
+      table: { kit },
+      zones: async () => ({ kit: { source: "fixture", zones: [soft, loud] } }),
+    });
+    const loader = await loaderFor(h);
+    await loader.load("core", ctx);
+    expect(h.fetched).toEqual([urlOf(soft)]);
+    expect(h.decoded).toEqual([OPUS_MARK, GOOD]); // the format probe, then the file
+    expect(loader.status("core")).toBe("ready");
+    expect(loader.buffer("kit", loud)).toBe(loader.buffer("kit", soft));
+  });
+
   it("loads only the files of the requested set", async () => {
     const h = harness();
     const loader = await loaderFor(h);

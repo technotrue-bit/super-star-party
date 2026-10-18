@@ -213,7 +213,7 @@ export class SampleLoader {
           f = { instrument, zone, bytes: null, loaded: null, failures: 0 };
           this.files.set(zone.file, f);
         }
-        files.push(f);
+        if (!files.includes(f)) files.push(f); // zones may share a file (a kit layer reusing another's)
       }
     }
     return files;
