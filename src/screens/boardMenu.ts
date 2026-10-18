@@ -14,7 +14,7 @@ import { audio } from "../audio/audioEngine";
 import { BOARDS, boardIds, type BoardId, type BoardRule } from "../board/registry";
 import { boardSnapshot, hasBoardSnapshot } from "../board/boardSnapshot";
 import { readPersistedRules, setBoardRule } from "../minigames/packRules";
-import { boardRuleBlurb, boardRuleLabel } from "../ui/boardPicker";
+import { boardRuleBlurb, boardRuleLabel, mountTurnsStepper } from "../ui/boardPicker";
 import { screens, type Screen } from "./screenManager";
 
 const STYLE_ID = "ssp-boardmenu-styles";
@@ -66,10 +66,11 @@ function injectStyles(): void {
       cursor:pointer;touch-action:manipulation}
     .ssp-bm-tab:active{transform:translateY(2px);box-shadow:0 1px 0 ${palette.ink}}
     .ssp-bm-tab--on{background:${palette.sun};box-shadow:0 0 0 3px ${palette.candy},0 3px 0 3px ${palette.ink}}
+    .ssp-bm__turns{flex-wrap:wrap}
     .ssp-bm__next{flex:0 0 auto;width:min(320px,86vw)}
     @media (orientation:landscape) and (max-height:560px){
       .ssp-bm__main{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);align-items:center;column-gap:16px}
-      .ssp-bm__stage{grid-row:1 / span 3}
+      .ssp-bm__stage{grid-row:1 / span 4}
       .ssp-bm__frame{width:min(100%, calc((100dvh - 200px) * 1.6))}
       .ssp-bm__next.ssp-btn--lg{width:min(260px,40vw);min-height:46px;padding-top:6px;padding-bottom:6px;font-size:22px}
     }
@@ -187,7 +188,11 @@ const boardMenuImpl: BoardMenuState & Screen = {
       return t;
     });
 
-    main.append(stage, name, blurb, tabs);
+    // How long the match runs (1..50 turns), saved like the board.
+    const turns = mountTurnsStepper();
+    turns.el.classList.add("ssp-bm__turns");
+
+    main.append(stage, name, blurb, tabs, turns.el);
 
     const next = ui.button({
       label: "NEXT ▶",

@@ -27,6 +27,7 @@ import { BOARDS, activeBoardId } from "../board/registry";
 import { boardSnapshot } from "../board/boardSnapshot";
 import { readPersistedRules } from "../minigames/packRules";
 import { partySetup } from "../game/partySetup";
+import { readTurnsRule } from "../minigames/packRules";
 import { onViewportChange, viewportSize } from "../ui/viewport";
 import { screens, type Screen } from "./screenManager";
 
@@ -276,7 +277,7 @@ const lineupImpl: LineupState & Screen = {
       if (s && Number.isFinite(Number(s))) seed = Number(s);
     }
     setOnlineMatch(false);
-    startMatch(kinds, names, 10, seed, controllers);
+    startMatch(kinds, names, readTurnsRule(), seed, controllers);
   },
 
   _buildStage() {

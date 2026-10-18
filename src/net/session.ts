@@ -20,7 +20,7 @@ import { storedCpuLevel } from "../config/cpuLevel";
 import { roster } from "../characters/roster";
 import { match, snapshot, startMatch } from "../core/game";
 import { ui } from "../ui/kit";
-import { assignPlayerPacks, blankPlayedByPack, readPersistedRules } from "../minigames/packRules";
+import { assignPlayerPacks, blankPlayedByPack, clampTurns, readPersistedRules, readTurnsRule, setTurnsRule } from "../minigames/packRules";
 import {
   boardIds,
   boardTag,
@@ -286,7 +286,7 @@ export function createRoom(): string {
     code,
     hostId: id,
     started: false,
-    turns: urlTurns() ?? 10,
+    turns: urlTurns() ?? readTurnsRule(),
     board: hostBoardRule(),
     seats: [0, 1, 2, 3].map((index) => ({
       index,
@@ -334,7 +334,7 @@ export function cycleSeatKind(index: number): void {
 
 export function setPlannedTurns(turns: number): void {
   if (!room || !isHost() || room.started) return;
-  room.turns = turns;
+  room.turns = setTurnsRule(turns);
   notify();
 }
 
@@ -425,9 +425,7 @@ export function closeParty(): void {
 function urlTurns(): number | undefined {
   const n = urlNumber("turns");
   if (n === undefined) return undefined;
-  const turns = Math.floor(n);
-  if (turns < 1 || turns > 10) return undefined;
-  return turns;
+  return clampTurns(n) ?? undefined;
 }
 
 function buildSetup(): MatchSetup {
