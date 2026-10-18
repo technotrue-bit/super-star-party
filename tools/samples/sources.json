@@ -29,15 +29,17 @@
       "TrumpetSus.sfz",
       "TromboneSus.sfz",
       "UprightPiano.sfz",
+      "ContrabassPizz.sfz",
       "Brass/Trumpet/sus/",
       "Brass/Tenor Trombone/sus/",
-      "Keys/Upright Piano/"
+      "Keys/Upright Piano/",
+      "Strings/Solo Contrabass/Pizz/"
     ],
     "license": "CC0-1.0",
     "licenseFileSha256": "36ffd9dc085d529a7e60e1276d73ae5a030b020313e6c5408593a6ae2af39673",
     "title": "VS Chamber Orchestra: Community Edition (VSCO-2 CE)",
     "author": "Versilian Studios LLC (Sam Gossner) and Ivy Audio (Simon Dalzell)",
-    "creditLine": "Trumpet, trombone and upright piano"
+    "creditLine": "Trumpet, trombone, upright piano and pizzicato double bass"
   },
   {
     "id": "virtuosity",
@@ -57,17 +59,5 @@
     "title": "Virtuosity Drums",
     "author": "Versilian Studios LLC (drummer Austin McMahon), with woodblock samples by Karoryfer Samples",
     "creditLine": "Drum kit and percussion"
-  },
-  {
-    "id": "freepats-bass-yr",
-    "kind": "archive",
-    "url": "https://github.com/freepats/electric-bass-YR/releases/download/2019-09-30/FingerBassYR-SFZ+FLAC-20190930.7z",
-    "sha256": "36f87ec9eb086ef25050312522aacf71213c582f46989e0c5a12681304596587",
-    "licenseFile": "FingerBassYR SFZ+FLAC-20190930/LICENSE.txt",
-    "license": "CC0-1.0",
-    "licenseFileSha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
-    "title": "Bass Guitar YR (Finger Bass YR, 2019-09-30)",
-    "author": "Andrea Biasior, published by the FreePats project (https://freepats.zenvoid.org/)",
-    "creditLine": "Bass guitar"
   }
 ]

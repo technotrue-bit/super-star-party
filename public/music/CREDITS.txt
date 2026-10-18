@@ -5,16 +5,12 @@ The music plays recorded instruments from these sample libraries. Thank you to e
 Glockenspiel and tambourine: "Versilian Community Sample Library (VCSL)" by Versilian Studios LLC and contributors, from https://github.com/sgossner/VCSL (commit c1ea7bcc3c7309650ab0da9d15c9cd1fbc4a4c7e, SFZ mapping at commit dfcf4a4918771eee884b96ad4493de82ef84daf6).
 Licensed under Creative Commons CC0 1.0 Universal (public domain dedication), https://creativecommons.org/publicdomain/zero/1.0/.
 
-Trumpet, trombone and upright piano: "VS Chamber Orchestra: Community Edition (VSCO-2 CE)" by Versilian Studios LLC (Sam Gossner) and Ivy Audio (Simon Dalzell), from https://github.com/sgossner/VSCO-2-CE (commit 440300901dfe9275fd84e0b7763af1f8443ae62e, SFZ mapping at commit 6dd651d55dde97fd4028699be9d4481f26917891).
+Trumpet, trombone, upright piano and pizzicato double bass: "VS Chamber Orchestra: Community Edition (VSCO-2 CE)" by Versilian Studios LLC (Sam Gossner) and Ivy Audio (Simon Dalzell), from https://github.com/sgossner/VSCO-2-CE (commit 440300901dfe9275fd84e0b7763af1f8443ae62e, SFZ mapping at commit 6dd651d55dde97fd4028699be9d4481f26917891).
 Licensed under Creative Commons CC0 1.0 Universal (public domain dedication), https://creativecommons.org/publicdomain/zero/1.0/.
 
 Drum kit and percussion: "Virtuosity Drums" by Versilian Studios LLC (drummer Austin McMahon), with woodblock samples by Karoryfer Samples, from https://github.com/sfzinstruments/virtuosity_drums (commit 9f04cf9a734527edfbb0a4eee1f674e45bbf71bc).
 Licensed under Creative Commons CC0 1.0 Universal (public domain dedication), https://creativecommons.org/publicdomain/zero/1.0/.
 
-Bass guitar: "Bass Guitar YR (Finger Bass YR, 2019-09-30)" by Andrea Biasior, published by the FreePats project (https://freepats.zenvoid.org/), from https://github.com/freepats/electric-bass-YR/releases/download/2019-09-30/FingerBassYR-SFZ+FLAC-20190930.7z (sha256 36f87ec9eb086ef25050312522aacf71213c582f46989e0c5a12681304596587).
-Licensed under Creative Commons CC0 1.0 Universal (public domain dedication), https://creativecommons.org/publicdomain/zero/1.0/.
-
 Thank you to the makers of "Versilian Community Sample Library (VCSL)" for giving it to the public domain.
 Thank you to the makers of "VS Chamber Orchestra: Community Edition (VSCO-2 CE)" for giving it to the public domain.
 Thank you to the makers of "Virtuosity Drums" for giving it to the public domain.
-Thank you to the makers of "Bass Guitar YR (Finger Bass YR, 2019-09-30)" for giving it to the public domain.

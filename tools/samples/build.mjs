@@ -2,9 +2,10 @@
 //
 //   node --experimental-strip-types tools/samples/build.mjs [--ranges] [--set <id>]... [--force]
 //
-// --ranges  prints, per sampled instrument, the MIDI range the played tracks need (note + voice
-//           transpose, +1 on board.* tracks for the lift) and the drum tokens they use. Voices still
-//           on synth styles count through each instrument's `replaces` list.
+// --ranges  reports, per played track, the notes its instruments' built zones do not cover (note +
+//           voice transpose, +1 on board.* tracks for the lift; a note is covered when its nearest
+//           root is within maxShift) and drum tokens with no zone. Voices still on synth styles
+//           count through each instrument's `replaces` list. Task 8 re-voices what it lists.
 // otherwise builds the chosen sets (every set in instruments.json when no --set is given):
 //   1. fetches each source into tools/samples/.cache/ at its pinned commit or checksum
 //   2. per kept zone: downmix to mono, shift a derived root, resample to 48 kHz, trim to 2 ms before
@@ -27,11 +28,14 @@
 //   files) the source may be read from; the build checks out only the files its recipes use.
 // tools/samples/instruments.json, one recipe per instrument:
 //   { source, set, kind: "melodic" | "kit", replaces, standIn, oneShot, maxLen, release, gain,
-//     velUpper, melodic: files (SFZ), range: [lo, hi], vel (SFZ velocity read per layer), rr;
+//     velUpper, melodic: files (SFZ), range? [lo, hi], vel (SFZ velocity read per layer), rr;
 //     kit: sfzRoot (folder sample paths start from), tokens: { <token>: { files, key?, vel, rr?,
 //     source?, level? (dB), maxLen? (at most the kit's) } } }
-//   A kit token's `vel` entry may be a list (one SFZ velocity per round robin). A token with fewer
-//   `vel` entries than the kit has layers reuses its last zone for the layers above.
+//   A melodic instrument's zones span its recorded compass: a root every 3 semitones between the
+//   lowest and highest recordings, plus at most one root derived within 3 semitones beyond each end.
+//   `range` narrows that to the notes it lists. A kit token's `vel` entry may be a list (one SFZ
+//   velocity per round robin). A token with fewer `vel` entries than the kit has layers reuses its
+//   last zone for the layers above.
 //
 // Needs git, curl, ffmpeg/ffprobe (libopus, aac, soxr) and, for .7z archives, python3 (py7zr is
 // installed into tools/samples/.venv).
@@ -76,6 +80,8 @@ const TARGET_RMS_DB = -18;
 /** No zone peaks above this after matching, in dBFS. */
 const PEAK_CEILING_DB = -1;
 const MELODIC_MAX_SHIFT = 1.5;
+/** Farthest a derived root may sit beyond the lowest or highest recording, in semitones. */
+const END_REACH = 3;
 const MB = 2 ** 20;
 const SET_CAP = 24 * MB;
 const PAIR_CAP = 44 * MB;
@@ -171,69 +177,92 @@ function instrumentsFor(style, instruments) {
   return Object.keys(instruments).filter((name) => (instruments[name].replaces ?? []).includes(style));
 }
 
+/** The velocity layer for `vel`, as the sampler picks it. */
+function layerFor(velUpper, vel) {
+  const i = velUpper.findIndex((u) => vel <= u);
+  return i < 0 ? velUpper.length - 1 : i;
+}
+
+/** Notes as ranges: [40, 41, 42, 45] reads "40-42 45". */
+function spans(notes) {
+  const sorted = [...new Set(notes)].sort((a, b) => a - b);
+  const out = [];
+  for (const n of sorted) {
+    const last = out[out.length - 1];
+    if (last && n === last[1] + 1) last[1] = n;
+    else out.push([n, n]);
+  }
+  return out.map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(" ");
+}
+
+/**
+ * Reports the notes of the played tracks that the built zones do not cover: the nearest root on the
+ * note's layer is more than maxShift away (the sampler's rule; slides excluded, as in Task 8's coverage
+ * test). Chord voices carry CHORDS entries, which are MIDI notes, not Hz.
+ */
 async function printRanges(instruments) {
   const { TRACKS, parseTrack, parseSection } = await import(tsUrl("music/tracks.ts"));
-  const need = new Map();
-  const unmapped = new Set();
-  let chordVoices = 0;
-  const entry = (name) => {
-    if (!need.has(name)) need.set(name, { lo: Infinity, hi: -Infinity, tracks: new Set(), tokens: new Map() });
-    return need.get(name);
+  const { SAMPLED } = await import(tsUrl("samples/instruments.gen.ts"));
+  const { ZONES } = await import(tsUrl("samples/zones.gen.ts"));
+  const covered = (name, midi, layer) => {
+    const roots = (ZONES[name]?.zones ?? []).filter((z) => z.layer === layer && z.root !== undefined).map((z) => z.root);
+    return roots.some((r) => Math.abs(r - midi) <= SAMPLED[name].maxShift);
   };
+  console.log("Zones cover (MIDI, within maxShift of a root):");
+  for (const [name, inst] of Object.entries(SAMPLED)) {
+    if (inst.kind === "kit") {
+      console.log(`  ${name.padEnd(10)} tokens ${[...new Set(ZONES[name].zones.map((z) => z.token))].join(" ")}`);
+      continue;
+    }
+    const layers = inst.velUpper.map((_, layer) => spans([...Array(128).keys()].filter((m) => covered(name, m, layer))));
+    console.log(`  ${name.padEnd(10)} ${layers.join(" | ")}`);
+  }
+  console.log("\nPlayed notes outside them (note + voice transpose, +1 on board.* for the lift; slides excluded):");
+  let outside = 0;
+  let chordVoices = 0;
+  const unmapped = new Set();
   for (const id of PLAYED_TRACKS) {
     const def = TRACKS[id];
     if (!def) fail(`--ranges: played track ${id} is not in TRACKS`);
-    const lift = id.startsWith("board.") ? 1 : 0;
+    const lifts = id.startsWith("board.") ? [0, 1] : [0];
     const voices = [...parseTrack(def), ...parseSection(def, "fill"), ...parseSection(def, "pickup")];
     for (const v of voices) {
       const names = instrumentsFor(v.style, instruments);
       if (names.length === 0) unmapped.add(`${v.style} (${id})`);
-      // A chord voice's events carry CHORDS entries, which are MIDI notes, not Hz.
       const isChord = v.chordNames.length > 0;
       if (isChord && names.length > 0) chordVoices++;
       for (const name of names) {
-        const e = entry(name);
-        e.tracks.add(id);
+        const inst = SAMPLED[name];
+        if (!inst) {
+          console.log(`  ${id.padEnd(17)} ${v.style} -> ${name}: not built`);
+          continue;
+        }
+        const missed = [];
         for (const bar of v.bars) {
           for (const ev of bar) {
-            if (ev.kind === "note") {
+            const layer = layerFor(inst.velUpper, Math.min(1, ev.vel * v.gain));
+            if (ev.kind === "drum" && inst.kind === "kit") {
+              if (!ZONES[name].zones.some((z) => z.token === ev.token && z.layer === layer)) missed.push(ev.token);
+            } else if (ev.kind === "note" && inst.kind === "melodic" && !ev.slide) {
               for (const f of ev.freqs) {
                 const midi = (isChord ? f : Math.round(69 + 12 * Math.log2(f / 440))) + v.transpose;
-                e.lo = Math.min(e.lo, midi);
-                e.hi = Math.max(e.hi, midi + lift);
+                for (const lift of lifts) if (!covered(name, midi + lift, layer)) missed.push(midi + lift);
               }
-            } else if (ev.kind === "drum") {
-              const vel = Math.min(1, ev.vel * v.gain);
-              const t = e.tokens.get(ev.token) ?? { n: 0, lo: Infinity, hi: -Infinity };
-              t.n++;
-              t.lo = Math.min(t.lo, vel);
-              t.hi = Math.max(t.hi, vel);
-              e.tokens.set(ev.token, t);
             }
           }
         }
+        if (missed.length === 0) continue;
+        outside += missed.length;
+        const where = `${v.style}${v.layer !== "base" ? ` (${v.layer}${v.transpose ? `, ${v.transpose > 0 ? "+" : ""}${v.transpose}` : ""})` : v.transpose ? ` (${v.transpose})` : ""}`;
+        const what = inst.kind === "kit" ? `tokens ${[...new Set(missed)].join(" ")}` : `notes ${spans(missed)}`;
+        console.log(`  ${id.padEnd(17)} ${where.padEnd(26)} -> ${name.padEnd(9)} ${missed.length} event${missed.length === 1 ? "" : "s"}, ${what}`);
       }
     }
   }
-  console.log("MIDI ranges the played tracks need (note + voice transpose, +1 on board.* tracks for the lift)");
-  for (const [name, e] of [...need].sort(([a], [b]) => a.localeCompare(b))) {
-    const inst = instruments[name];
-    const tracks = [...e.tracks].join(", ");
-    if (!inst) {
-      console.log(`  ${name.padEnd(10)} not in instruments.json (${tracks})`);
-    } else if (inst.kind === "kit") {
-      const toks = [...e.tokens].sort().map(([t, s]) => `${t} x${s.n} vel ${s.lo.toFixed(2)}-${s.hi.toFixed(2)}`);
-      const missing = [...e.tokens.keys()].filter((t) => !inst.tokens?.[t]);
-      console.log(`  ${name.padEnd(10)} ${toks.join(", ")}${missing.length ? `   MISSING ${missing.join(" ")}` : ""}`);
-    } else {
-      const [lo, hi] = inst.range ?? [NaN, NaN];
-      const ok = lo <= e.lo && hi >= e.hi;
-      console.log(`  ${name.padEnd(10)} ${`${e.lo}-${e.hi}`.padEnd(8)} instruments.json ${lo}-${hi} ${ok ? "ok" : "GROW"}   (${tracks})`);
-    }
-  }
+  if (outside === 0) console.log("  none");
   for (const u of unmapped) console.log(`  no sampled instrument replaces ${u}`);
   if (chordVoices > 0) {
-    console.log(`  note: ${chordVoices} chord voices read as MIDI notes (CHORDS); parseVoices hands them to players as Hz`);
+    console.log(`note: ${chordVoices} chord voices read as MIDI notes (CHORDS); parseVoices hands them to players as Hz`);
   }
 }
 
@@ -280,8 +309,10 @@ async function validate(instruments, sources) {
       if (!Object.hasOwn(VOICES, inst.standIn) || inst.standIn === "drums") {
         fail(`${where}: standIn "${inst.standIn}" is not a melodic voice in VOICES`);
       }
-      const [lo, hi] = inst.range ?? [];
-      if (!Number.isInteger(lo) || !Number.isInteger(hi) || lo > hi) fail(`${where}: range must be [lo, hi]`);
+      if (inst.range !== undefined) {
+        const [lo, hi] = inst.range;
+        if (!Number.isInteger(lo) || !Number.isInteger(hi) || lo > hi) fail(`${where}: range must be [lo, hi]`);
+      }
       if (!Array.isArray(inst.vel) || inst.vel.length !== inst.velUpper.length) fail(`${where}: one vel per layer`);
       if (!inst.files) fail(`${where}: no files`);
     } else {
@@ -574,6 +605,7 @@ function parseSfz(text, readInclude, sampleDir) {
         xfout: [num(op.xfout_lovel, 127), num(op.xfout_hivel, 127)],
         seqLength: num(op.seq_length, 1),
         seqPosition: num(op.seq_position, 1),
+        lorand: num(op.lorand, 0),
       };
     });
 }
@@ -588,14 +620,21 @@ function velWeight(r, v) {
   return fadeIn * fadeOut;
 }
 
-/** The one region that plays at velocity `v` for round robin `rr` (0-based) among `regions`. */
+/**
+ * The one region that plays at velocity `v` for round robin `rr` (0-based) among `regions`. Round
+ * robins are seq positions, or random groups (lorand/hirand) in lorand order.
+ */
 function pickRegion(regions, v, rr, what) {
   let cands = regions.filter((r) => velWeight(r, v) > 0);
   // A mapping file read on its own may lack the seq_length its parent group sets: count positions too.
   const seqs = Math.max(...cands.map((r) => Math.max(r.seqLength, r.seqPosition)));
+  const rands = [...new Set(cands.map((r) => r.lorand))].sort((a, b) => a - b);
   if (seqs > 1) {
     if (rr >= seqs) fail(`${what}: only ${seqs} round robins at velocity ${v}`);
     cands = cands.filter((r) => r.seqPosition === rr + 1);
+  } else if (rands.length > 1) {
+    if (rr >= rands.length) fail(`${what}: only ${rands.length} round robins at velocity ${v}`);
+    cands = cands.filter((r) => r.lorand === rands[rr]);
   } else if (rr > 0) {
     fail(`${what}: no round robins at velocity ${v} (give one velocity per round robin)`);
   }
@@ -618,38 +657,46 @@ function readRegions(handle, sfzPath, sfzRoot) {
 }
 
 /**
- * Roots kept for [lo, hi] so every note lies within 1 semitone of one (maxShift 1.5): the fewest roots
- * that cover the range, then the least shifting inside the recorded range, then the least above it.
- * A root is the recorded note where one exists; otherwise it is derived from the nearest recorded note
- * above (shifted down), or from the highest recording (shifted up) when the range runs past the top.
+ * Roots for an instrument whose recordings sit at `recorded`, so every note of [lo, hi] lies within
+ * 1 semitone of one (maxShift 1.5). Roots may sit from END_REACH below the lowest recording to
+ * END_REACH above the highest, and [lo, hi] defaults to all they can cover. Among covers with the
+ * fewest roots it takes the one that shifts least. A root is the recorded note where one exists,
+ * otherwise it is derived from the nearest recording above (shifted down), or from the highest
+ * recording (shifted up) for the one root allowed past the top.
  */
-function keptRoots(recorded, lo, hi) {
+function keptRoots(recorded, range, what) {
   const rec = [...new Set(recorded)].sort((a, b) => a - b);
-  if (rec.length === 0) return [];
+  const bottom = rec[0];
   const top = rec[rec.length - 1];
+  const [minRoot, maxRoot] = [bottom - END_REACH, top + END_REACH];
+  const [lo, hi] = range ?? [minRoot - 1, maxRoot + 1];
+  if (lo < minRoot - 1 || hi > maxRoot + 1) {
+    fail(`${what}: range ${lo}-${hi} runs past what the recordings (${bottom}-${top}) can cover, ${minRoot - 1}-${maxRoot + 1}`);
+  }
   const from = (r) => (rec.includes(r) ? r : rec.find((x) => x > r) ?? top);
-  const better = (a, b) => a.count - b.count || a.down - b.down || a.up - b.up;
+  const better = (a, b) => a.count - b.count || a.shift - b.shift;
   const memo = new Map();
   // Cheapest cover of [n, hi]: a root at n+1, n or n-1 covers n, and the rest starts two above it.
   const cover = (n) => {
-    if (n > hi) return { count: 0, down: 0, up: 0, roots: [] };
+    if (n > hi) return { count: 0, shift: 0, roots: [] };
     if (memo.has(n)) return memo.get(n);
     let best = null;
     for (const root of [n + 1, n, n - 1]) {
+      if (root < minRoot || root > maxRoot) continue;
       const rest = cover(root + 2);
+      if (!rest) continue;
       const src = from(root);
-      const c = {
-        count: rest.count + 1,
-        down: rest.down + Math.max(0, src - root),
-        up: rest.up + Math.max(0, root - src),
-        roots: [{ root, from: src }, ...rest.roots],
-      };
+      const c = { count: rest.count + 1, shift: rest.shift + Math.abs(root - src), roots: [{ root, from: src }, ...rest.roots] };
       if (!best || better(c, best) < 0) best = c;
     }
     memo.set(n, best);
     return best;
   };
-  return cover(lo).roots;
+  const roots = cover(lo).roots;
+  if (roots.filter((r) => r.root > top).length > 1 || roots.filter((r) => r.root < bottom).length > 1) {
+    fail(`${what}: more than one root past an end of the recordings`);
+  }
+  return roots;
 }
 
 /** The zones an instrument's recipe asks for: which sample, how far to shift it, and its table entry. */
@@ -665,7 +712,7 @@ function planInstrument(name, inst, handles) {
       const v = inst.vel[layer];
       const recorded = regions.filter((r) => velWeight(r, v) > 0).map((r) => r.root);
       if (recorded.length === 0) fail(`${name}: no regions at velocity ${v}`);
-      for (const { root, from } of keptRoots(recorded, inst.range[0], inst.range[1])) {
+      for (const { root, from } of keptRoots(recorded, inst.range, `${name} layer ${layer}`)) {
         for (let rr = 0; rr < rrCount; rr++) {
           const region = pickRegion(regions.filter((r) => r.root === from), v, rr, `${name} root ${from}`);
           zones.push({
@@ -945,7 +992,6 @@ async function build(args, instruments, sources) {
   const keep = new Set();
   let encoded = 0;
   let skipped = 0;
-  const notes = [];
   for (const [name, inst] of chosen) {
     const zones = [];
     const seen = new Map();
@@ -999,10 +1045,6 @@ async function build(args, instruments, sources) {
       lower.set(k, z.file);
     }
     next[name] = { source: inst.source, zones };
-    const up = zones.filter((z) => z.shift > 0);
-    if (up.length > 0) {
-      notes.push(`${name}: ${new Set(up.map((z) => z.root)).size} roots above its highest recording, shifted up as far as +${Math.max(...up.map((z) => z.shift))} semitones`);
-    }
   }
 
   // keep every other set's zones as last built; drop instruments no longer in instruments.json
@@ -1028,7 +1070,6 @@ async function build(args, instruments, sources) {
   writeIfChanged(STATE_PATH, stateJson(all));
   printReport(all, instruments, decoded, sets);
   console.log(`\nZones: ${encoded} encoded, ${skipped} unchanged`);
-  for (const n of notes) console.log(`  warning: ${n}`);
   if (errors.length > 0) fail(`decoded-size caps broken:\n  ${errors.join("\n  ")}`);
   const removed = removeStale(sets, keep);
   if (removed > 0) console.log(`Removed ${removed} stale files`);
@@ -1084,7 +1125,7 @@ function printReport(all, instruments, decoded, sets) {
         `opus ${fmtMB(opus)}  decoded ${fmtMiB(frames * 4)}  ${what}`,
     );
   }
-  console.log("  (* derived from the recording above, ^ from the highest recording below)");
+  console.log("  (* derived from the recording above it, ^ derived from the highest recording)");
   console.log("\nSets             opus        aac         decoded");
   for (const s of SET_IDS) {
     const files = Object.entries(all)
