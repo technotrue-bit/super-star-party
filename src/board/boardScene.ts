@@ -51,6 +51,7 @@ import { buildIsland, type Island } from "./boardIsland";
 import { buildFoliage, type KeepOut } from "./boardFoliage";
 import { buildBigTop, buildHelterSkelter, buildPier, buildFunhouseGate, LANDMARK_RADIUS, type GateProp } from "./boardLandmarks";
 import { buildCruiseShip, type CruiseShip } from "./cruise/cruiseShip";
+import type { BoardTheme, BuiltBoardTheme } from "./boardTheme";
 
 export interface BoardScene {
   /** Root group, added to world.scene by buildBoardScene(). */
@@ -138,6 +139,7 @@ function wrapIndex(i: number, n: number): number {
 }
 
 // ---- Downtown placeholder (slice 1): asphalt, canal, basin, bridge ----------------
+// Since slice 2 the fallback for when the lazy city chunk (downtown/) fails to load.
 const DOWNTOWN_ASPHALT = "#8A8E99";
 const DOWNTOWN_WATER_COLOR = "#3F8FD8";
 const DOWNTOWN_STONE = "#D9D2C3";
@@ -187,7 +189,12 @@ function buildDowntownWater(kit: BoardTextures): THREE.Mesh[] {
   return out;
 }
 
-export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
+/**
+ * `theme`: the board's lazy scenery (registry loadBoardTheme), already
+ * loaded. It brings its own ground and scenery in place of the placeholder;
+ * null (none, or it failed to load) keeps the placeholder.
+ */
+export function buildBoardScene(def: BoardDef = activeBoard(), theme: BoardTheme | null = null): BoardScene {
   builtDef = def;
   const n = def.spaces.length;
   const B = settings.board;
@@ -207,13 +214,23 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
 
   // ---- ground: the carnival is a grass island in the sea under a sky dome
   // (boardIsland.ts); the cruise ship steams across open sea
-  // (cruise/cruiseShip.ts); the Downtown placeholder keeps its plain asphalt plane.
-  // Diorama pieces (island, landmarks, foliage) are dense and go in `decor`,
-  // which joins the board AFTER the static-bounds pass, like the lanes.
+  // (cruise/cruiseShip.ts); a lazy theme (Downtown's city) brings its own;
+  // without one the Downtown placeholder keeps its plain asphalt plane.
+  // Diorama pieces (island, landmarks, foliage, the theme) are dense and go in
+  // `decor`, which joins the board AFTER the static-bounds pass, like the lanes.
   const decor = new THREE.Group();
   decor.name = "decor";
   let island: Island | null = null;
   let ship: CruiseShip | null = null;
+  let themed: BuiltBoardTheme | null = null;
+  if (theme) {
+    try {
+      themed = theme.build({ def, kit });
+      decor.add(themed.root);
+    } catch (err) {
+      console.warn(`[SSP] ${def.id} scenery failed to build; the board uses its placeholder scenery.`, err);
+    }
+  }
   if (carnival) {
     island = buildIsland(kit, (x, z) => groundHeight(def, x, z));
     decor.add(island.root);
@@ -221,7 +238,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
     ship = buildCruiseShip(def, kit);
     decor.add(ship.root);
     props.push(...ship.props);
-  } else {
+  } else if (!themed) {
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(settings.board.groundSize, settings.board.groundSize),
       toonMat(kit, DOWNTOWN_ASPHALT)
@@ -384,7 +401,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
         [settings.board.tentSpots[2].x, settings.board.tentSpots[2].z, palette.mint, palette.tentCream, 4.2],
       ]
     : [];
-  if (def.theme === "downtown") {
+  if (def.theme === "downtown" && !themed) {
     for (const m of buildDowntownWater(kit)) group.add(m);
   }
   for (const [tx, tz, ca, cb, ph] of tentSpots) {
@@ -718,6 +735,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       for (const p of props) p.update?.(t, dt);
       island?.update?.(t, dt);
       ship?.update(t, dt);
+      themed?.update?.(t, dt);
       landFx?.update(dt);
       crowd?.update(dt);
       night?.update(dt);
@@ -803,6 +821,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       restoreShadow?.();
       island?.dispose();
       ship?.dispose();
+      themed?.dispose();
       world.scene?.remove(group);
       const geoms = new Set<THREE.BufferGeometry>();
       const mats = new Set<THREE.Material>();

@@ -118,7 +118,8 @@ import { livelyDebug, livelyReact } from "../board/lively/landFx";
 import { livelyShotsDebug } from "../board/lively/shots";
 import { crowdDebug } from "../board/lively/crowd";
 import type { nightDebug } from "../board/lively/night";
-import { Color, Light, HemisphereLight, type Fog, type WebGLRenderer } from "three";
+import { THEME_SCENERY_NAME } from "../board/boardTheme";
+import { Color, Light, HemisphereLight, InstancedMesh, Mesh, type Fog, type WebGLRenderer } from "three";
 
 export interface SSPDebug {
   state(): Record<string, unknown>;
@@ -287,6 +288,8 @@ export interface SSPDebug {
   hudRanks(rows: { stars: number; coins: number }[]): number[] | null;
   /** Dev/CI only: the active board's edges plus the prize balloon space (copies). */
   boardLinks(): { id: string; size: number; next: number[][]; star: number } | null;
+  /** Dev/CI only: draw calls and triangles of a lazy board theme's static scenery (Downtown's city); null without one. */
+  sceneryBudget(): { drawCalls: number; triangles: number } | null;
   /** Playtest: local humans publish the CPU choice over the relay. */
   partyAssist(on: boolean): void;
   /** Leave the room. A guest's seat becomes a CPU. The host ends the room. */
@@ -767,6 +770,21 @@ export function installDebugAPI(): void {
       if (!seatTagsLive()) return null;
       const def = activeBoard();
       return { id: activeBoardId(), size: def.spaces.length, next: def.next.map((row) => [...row]), star: match.starBalloonPos };
+    },
+    sceneryBudget() {
+      if (!seatTagsLive()) return null;
+      const root = world.scene?.getObjectByName(THEME_SCENERY_NAME);
+      if (!root) return null;
+      let drawCalls = 0;
+      let triangles = 0;
+      root.traverseVisible((obj) => {
+        if (!(obj instanceof Mesh)) return;
+        const geo = obj.geometry;
+        const verts = geo.index ? geo.index.count : (geo.getAttribute("position")?.count ?? 0);
+        drawCalls += Array.isArray(obj.material) ? Math.max(1, geo.groups.length) : 1;
+        triangles += Math.floor(verts / 3) * (obj instanceof InstancedMesh ? obj.count : 1);
+      });
+      return { drawCalls, triangles };
     },
     partyAssist(on: boolean) {
       setPartyAssist(on);
