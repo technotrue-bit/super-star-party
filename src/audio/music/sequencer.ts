@@ -2,9 +2,12 @@
  * SUPER STAR PARTY — step sequencer.
  *
  * 16th-note grid with lookahead scheduling (classic Chris Wilson
- * "Tale of Two Clocks" pattern): a 25ms timer schedules every note whose
- * start time falls within `lookahead` (120ms) of ctx.currentTime, so
- * playback is seamless and glitch-free even under janky frames.
+ * "Tale of Two Clocks" pattern): a 25ms timer asks the StepClock for every
+ * step whose start falls within `lookahead` (120ms) of ctx.currentTime and
+ * schedules its notes, so playback is seamless and glitch-free even under
+ * janky frames. All timing (swing, tempo and key changes on bar lines, fills,
+ * pickups, the hidden-tab resync) lives in StepClock; this file turns the
+ * steps it plans into notes.
  *
  * Swing: off-beat 16ths (odd steps) are delayed by
  *   (swing - 0.5) * 2 * stepDur   seconds
@@ -16,27 +19,36 @@
  *   counter fades in across [0.50, 0.85]
  *   bright  fades in across [0.60, 0.95]
  * At 0.2 the board track is a calm cruise; at 1.0 it is a full party.
+ * The `lift` layer ignores intensity: the clock switches it on a bar line.
  *
- * The same scheduling core drives offline renders (renderTrack) — no
- * timer, just step through the whole window.
+ * What a note sounds like is the NotePlayer's business (player.ts); the
+ * default is the oscillator synth every track was written for.
+ *
+ * The same scheduling core drives offline renders (scheduleTrackInto) — no
+ * timer, just plan the whole window.
  */
 
-import { TRACKS } from "./tracks";
+import { TRACKS, parseSection, parseTrack } from "./tracks";
 import type { TrackDef, ParsedVoice } from "./tracks";
-import { parseTrack } from "./tracks";
-import { VOICES, drumHit } from "./instruments";
+import { StepClock } from "./clock";
+import type { ClockChange, PlannedStep } from "./clock";
+import { synthPlayer, voiceRoute } from "./player";
+import type { NotePlayer } from "./player";
 
-export type LayerName = "base" | "perc2" | "counter" | "bright";
+export type LayerName = "base" | "perc2" | "counter" | "bright" | "lift";
 
-const LAYER_ORDER: LayerName[] = ["base", "perc2", "counter", "bright"];
+const LAYER_ORDER: LayerName[] = ["base", "perc2", "counter", "bright", "lift"];
+
+/** A silent layer gain: exponential ramps cannot reach 0. */
+const SILENT = 0.0001;
 
 function smoothstep(x: number): number {
   const v = Math.min(1, Math.max(0, x));
   return v * v * (3 - 2 * v);
 }
 
-/** Layer gain targets for a given intensity (0..1). */
-export function layerTargets(intensity: number): Record<LayerName, number> {
+/** Layer gain targets for a given intensity (0..1). `lift` is not intensity-driven. */
+export function layerTargets(intensity: number): Record<Exclude<LayerName, "lift">, number> {
   return {
     base: 1,
     perc2: smoothstep((intensity - 0.3) / 0.35),
@@ -45,88 +57,134 @@ export function layerTargets(intensity: number): Record<LayerName, number> {
   };
 }
 
-export interface LayerBus {
-  base: GainNode;
-  perc2: GainNode;
-  counter: GainNode;
-  bright: GainNode;
-  lift?: GainNode; // no bus yet: voices on the "lift" layer are skipped
+export type LayerBus = Record<LayerName, GainNode>;
+
+/** One-bar sections that sit outside the main voices. */
+export interface TrackSections {
+  fill: ParsedVoice[];
+  pickup: ParsedVoice[];
+}
+
+/** Whether each lift gain is currently scheduled on, so only changes touch the AudioParam. */
+const liftState = new WeakMap<GainNode, boolean>();
+
+/** One gain per layer, all feeding `out`. `lift` starts on or off; the rest at `level`. */
+function createLayers(ctx: BaseAudioContext, out: AudioNode, level: number, lifted: boolean): LayerBus {
+  const bus: LayerBus = {
+    base: ctx.createGain(),
+    perc2: ctx.createGain(),
+    counter: ctx.createGain(),
+    bright: ctx.createGain(),
+    lift: ctx.createGain(),
+  };
+  for (const name of LAYER_ORDER) {
+    bus[name].gain.value = name === "lift" ? (lifted ? 1 : SILENT) : level;
+    bus[name].connect(out);
+  }
+  liftState.set(bus.lift, lifted);
+  return bus;
+}
+
+/** Voices a fill bar replaces: the synth drum voice and the sampled kits. */
+function isDrumStyle(style: string): boolean {
+  return style === "drums" || voiceRoute(style) === "kit";
 }
 
 /**
- * Schedule every voice event for one 16th step.
+ * Schedule every voice event for one planned 16th step.
  * Shared by the live sequencer and the offline renderer.
+ *
+ * A pickup step plays the pickup section's bar. A main step plays bar
+ * `ps.bar % barCount`; in a fill bar the drum voices are swapped for the
+ * fill section's voices and everything else plays as normal.
  */
 export function scheduleStep(
   ctx: BaseAudioContext,
-  def: TrackDef,
   voices: ParsedVoice[],
-  step: number,
-  t: number,
-  stepDur: number,
-  swingOffset: number,
+  sections: TrackSections,
+  ps: PlannedStep,
   layers: LayerBus,
+  player: NotePlayer,
 ): void {
-  const local = step % 16;
-  for (const v of voices) {
-    const bar = Math.floor(step / 16) % v.barCount;
-    const events = v.bars[bar];
-    const layerGain = layers[v.layer];
-    if (!layerGain) continue;
-    const voice = VOICES[v.style];
-    for (const e of events) {
-      if (e.s !== local) continue;
-      if (e.kind === "rest") continue;
-      const et = t + (e.s % 2 === 1 ? swingOffset : 0);
-      const lenSec = e.len * stepDur;
-      const vel = Math.min(1, e.vel * v.gain);
-      if (e.kind === "drum") {
-        drumHit(ctx, layerGain, et, e.token, vel);
-        continue;
-      }
-      if (!voice) continue;
-      const freqs = e.freqs.map((f) => f * Math.pow(2, v.transpose / 12));
-      voice(ctx, layerGain, et, freqs, lenSec, vel, {
-        step: stepDur,
-        slide: e.slide,
-      });
-    }
+  if ((liftState.get(layers.lift) ?? false) !== ps.lift) {
+    liftState.set(layers.lift, ps.lift);
+    layers.lift.gain.setValueAtTime(ps.lift ? 1 : SILENT, ps.t);
   }
+  if (ps.pickup) {
+    for (const v of sections.pickup) playVoice(ctx, v, 0, ps, layers, player);
+    return;
+  }
+  const fill = ps.fill && sections.fill.length > 0;
+  for (const v of voices) {
+    if (fill && isDrumStyle(v.style)) continue;
+    playVoice(ctx, v, ps.bar % v.barCount, ps, layers, player);
+  }
+  if (fill) for (const v of sections.fill) playVoice(ctx, v, 0, ps, layers, player);
+}
+
+/** Send the events of one voice's bar that start on this step to the player. */
+function playVoice(
+  ctx: BaseAudioContext,
+  v: ParsedVoice,
+  bar: number,
+  ps: PlannedStep,
+  layers: LayerBus,
+  player: NotePlayer,
+): void {
+  const local = ps.step % 16;
+  const out = layers[v.layer];
+  for (const e of v.bars[bar]) {
+    if (e.s !== local || e.kind === "rest") continue;
+    const et = ps.t + (e.s % 2 === 1 ? ps.swingOffset : 0);
+    const vel = Math.min(1, e.vel * v.gain);
+    if (e.kind === "drum") {
+      player.drum(ctx, out, et, v.style, e.token, vel);
+      continue;
+    }
+    const freqs = e.freqs.map((f) => f * Math.pow(2, (v.transpose + ps.transpose) / 12));
+    player.note(ctx, out, et, v.style, freqs, e.len * ps.stepDur, vel, {
+      step: ps.stepDur,
+      slide: e.slide,
+    });
+  }
+}
+
+/** Length of the main pattern in steps (every main voice has the same bar count). */
+function totalStepsOf(voices: ParsedVoice[]): number {
+  return voices[0].barCount * 16;
 }
 
 /**
  * Offline scheduling: schedule the full arrangement for `seconds`.
  * One-shot tracks stop after their last step; looping tracks wrap.
+ * Every layer plays at full level; `lift` only with `opts.lift`.
  */
 export function scheduleTrackInto(
   ctx: BaseAudioContext,
   trackId: string,
   out: AudioNode,
   seconds: number,
+  opts: { lift?: boolean; player?: NotePlayer } = {},
 ): TrackDef {
   const def = TRACKS[trackId];
   if (!def) throw new Error(`scheduleTrackInto: unknown track '${trackId}'`);
   const voices = parseTrack(def);
-  const stepDur = 60 / def.bpm / 4;
-  const swingOffset = (def.swing - 0.5) * stepDur * 2;
-  const layers: LayerBus = {
-    base: ctx.createGain(),
-    perc2: ctx.createGain(),
-    counter: ctx.createGain(),
-    bright: ctx.createGain(),
-  };
-  for (const name of LAYER_ORDER) {
-    layers[name].gain.value = 1; // render = full arrangement
-    layers[name].connect(out);
-  }
-  const totalSteps = voices[0].barCount * 16;
-  let t = 0;
-  let step = 0;
-  while (t < seconds) {
-    scheduleStep(ctx, def, voices, step, t, stepDur, swingOffset, layers);
-    t += stepDur;
-    step += 1;
-    if (!def.loop && step >= totalSteps) break;
+  const sections: TrackSections = { fill: parseSection(def, "fill"), pickup: parseSection(def, "pickup") };
+  const lift = opts.lift ?? false;
+  const player = opts.player ?? synthPlayer;
+  const layers = createLayers(ctx, out, 1, lift); // render = full arrangement
+  const clock = new StepClock({
+    bpm: def.bpm,
+    swing: def.swing,
+    totalSteps: totalStepsOf(voices),
+    loop: def.loop,
+    t0: 0,
+    lift,
+    hasFill: sections.fill.length > 0,
+  });
+  // One call for the whole window: calls more than 0.5 s apart would count as a hidden tab.
+  for (const ps of clock.plan(0, seconds)) {
+    scheduleStep(ctx, voices, sections, ps, layers, player);
   }
   return def;
 }
@@ -135,45 +193,64 @@ export function scheduleTrackInto(
 /*  Live sequencer                                                     */
 /* ------------------------------------------------------------------ */
 
+export interface SequencerOpts {
+  /** Who sounds the notes; defaults to the oscillator synth. */
+  player?: NotePlayer;
+  /** Starting transpose in semitones. */
+  transpose?: number;
+  /** Start with the lift layer on. */
+  lift?: boolean;
+  /** Starting tempo; defaults to the track's. */
+  bpm?: number;
+}
+
 export class Sequencer {
   private ctx: AudioContext;
   private def: TrackDef;
   private voices: ParsedVoice[];
+  private sections: TrackSections;
   private layers: LayerBus;
   private out: GainNode; // per-playback gain (fade on stop)
-  private stepDur: number;
-  private swingOffset: number;
-  private totalSteps: number;
-  private step = 0;
-  private nextTime = 0;
+  private player: NotePlayer;
+  private stepClock: StepClock;
   private timer: number | null = null;
-  private lastTick = 0;
   private intensity = 0.5;
   /** Called when a non-looping track finishes. */
   onEnded: (() => void) | null = null;
 
-  constructor(ctx: AudioContext, out: GainNode, def: TrackDef) {
+  /** The first step lands 80 ms after construction, so call start() right away. */
+  constructor(ctx: AudioContext, out: GainNode, def: TrackDef, opts: SequencerOpts = {}) {
     this.ctx = ctx;
     this.out = out;
     this.def = def;
+    this.player = opts.player ?? synthPlayer;
     this.voices = parseTrack(def);
-    this.stepDur = 60 / def.bpm / 4;
-    this.swingOffset = (def.swing - 0.5) * this.stepDur * 2;
-    this.totalSteps = this.voices[0].barCount * 16;
-    this.layers = {
-      base: ctx.createGain(),
-      perc2: ctx.createGain(),
-      counter: ctx.createGain(),
-      bright: ctx.createGain(),
-    };
-    for (const name of LAYER_ORDER) {
-      this.layers[name].gain.value = 0.0001;
-      this.layers[name].connect(out);
-    }
+    this.sections = { fill: parseSection(def, "fill"), pickup: parseSection(def, "pickup") };
+    this.stepClock = new StepClock({
+      bpm: opts.bpm ?? def.bpm,
+      swing: def.swing,
+      totalSteps: totalStepsOf(this.voices),
+      loop: def.loop,
+      t0: ctx.currentTime + 0.08,
+      transpose: opts.transpose,
+      lift: opts.lift,
+      hasFill: this.sections.fill.length > 0,
+    });
+    this.layers = createLayers(ctx, out, SILENT, opts.lift ?? false);
   }
 
   get trackId(): string {
     return this.def.id;
+  }
+
+  /** The step clock: queue tempo, key, lift and fill changes, set the anchor, read bar times. */
+  get clock(): StepClock {
+    return this.stepClock;
+  }
+
+  /** Queue a change for the next bar line that has not been scheduled yet. */
+  queueChange(c: ClockChange): void {
+    this.stepClock.queueChange(c);
   }
 
   setIntensity(level: number): void {
@@ -181,22 +258,19 @@ export class Sequencer {
     const targets = layerTargets(this.intensity);
     const now = this.ctx.currentTime;
     for (const name of LAYER_ORDER) {
-      if (name === "base") continue; // base is always at 1
+      if (name === "base" || name === "lift") continue; // base is always at 1; lift ignores intensity
       const g = this.layers[name].gain;
-      const target = targets[name] < 0.001 ? 0.0001 : targets[name];
+      const target = targets[name] < 0.001 ? SILENT : targets[name];
       g.setTargetAtTime(target, now, 0.25);
     }
   }
 
   start(): void {
-    this.step = 0;
-    this.nextTime = this.ctx.currentTime + 0.08;
-    this.lastTick = this.ctx.currentTime;
     this.setIntensity(this.intensity);
     this.layers.base.gain.value = 1;
-    // tick immediately, then on a 25ms timer
-    this.tick();
+    // Timer first: tick() may finish the track (an anchored clock can run out at once).
     this.timer = window.setInterval(() => this.tick(), 25);
+    this.tick();
   }
 
   stop(fade: number): void {
@@ -222,33 +296,10 @@ export class Sequencer {
   }
 
   private tick(): void {
-    if (!this.ctx || this.def === null) return;
-    const now = this.ctx.currentTime;
-    // If the tab was hidden, setInterval was throttled: resync without
-    // drifting so the loop stays tight.
-    if (this.lastTick > 0 && now - this.lastTick > 0.5) {
-      this.nextTime = now + 0.03;
+    for (const ps of this.stepClock.plan(this.ctx.currentTime)) {
+      scheduleStep(this.ctx, this.voices, this.sections, ps, this.layers, this.player);
     }
-    this.lastTick = now;
-    let guard = 0;
-    while (this.nextTime < now + 0.12 && guard < 64) {
-      this.scheduleStepAt(this.step, this.nextTime);
-      this.step += 1;
-      this.nextTime += this.stepDur;
-      if (this.step >= this.totalSteps) {
-        if (this.def.loop) {
-          this.step = 0;
-        } else {
-          this.finish();
-          return;
-        }
-      }
-      guard += 1;
-    }
-  }
-
-  private scheduleStepAt(step: number, t: number): void {
-    scheduleStep(this.ctx, this.def, this.voices, step, t, this.stepDur, this.swingOffset, this.layers);
+    if (this.stepClock.ended) this.finish();
   }
 
   private finish(): void {
