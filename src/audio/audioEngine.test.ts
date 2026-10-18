@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { audio } from "./audioEngine";
+import { SAMPLED } from "./samples/instruments.gen";
+import { ZONES } from "./samples/zones.gen";
 import { SFX, resolvePitch } from "./sfx/sounds";
 
 describe("audio volumes", () => {
@@ -152,7 +154,8 @@ async function liveEngine(search: string) {
     clearInterval: (id: number) => timers.delete(id),
     setTimeout: () => 0,
   });
-  const fetchSpy = vi.fn(() => Promise.reject(new Error("no network in tests")));
+  // Sample files answer with a container the fake decoder accepts, so sets load.
+  const fetchSpy = vi.fn(async (url: string) => ({ ok: true, arrayBuffer: async () => fakeClip(url) }));
   vi.stubGlobal("fetch", fetchSpy);
   vi.spyOn(console, "log").mockImplementation(() => {});
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -166,14 +169,51 @@ async function liveEngine(search: string) {
       for (const fn of [...timers.values()]) fn();
     }
   };
+  live = engine.audio;
   return { ...engine, TRACKS: tracks.TRACKS, fetchSpy, warn, advance };
 }
+
+/** A few bytes in the container a sample URL names: WebM's EBML magic or an MP4 `ftyp` box. */
+function fakeClip(url: string): ArrayBuffer {
+  return new Uint8Array(url.endsWith(".m4a") ? [0, 0, 0, 16, 0x66, 0x74, 0x79, 0x70] : [0x1a, 0x45, 0xdf, 0xa3]).buffer;
+}
+
+/** The engine made by the latest liveEngine call. */
+let live: typeof audio | null = null;
 
 /** Lets every pending promise settle (the fake decodes resolve at once). */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+/**
+ * Waits until the engine has picked a format and no set is mid-load. The zone tables arrive by a
+ * dynamic import, so a load can outlive a test and fetch through the next test's stub without this.
+ */
+async function quiet(engine: typeof audio): Promise<void> {
+  await vi.waitFor(() => {
+    const { format, sets } = engine.debug().samples;
+    if (Object.keys(sets).length === 0) return; // no loader, or nothing asked for
+    expect(format).not.toBe("off");
+    expect(Object.values(sets)).not.toContain("loading");
+  });
+}
+
+/** Every distinct file of a set's instruments. */
+function setFiles(set: string): string[] {
+  const files = Object.entries(ZONES)
+    .filter(([name]) => SAMPLED[name].set === set)
+    .flatMap(([, { zones }]) => zones.map((z) => z.file));
+  return [...new Set(files)].sort();
+}
+
+/** The sample files fetched, as zone file paths with the given extension removed. */
+function fetchedFiles(fetchSpy: { mock: { calls: unknown[][] } }, ext: string): string[] {
+  return fetchSpy.mock.calls.map(([url]) => String(url).replace(/^.*?music\//, "").replace(ext, "")).sort();
+}
+
 describe("live engine wiring (fake AudioContext)", () => {
-  afterEach(() => {
+  afterEach(async () => {
+    if (live) await quiet(live);
+    live = null;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -188,9 +228,10 @@ describe("live engine wiring (fake AudioContext)", () => {
     expect(audio.music.theme()).toBe("board.cruise"); // plays board.fairground until Plan 2
     expect(audio.debug().samples.format).toBe("off"); // the probe is still decoding
     expect(audio.debug().samples.sets).toEqual({ cruise: "idle", core: "idle" });
-    await settle();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await quiet(audio);
     expect(audio.debug().samples).toEqual({ format: "opus", sets: { cruise: "ready", core: "ready" }, failed: [], standInNotes: 0 });
-    expect(fetchSpy).not.toHaveBeenCalled(); // the placeholder tables have no files
+    expect(fetchedFiles(fetchSpy, ".webm")).toEqual(setFiles("core")); // each core file once, as Opus; cruise has none yet
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -198,10 +239,10 @@ describe("live engine wiring (fake AudioContext)", () => {
     const { audio, unlock } = await liveEngine("?audio=1");
     unlock();
     audio.music.setBoard("cruise-ship");
-    await settle();
+    await quiet(audio);
     expect(audio.debug().samples.sets).toEqual({ core: "ready", cruise: "ready" });
     audio.music.setBoard("fizzy-fairground");
-    await settle();
+    await quiet(audio);
     expect(audio.debug().samples.sets).toEqual({ core: "ready", fairground: "ready" });
   });
 
@@ -213,10 +254,11 @@ describe("live engine wiring (fake AudioContext)", () => {
   });
 
   it("?audiofmt=aac skips the Opus probe", async () => {
-    const { audio, unlock } = await liveEngine("?audio=1&audiofmt=aac");
+    const { audio, unlock, fetchSpy } = await liveEngine("?audio=1&audiofmt=aac");
     unlock();
-    await settle();
+    await quiet(audio);
     expect(audio.debug().samples).toMatchObject({ format: "aac", sets: { core: "ready" } });
+    expect(fetchedFiles(fetchSpy, ".m4a")).toEqual(setFiles("core"));
   });
 
   it("?audio=0 makes no loader and fetches nothing, whatever is called", async () => {
@@ -301,9 +343,12 @@ describe("live engine wiring (fake AudioContext)", () => {
     TRACKS.__kit = { id: "__kit", bpm: 120, swing: 0.5, loop: true, voices: [{ style: "s:kit.core", pattern: ["K:4 K:4 K:4 K:4"] }] };
     unlock();
     audio.music.play("__kit");
-    advance(1.5); // planned through 1.62 s: kicks at 0.08, 0.58, 1.08 and 1.58
+    advance(1.5); // planned through 1.62 s: kicks at 0.08, 0.58, 1.08 and 1.58, before core has loaded
     expect(audio.debug().samples.standInNotes).toBe(4);
-    expect(warn).toHaveBeenCalledWith('sampler: no instrument "kit.core" in the sample table');
+    await quiet(audio);
+    advance(2); // core is loaded: these kicks play samples
+    expect(audio.debug().samples.standInNotes).toBe(4);
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 
