@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && tsc -p party --noEmit && vite build",
     "typecheck": "tsc --noEmit && tsc -p party --noEmit",
     "preview": "vite preview --port 5177 --strictPort",
-    "test": "vitest run"
+    "test": "vitest run",
+    "pack:downtown": "node tools/pack-downtown-assets.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.21.0",
