@@ -33,6 +33,11 @@ export interface NightHost {
   center: { x: number; z: number };
   /** Optional board sky dome: receives the eased zenith and horizon (0xRRGGBB). */
   sky?: (top: number, horizon: number) => void;
+  /**
+   * Fog distance multiplier for boards seen from further away than the
+   * carnival (the cruise ship's overview). Default 1.
+   */
+  fogScale?: number;
 }
 
 export interface Night {
@@ -143,6 +148,7 @@ function findLight<T extends THREE.Light>(scene: THREE.Scene, name: string, type
 
 export function createNight(host: NightHost): Night {
   const scene = host.scene;
+  const fogScale = host.fogScale ?? 1;
   const hemi = findLight(scene, "world:hemi", THREE.HemisphereLight);
   const key = findLight(scene, "world:key", THREE.DirectionalLight);
 
@@ -224,8 +230,8 @@ export function createNight(host: NightHost): Night {
     host.sky?.(cur.skyTop, cur.skyHorizon);
     if (cur.fogFar < FOG_OFF_FAR) {
       fog.color.setHex(cur.fogColor);
-      fog.near = cur.fogNear;
-      fog.far = cur.fogFar;
+      fog.near = cur.fogNear * fogScale;
+      fog.far = cur.fogFar * fogScale;
       scene.fog = fog;
     } else {
       scene.fog = saved.fog;

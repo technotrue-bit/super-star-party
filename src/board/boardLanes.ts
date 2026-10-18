@@ -639,7 +639,10 @@ export function buildBoardLanes(def: BoardDef, kit: BoardTextures): THREE.Object
     transparent: true,
     depthWrite: false,
     polygonOffset: true,
-    polygonOffsetFactor: -1,
+    // The slope-scaled term grows with each pixel's ground footprint: in the
+    // cruise ship's far, tilted overview it pulled the decal up through the
+    // space disks. Its decks are flat (layers), so the fixed term is enough.
+    polygonOffsetFactor: def.terrain?.layers ? 0 : -1,
     polygonOffsetUnits: -2,
   });
   // The board's dispose() frees materials but not their maps; the lane texture

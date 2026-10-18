@@ -23,9 +23,13 @@ const BASE = "http://127.0.0.1:5177/";
 const browser = await chromium.launch({ args: ["--disable-dev-shm-usage", "--disable-gpu"] });
 let failed = false;
 
+// How long a page may take to reach the minigame's play phase. A software-GL
+// CI runner rendering a 2x phone canvas can take well over a minute here.
+const REACH_PLAY_MS = 120000;
+
 // `early(page, cdp)` runs once, at the first countdown / practice / go phase, before play begins.
-async function boot(query, early) {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+// The caller owns `ctx` and closes it whether or not boot succeeds.
+async function boot(ctx, query, early) {
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
   page.on("pageerror", (e) => console.log("pageerror", String(e).slice(0, 150)));
@@ -40,7 +44,7 @@ async function boot(query, early) {
   const t0 = Date.now();
   let phase = "";
   let earlyDone = false;
-  while (Date.now() - t0 < 60000) {
+  while (Date.now() - t0 < REACH_PLAY_MS) {
     phase = await page.evaluate(() => window.__SSP__.mgProbe().phase);
     if (phase === "play") break;
     if (phase === "vs-splash") await page.keyboard.press("Space");
@@ -101,7 +105,16 @@ async function holdCases(page, cdp) {
   if (await visible(page, ".ssp-stick")) return "stick is showing on a hold pad without steer";
   await send(cdp, "touchStart", [P(1, b.x, b.y)], null);
   await page.waitForTimeout(400);
-  const ring1 = await page.evaluate(() => Number(document.querySelector(".ssp-hold__fill")?.getAttribute("stroke-dashoffset") ?? "NaN"));
+  // Read the ring and how long the finger has really been down in the same
+  // instant: on a slow runner the hold can already be past holdMax here, and
+  // a full ring is then correct, not a failure.
+  const ring1 = await page.evaluate(() => {
+    const down = (window.__ptr ?? []).filter((e) => e.type === "pointerdown").at(-1);
+    return {
+      offset: Number(document.querySelector(".ssp-hold__fill")?.getAttribute("stroke-dashoffset") ?? "NaN"),
+      held: down ? (performance.now() - down.t) / 1000 : null,
+    };
+  });
   await page.waitForTimeout(300);
   await send(cdp, "touchEnd", [P(1, b.x, b.y)], null);
   await page.waitForTimeout(200);
@@ -114,7 +127,14 @@ async function holdCases(page, cdp) {
   const real = (up.t - down.t) / 1000;
   // The hold reports the browser's own press-to-release time, capped at holdMax.
   if (Math.abs(Number(m[1]) - Math.min(real, 1.5)) > 0.1) return `held ${real.toFixed(2)} s but hold reported ${m[1]}`;
-  if (!(ring1 > 0 && ring1 < 100)) return `charge ring did not fill while held (dashoffset ${ring1})`;
+  if (!(ring1.offset < 100)) return `charge ring did not fill while held (dashoffset ${ring1.offset})`;
+  if (ring1.held !== null) {
+    // The ring paints (1 - held/holdMax) * 100 each frame; allow a few frames of lag.
+    const want = (1 - Math.min(1, ring1.held / 1.5)) * 100;
+    if (Math.abs(ring1.offset - want) > 20) {
+      return `charge ring at ${ring1.offset.toFixed(0)} after ${ring1.held.toFixed(2)} s held, want about ${want.toFixed(0)}`;
+    }
+  }
   const ring2 = await page.evaluate(() => Number(document.querySelector(".ssp-hold__fill")?.getAttribute("stroke-dashoffset") ?? "NaN"));
   if (!(ring2 >= 99)) return `charge ring did not empty on release (dashoffset ${ring2})`;
   // A long hold is capped at holdMax (1.5 s).
@@ -419,16 +439,20 @@ const CASES = [
 for (const [name, query, fn, early] of CASES) {
   if (ONLY.length && !ONLY.includes(name)) continue;
   let why;
-  let env;
+  // Created here, not in boot(): a case whose boot throws must still close its
+  // page, or that page keeps rendering in the background, starves the next
+  // case on a software-GL runner, and one slow case fails every case after it.
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
   try {
-    env = await boot(query, early);
+    const env = await boot(ctx, query, early);
     why = await fn(env.page, env.cdp);
   } catch (e) {
     why = `threw ${String(e).slice(0, 200)}`;
+  } finally {
+    await ctx.close().catch(() => {});
   }
   if (why) failed = true;
   console.log(why ? `FAIL touch ${name} ${why}` : `PASS touch ${name}`);
-  await env?.ctx.close();
 }
 
 await browser.close();

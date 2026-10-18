@@ -3,10 +3,11 @@
  *
  * MP-style: the selected hero stands centre-stage on a podium under one
  * spotlight, idling, with ◀ ▶ at the slot edges (or swipe) and a name +
- * tagline plate under it. The other three sit in a small row of DOM cards
- * with a CPU badge (tap one to pick it). One "Match settings" card and one
- * big START! row finish the column. START! makes the chosen hero the local
- * seat and the rest CPU seats; BACK returns to the title.
+ * tagline plate under it. The three CPU rivals sit in a small row of DOM
+ * cards; tapping one opens a "pick a rival" sheet (rivals.ts keeps the
+ * lineup valid: nobody twice, never the hero). One "Match settings" card and
+ * one big START! row finish the column. START! makes the chosen hero the
+ * local seat and the rivals the CPU seats; BACK returns to the title.
  *
  * The camera is fitted to the DOM hero slot every resize/selection: the
  * hero's projected box sits inside the slot with an 8% margin, so no phone
@@ -28,16 +29,18 @@ import { onViewportChange, viewportSize } from "../ui/viewport";
 import { mountMatchSettings } from "../ui/packPicker";
 import { setSelectBoundsReader, type SelectBounds, type SelectRect } from "../core/debug";
 import { isFreeplay } from "../game/freeplay";
+import { chooseRival, defaultRivals, reconcileRivals } from "./rivals";
 
 const SLOT_COUNT = roster.length;
+/** CPU seats after the hero. */
+const RIVALS = MATCH_SEATS - 1;
 
 /**
- * The CPU rivals for a pick: the first MATCH_SEATS - 1 other heroes in roster
- * order. Picking one of the original four keeps the same rivals as before.
+ * The rivals picked last time on this screen (roster indices), so coming back
+ * to select in the same session keeps the lineup. Starts as the first three
+ * other heroes in roster order, as before.
  */
-function opponentsFor(selIdx: number): CharacterKind[] {
-  return roster.filter((_, i) => i !== selIdx).slice(0, MATCH_SEATS - 1);
-}
+let rememberedRivals: number[] | null = null;
 const PARTY_FOV = 45;
 /** Lens for the hero shot: long enough that the model isn't fish-eyed. */
 const HERO_FOV = 30;
@@ -61,14 +64,16 @@ function injectSelectStyles(): void {
   const style = document.createElement("style");
   style.id = "ssp-select-styles";
   style.textContent = `
-    .ssp-sel-stage{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;z-index:10;padding:calc(10px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px));box-sizing:border-box;overflow:hidden}
+    .ssp-sel-stage{position:fixed;inset:0;max-height:100vh;max-height:100dvh;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;z-index:10;padding:calc(10px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));box-sizing:border-box;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
     .ssp-sel-top{display:flex;justify-content:space-between;align-items:center;width:100%;max-width:520px;pointer-events:auto;flex:none}
     .ssp-sel-title{font-size:22px;font-weight:700;color:${palette.cream};text-shadow:3px 3px 0 ${palette.ink},6px 6px 0 rgba(43,29,78,.35);pointer-events:none;letter-spacing:1px}
     .ssp-sel-hero{position:relative;flex:1 1 auto;min-height:150px;width:100%;max-width:520px;pointer-events:auto;touch-action:none;user-select:none}
     .ssp-sel-arrow{position:absolute;top:calc(50% - 25px);min-width:48px;padding-left:0;padding-right:0;z-index:2}
     .ssp-sel-arrow--l{left:0}
     .ssp-sel-arrow--r{right:0}
-    .ssp-sel-side{display:flex;flex-direction:column;gap:8px;width:100%;max-width:520px;flex:none;pointer-events:none}
+    /* side = scrolling body (plate, rivals, settings) + START pinned under it, outside the scroller */
+    .ssp-sel-side{display:flex;flex-direction:column;gap:8px;width:100%;max-width:520px;flex:0 1 auto;min-height:0;pointer-events:none}
+    .ssp-sel-body{display:flex;flex-direction:column;gap:8px;flex:0 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;pointer-events:auto;padding:2px 6px 6px 2px;margin:-2px -6px -6px -2px;scrollbar-width:thin}
     .ssp-sel-plate{align-self:center;display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 22px 6px;border-radius:16px;background:${palette.cream};border:4px solid var(--sel-color);box-shadow:0 0 0 3px ${palette.ink},4px 5px 0 3px ${palette.ink};pointer-events:none;max-width:92%;box-sizing:border-box}
     .ssp-sel-plate__name{font-size:24px;font-weight:700;line-height:1.05;color:var(--sel-color);-webkit-text-stroke:1.5px ${palette.ink};paint-order:stroke fill;text-shadow:2px 2px 0 ${palette.ink};letter-spacing:.5px}
     .ssp-sel-plate__tag{font-size:14px;font-weight:600;line-height:1.15;color:${palette.inkSoft};text-align:center}
@@ -81,13 +86,58 @@ function injectSelectStyles(): void {
     .ssp-sel-card__text{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0}
     .ssp-sel-card__name{font-size:14.5px;font-weight:700;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
     .ssp-sel-card__cpu{font-size:10px;font-weight:700;line-height:1;letter-spacing:.6px;padding:3px 6px;border-radius:8px;background:${palette.ink};color:${palette.cream}}
-    .ssp-sel-start{width:100%;flex:none;pointer-events:auto;min-height:60px;font-size:28px;letter-spacing:1px}
+    .ssp-sel-rivals{align-self:flex-start;font-size:12px;font-weight:700;letter-spacing:.8px;color:${palette.cream};text-shadow:2px 2px 0 ${palette.ink};margin:2px 0 -4px 4px;pointer-events:none}
+    .ssp-sel-card__cpu::after{content:" ▾"}
+    .ssp-sel-pick{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;background:rgba(43,29,78,.55);pointer-events:auto}
+    .ssp-sel-pick__panel{width:min(100%,440px);max-height:100%;overflow-y:auto;box-sizing:border-box;padding:14px;border-radius:20px;background:${palette.cream};border:4px solid ${palette.ink};box-shadow:5px 6px 0 ${palette.ink};display:flex;flex-direction:column;gap:10px}
+    .ssp-sel-pick__head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .ssp-sel-pick__title{font-size:20px;font-weight:700;color:${palette.ink};letter-spacing:.5px}
+    .ssp-sel-pick__close{font-family:inherit;font-size:20px;font-weight:700;width:44px;height:44px;flex:none;border-radius:14px;border:3px solid ${palette.ink};background:${palette.white};color:${palette.ink};cursor:pointer}
+    .ssp-sel-pick__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+    .ssp-sel-pick__opt{font-family:inherit;display:flex;align-items:center;gap:6px;min-height:52px;padding:6px 8px;border-radius:14px;border:3px solid ${palette.ink};box-shadow:3px 3px 0 ${palette.ink};color:${palette.ink};cursor:pointer;text-align:left;transition:transform .12s cubic-bezier(.34,1.56,.64,1)}
+    .ssp-sel-pick__opt:active{transform:scale(.95) translateY(2px);box-shadow:1px 1px 0 ${palette.ink}}
+    .ssp-sel-pick__opt:focus-visible{outline:4px solid ${palette.sun};outline-offset:2px}
+    .ssp-sel-pick__opt .ssp-avatar{width:30px;height:30px;font-size:15px;flex:none;border-width:3px}
+    .ssp-sel-pick__opt[aria-pressed="true"]{outline:4px solid ${palette.sun};outline-offset:2px}
+    .ssp-sel-pick__name{display:flex;flex-direction:column;gap:2px;font-size:15px;font-weight:700;line-height:1.05;min-width:0}
+    .ssp-sel-pick__tag{font-size:10px;font-weight:700;letter-spacing:.5px;padding:2px 5px;border-radius:7px;background:${palette.ink};color:${palette.cream};align-self:flex-start;white-space:nowrap}
+    .ssp-sel-start{width:100%;flex:none;pointer-events:auto;min-height:60px;font-size:28px;letter-spacing:1px;position:relative;z-index:1}
     @media (max-height:720px) and (orientation:portrait){.ssp-ms-tile__blurb{font-size:10px}.ssp-sel-start{min-height:52px;font-size:24px}.ssp-sel-plate__name{font-size:20px}}
+    @media (max-height:840px) and (orientation:portrait){.ssp-sel-hero{min-height:140px}}
+    /* Short phones (XS / SE Safari with toolbars): tighter gaps, smaller plate + START, smaller hero slot. */
+    @media (max-height:700px){
+      .ssp-sel-stage{gap:6px;padding-top:calc(6px + env(safe-area-inset-top, 0px));padding-bottom:calc(8px + env(safe-area-inset-bottom, 0px))}
+      .ssp-sel-side,.ssp-sel-body{gap:6px}
+      .ssp-sel-title{font-size:19px}
+      .ssp-sel-top .ssp-btn--sm{min-height:44px}
+      .ssp-sel-hero{min-height:130px}
+      .ssp-sel-plate{padding:3px 18px 4px}
+      .ssp-sel-plate__name{font-size:20px}
+      .ssp-sel-plate__tag{font-size:12.5px}
+      .ssp-sel-start{min-height:48px;font-size:22px;padding-top:8px;padding-bottom:8px}
+    }
+    @media (max-height:600px){
+      .ssp-sel-hero{min-height:110px}
+      .ssp-sel-card{padding:4px 5px}
+      .ssp-sel-card .ssp-avatar{width:26px;height:26px}
+      .ssp-sel-plate__tag{font-size:11.5px}
+      .ssp-sel-body .ssp-ms-tile__blurb{display:none}
+      .ssp-sel-body .ssp-ms-chip{min-height:26px}
+      .ssp-sel-body .ssp-ms-mult{min-height:34px}
+    }
     @media (orientation:landscape){
       .ssp-sel-stage{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,400px);grid-template-rows:auto minmax(0,1fr);grid-template-areas:"top top" "hero side";column-gap:12px;row-gap:6px;justify-items:stretch}
       .ssp-sel-top{grid-area:top;max-width:none}
-      .ssp-sel-hero{grid-area:hero;max-width:none;min-height:0}
-      .ssp-sel-side{grid-area:side;max-width:none;min-height:0;overflow-y:auto;pointer-events:auto;padding:2px 6px 6px 2px;box-sizing:border-box}
+      .ssp-sel-hero{grid-area:hero;max-width:none;min-height:0;align-self:stretch}
+      /* bounded by its grid row, so the body scrolls inside it and START stays pinned at the column's foot */
+      .ssp-sel-side{grid-area:side;max-width:none;min-height:0;max-height:100%;align-self:center;box-sizing:border-box}
+    }
+    @media (orientation:landscape) and (max-height:500px){
+      .ssp-sel-stage{row-gap:4px;column-gap:10px}
+      .ssp-sel-top .ssp-btn--sm{min-height:40px;padding-top:4px;padding-bottom:4px}
+      .ssp-sel-title{font-size:18px}
+      .ssp-sel-side{align-self:stretch}
+      .ssp-sel-body .ssp-ms-tile__blurb{display:none}
     }
   `;
   document.head.appendChild(style);
@@ -178,6 +228,10 @@ interface SelectScreenState {
   /** Rest-pose box of each hero standing on the podium (holder at origin). */
   _restBox?: THREE.Box3[];
   _selected?: number;
+  /** Roster indices of the CPU rivals, one per seat after the hero. */
+  _rivals?: number[];
+  /** The open "pick a rival" sheet, if any. */
+  _picker?: HTMLDivElement;
   _time?: number;
   _popT?: number;
   _podium?: THREE.Group;
@@ -200,6 +254,8 @@ interface SelectScreenState {
   _fitCamera: () => void;
   _bounds: () => SelectBounds | null;
   _doSelect: (idx: number) => void;
+  _openRivalPicker: (slot: number) => void;
+  _closeRivalPicker: () => void;
   _confirmStart: () => void;
   _goBack: () => void;
 }
@@ -216,6 +272,7 @@ const characterSelectImpl: SelectScreenState & Screen = {
     ui.clearScreen();
     this._active = true;
     this._selected = 0;
+    this._rivals = reconcileRivals(rememberedRivals ?? defaultRivals(0, RIVALS, SLOT_COUNT), 0, null, RIVALS, SLOT_COUNT);
     this._time = 0;
     this._popT = 1;
     this._chars = [];
@@ -368,6 +425,10 @@ const characterSelectImpl: SelectScreenState & Screen = {
     plate.className = "ssp-sel-plate";
     this._plate = plate;
 
+    const rivalsLabel = document.createElement("div");
+    rivalsLabel.className = "ssp-sel-rivals";
+    rivalsLabel.textContent = "RIVALS · TAP ONE TO CHANGE";
+
     const cardRow = document.createElement("div");
     cardRow.className = "ssp-sel-cards";
     this._cardRow = cardRow;
@@ -391,13 +452,27 @@ const characterSelectImpl: SelectScreenState & Screen = {
       okBtn.setLabel("NEXT ▶");
       okBtn.el.setAttribute("aria-label", "Next: pick a minigame");
     }
-    side.append(plate, cardRow, settingsCard, okBtn.el);
+    // The body scrolls when the settings don't fit (short phones, landscape);
+    // START sits outside it so it is always on screen.
+    const body = document.createElement("div");
+    body.className = "ssp-sel-body";
+    body.append(plate, rivalsLabel, cardRow, settingsCard);
+    side.append(body, okBtn.el);
     stage.append(topBar, slot, side);
 
     this._applySelection();
 
     // Keyboard: arrows cycle, Enter/Space confirms, Escape goes back.
     this._onKeyDown = (e: KeyboardEvent) => {
+      // The rival sheet owns the keyboard while it is open: Escape closes it,
+      // Tab and Enter work its buttons, and nothing reaches the hero behind.
+      if (this._picker) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          this._closeRivalPicker();
+        }
+        return;
+      }
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         this._doSelect((this._selected ?? 0) - 1);
@@ -423,6 +498,8 @@ const characterSelectImpl: SelectScreenState & Screen = {
       this._slotObserver = new ResizeObserver(() => this._fitCamera());
       this._slotObserver.observe(slot);
     }
+    // Last resort on very short screens the whole stage scrolls: keep the hero on its slot.
+    stage.addEventListener("scroll", () => this._fitCamera(), { passive: true });
     void document.fonts?.ready.then(() => this._fitCamera());
     requestAnimationFrame(() => this._fitCamera());
 
@@ -464,16 +541,16 @@ const characterSelectImpl: SelectScreenState & Screen = {
   _renderCards() {
     const row = this._cardRow;
     if (!row) return;
-    const sel = this._selected ?? 0;
     row.replaceChildren();
-    opponentsFor(sel).forEach((charKind) => {
-      const i = roster.indexOf(charKind);
+    (this._rivals ?? []).forEach((rosterIdx, slot) => {
+      const charKind = roster[rosterIdx];
       const card = document.createElement("button");
       card.type = "button";
       card.className = "ssp-sel-card";
       card.style.background = charKind.color;
-      card.setAttribute("aria-label", `Pick ${charKind.name}`);
+      card.setAttribute("aria-label", `Rival ${slot + 1}: ${charKind.name}. Change rival`);
       card.dataset.sspHero = charKind.key;
+      card.dataset.sspRivalSlot = String(slot);
 
       const text = document.createElement("div");
       text.className = "ssp-sel-card__text";
@@ -488,10 +565,101 @@ const characterSelectImpl: SelectScreenState & Screen = {
       card.append(ui.playerAvatar(charKind.key, charKind.color), text);
       card.addEventListener("click", (e) => {
         e.preventDefault();
-        this._doSelect(i);
+        this._openRivalPicker(slot);
       });
       row.appendChild(card);
     });
+  },
+
+  /**
+   * "Pick rival N": every hero except yours. Picking one fills the seat;
+   * picking someone already in another seat swaps the two, so nobody plays
+   * twice. Tap outside, ✕ or Escape closes it unchanged.
+   */
+  _openRivalPicker(slot: number) {
+    this._closeRivalPicker();
+    const hero = this._selected ?? 0;
+    const rivals = this._rivals ?? [];
+    audio.sfx.play("pop");
+
+    const overlay = document.createElement("div");
+    overlay.className = "ssp-sel-pick";
+    overlay.addEventListener("pointerdown", (e) => {
+      if (e.target === overlay) this._closeRivalPicker();
+    });
+
+    const panel = document.createElement("div");
+    panel.className = "ssp-sel-pick__panel";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+    panel.setAttribute("aria-label", `Pick rival ${slot + 1}`);
+
+    const head = document.createElement("div");
+    head.className = "ssp-sel-pick__head";
+    const title = document.createElement("div");
+    title.className = "ssp-sel-pick__title";
+    title.textContent = `PICK RIVAL ${slot + 1}`;
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "ssp-sel-pick__close";
+    close.textContent = "✕";
+    close.setAttribute("aria-label", "Close");
+    close.addEventListener("click", () => {
+      audio.sfx.play("ui.back");
+      this._closeRivalPicker();
+    });
+    head.append(title, close);
+
+    const grid = document.createElement("div");
+    grid.className = "ssp-sel-pick__grid";
+    let current: HTMLButtonElement | null = null;
+    roster.forEach((charKind, i) => {
+      if (i === hero) return;
+      const opt = document.createElement("button");
+      opt.type = "button";
+      opt.className = "ssp-sel-pick__opt";
+      opt.style.background = charKind.color;
+      opt.dataset.sspRivalPick = charKind.key;
+      const inSlot = rivals.indexOf(i);
+      opt.setAttribute("aria-pressed", String(inSlot === slot));
+      const name = document.createElement("div");
+      name.className = "ssp-sel-pick__name";
+      name.append(charKind.name);
+      if (inSlot >= 0 && inSlot !== slot) {
+        // Already playing in another seat: picking them swaps the two.
+        const tag = document.createElement("span");
+        tag.className = "ssp-sel-pick__tag";
+        tag.textContent = `⇄ RIVAL ${inSlot + 1}`;
+        name.append(tag);
+        opt.setAttribute("aria-label", `${charKind.name}, now rival ${inSlot + 1}: swap seats`);
+      } else {
+        opt.setAttribute("aria-label", charKind.name);
+      }
+      opt.prepend(ui.playerAvatar(charKind.key, charKind.color));
+      opt.append(name);
+      opt.addEventListener("click", () => {
+        this._rivals = chooseRival(this._rivals ?? [], slot, i, this._selected ?? 0);
+        audio.sfx.play("pop");
+        audio.sfx.play("boing");
+        this._closeRivalPicker();
+        this._renderCards();
+        // Keep keyboard focus on the seat that just changed.
+        (this._cardRow?.querySelector(`[data-ssp-rival-slot="${slot}"]`) as HTMLElement | null)?.focus();
+      });
+      if (inSlot === slot) current = opt;
+      grid.appendChild(opt);
+    });
+
+    panel.append(head, grid);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    this._picker = overlay;
+    (current ?? close).focus();
+  },
+
+  _closeRivalPicker() {
+    this._picker?.remove();
+    this._picker = undefined;
   },
 
   /**
@@ -585,6 +753,9 @@ const characterSelectImpl: SelectScreenState & Screen = {
       audio.sfx.play("pop");
       return;
     }
+    // A rival who becomes the hero trades places with the old hero.
+    const prev = this._selected ?? null;
+    this._rivals = reconcileRivals(this._rivals ?? [], wrapped, prev, RIVALS, SLOT_COUNT);
     this._selected = wrapped;
     this._popT = 0;
     audio.sfx.play("pop");
@@ -595,7 +766,9 @@ const characterSelectImpl: SelectScreenState & Screen = {
   _confirmStart() {
     const selIdx = this._selected ?? 0;
     const sel = roster[selIdx];
-    const others = opponentsFor(selIdx);
+    const rivals = reconcileRivals(this._rivals ?? [], selIdx, null, RIVALS, SLOT_COUNT);
+    rememberedRivals = rivals;
+    const others: CharacterKind[] = rivals.map((i) => roster[i]);
     const kinds = [sel.key, ...others.map((c) => c.key)];
     const names = [sel.name, ...others.map((c) => c.name)];
     const controllers: SeatController[] = ["local", ...others.map(() => "cpu" as const)];
@@ -627,6 +800,7 @@ const characterSelectImpl: SelectScreenState & Screen = {
 
   exit() {
     this._active = false;
+    this._closeRivalPicker();
     setSelectBoundsReader(null);
     this._offResize?.();
     this._offResize = undefined;

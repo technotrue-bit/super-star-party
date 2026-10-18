@@ -20,6 +20,7 @@ export const roster: CharacterKind[] = [
   { key: 'rumble', name: 'Rumble', color: palette.heroRumble, dice: [1, 1, 3, 4, 6, 6], tagline: 'A tiny dino with a mighty roar!' },
   { key: 'jack', name: 'Jack', color: palette.heroJack, dice: [2, 3, 3, 3, 4, 6], tagline: 'Floats along, lights the way!' },
   { key: 'wisp', name: 'Wisp', color: palette.heroWisp, dice: [1, 1, 1, 6, 6, 6], tagline: 'A little spooky, a lot cute!' },
+  { key: 'rattle', name: 'Rattle', color: palette.heroRattle, dice: [1, 2, 2, 5, 5, 6], tagline: 'Bad to the bone, great at parties!' },
 ];
 
 export function characterByKey(key: string): CharacterKind {

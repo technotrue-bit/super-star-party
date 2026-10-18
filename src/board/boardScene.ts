@@ -50,6 +50,7 @@ import { attachStaticBoundsIn, releaseStaticBoundsIn } from "../render/meshBvh";
 import { buildIsland, type Island } from "./boardIsland";
 import { buildFoliage, type KeepOut } from "./boardFoliage";
 import { buildBigTop, buildHelterSkelter, buildPier, buildFunhouseGate, LANDMARK_RADIUS, type GateProp } from "./boardLandmarks";
+import { buildCruiseShip, type CruiseShip } from "./cruise/cruiseShip";
 
 export interface BoardScene {
   /** Root group, added to world.scene by buildBoardScene(). */
@@ -202,17 +203,24 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
   let disposed = false;
 
   const carnival = def.theme === "carnival";
+  const cruise = def.theme === "cruise";
 
   // ---- ground: the carnival is a grass island in the sea under a sky dome
-  // (boardIsland.ts); the Downtown placeholder keeps its plain asphalt plane.
+  // (boardIsland.ts); the cruise ship steams across open sea
+  // (cruise/cruiseShip.ts); the Downtown placeholder keeps its plain asphalt plane.
   // Diorama pieces (island, landmarks, foliage) are dense and go in `decor`,
   // which joins the board AFTER the static-bounds pass, like the lanes.
   const decor = new THREE.Group();
   decor.name = "decor";
   let island: Island | null = null;
+  let ship: CruiseShip | null = null;
   if (carnival) {
     island = buildIsland(kit, (x, z) => groundHeight(def, x, z));
     decor.add(island.root);
+  } else if (cruise) {
+    ship = buildCruiseShip(def, kit);
+    decor.add(ship.root);
+    props.push(...ship.props);
   } else {
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(settings.board.groundSize, settings.board.groundSize),
@@ -376,7 +384,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
         [settings.board.tentSpots[2].x, settings.board.tentSpots[2].z, palette.mint, palette.tentCream, 4.2],
       ]
     : [];
-  if (!carnival) {
+  if (def.theme === "downtown") {
     for (const m of buildDowntownWater(kit)) group.add(m);
   }
   for (const [tx, tz, ca, cb, ph] of tentSpots) {
@@ -448,6 +456,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
     const halo = lamp.root.getObjectByName("lamp-halo");
     if (glow instanceof THREE.Mesh && halo instanceof THREE.Mesh) lamps.push({ glow, halo });
   }
+  if (ship) lamps.push(...ship.lamps);
   // balloon clusters near each tent (inset from settings so they clear the
   // loop edge and stay beside the tent on the grass)
   for (const [tx, tz] of tentSpots) {
@@ -476,17 +485,20 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
 
   // Shadows across the whole island: the boot key light's shadow box is the
   // three.js default (10 units, 512px), which leaves almost everything
-  // unshadowed. Widened while the carnival is up, put back on dispose().
+  // unshadowed. Widened while the carnival (or the ship) is up, put back on dispose().
   const keyLight = world.scene?.getObjectByName("world:key");
   let restoreShadow: (() => void) | null = null;
-  if (carnival && keyLight instanceof THREE.DirectionalLight) {
+  if ((carnival || cruise) && keyLight instanceof THREE.DirectionalLight) {
     const sh = keyLight.shadow;
     const cam = sh.camera;
     const before = {
-      l: cam.left, r: cam.right, t: cam.top, b: cam.bottom, far: cam.far,
+      l: cam.left, r: cam.right, t: cam.top, b: cam.bottom, near: cam.near, far: cam.far,
       w: sh.mapSize.x, h: sh.mapSize.y, bias: sh.bias, normalBias: sh.normalBias,
     };
-    const E = settings.board.shadowExtent;
+    // The ship runs ~75 units bow to stern and reaches back past the light,
+    // so its box is wider and starts behind the light (an ortho near < 0).
+    const E = cruise ? settings.board.cruiseShadowExtent : settings.board.shadowExtent;
+    if (cruise) cam.near = -40;
     const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
     const size = coarse ? 1024 : 2048;
     cam.left = -E;
@@ -505,6 +517,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       cam.right = before.r;
       cam.top = before.t;
       cam.bottom = before.b;
+      cam.near = before.near;
       cam.far = before.far;
       cam.updateProjectionMatrix();
       sh.mapSize.set(before.w, before.h);
@@ -537,6 +550,8 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
     const strands: Array<[THREE.Vector3, THREE.Vector3]> = [];
     const west = [lampTops.get(24), lampTops.get(1)];
     if (west[0] && west[1]) strands.push([west[0], west[1]]);
+    // The ship is dressed overall: signal flags from the bow over the masts to the stern.
+    if (ship) strands.push(...ship.strands);
     // Searchlight on the south grass east of the tents. The beam sweeps a
     // faint wedge of light back and forth across the loop.
     const sx = bounds.maxX - 4.8;
@@ -551,6 +566,12 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
           buildSearchlight(sx, sz, Math.atan2(-(cy - sz), cx - sx)),
         ]
       : [];
+    if (ship) {
+      // Clouds and gulls stay clear of the bow lanes (the follow camera looks south).
+      const sky = { minX: bounds.minX - 6, maxX: bounds.maxX + 6, minY: bounds.minY - 12, maxY: bounds.maxY + 4 };
+      // No searchlight: at night its beam swept straight across the decks.
+      ambient.push(buildBunting(kit, strands, { x: cx, z: cy }), buildSky(kit, sky));
+    }
     for (const p of ambient) {
       lively.add(p.root);
       props.push(p);
@@ -570,6 +591,13 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
     // Crowd bleachers in the two gaps of the south tent row, pulled toward
     // the loop so the tent canopies don't cover them, facing the board.
     // Own group, so slice 1's lively budget stays its own.
+    if (settings.lively.crowd && ship) {
+      // A cheering section on the forecastle, facing aft over the ship.
+      const crowdRoot = new THREE.Group();
+      crowdRoot.name = "lively-crowd";
+      group.add(crowdRoot);
+      crowd = createCrowd({ root: crowdRoot, spots: ship.bleachers, face: { x: cx, z: cy }, gradientMap: kit.grad });
+    }
     if (settings.lively.crowd && carnival) {
       const crowdRoot = new THREE.Group();
       crowdRoot.name = "lively-crowd";
@@ -599,7 +627,8 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
         bulbs: buntingSlots(strands, { x: cx, z: cy }),
         camera: () => world.camera,
         center: { x: cx, z: cy },
-        sky: island ? island.setSky : undefined,
+        sky: island ? island.setSky : ship ? ship.setSky : undefined,
+        fogScale: cruise ? settings.board.cruiseFogScale : 1,
       });
     }
   }
@@ -688,6 +717,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       t += dt;
       for (const p of props) p.update?.(t, dt);
       island?.update?.(t, dt);
+      ship?.update(t, dt);
       landFx?.update(dt);
       crowd?.update(dt);
       night?.update(dt);
@@ -772,6 +802,7 @@ export function buildBoardScene(def: BoardDef = activeBoard()): BoardScene {
       releaseStaticBoundsIn(group);
       restoreShadow?.();
       island?.dispose();
+      ship?.dispose();
       world.scene?.remove(group);
       const geoms = new Set<THREE.BufferGeometry>();
       const mats = new Set<THREE.Material>();

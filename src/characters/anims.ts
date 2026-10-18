@@ -1,4 +1,5 @@
-import type * as THREE from 'three';
+import * as THREE from 'three';
+import { palette } from '../config/palette';
 import { settings } from '../config/settings';
 import { mulberry32 } from '../core/rng';
 import type { CharacterKind } from './roster';
@@ -19,7 +20,7 @@ export interface AnimController {
 }
 
 const TAU = Math.PI * 2;
-const PART_KEYS = ['ears', 'antenna', 'trunk', 'tail', 'star', 'head', 'armL', 'armR', 'legL', 'legR'] as const;
+const PART_KEYS = ['ears', 'antenna', 'trunk', 'tail', 'star', 'head', 'jaw', 'armL', 'armR', 'legL', 'legR'] as const;
 type PartKey = (typeof PART_KEYS)[number];
 /** Floppy bits that trail the body on a spring (secondary motion). */
 const SPRING_KEYS = ['ears', 'antenna', 'trunk', 'tail'] as const;
@@ -61,13 +62,39 @@ const SAD_DROOP = 0.32;
 const SAD_LIMP = 0.35;
 
 // ---- floaters ----
-// Wisp (ghost) always hovers; Jack (pumpkin) sits on the ground and lifts
-// off to float whenever it moves. Neither has legs: they glide, not hop.
+// Wisp (ghost) and Jack (floating pumpkin) always hover. Neither has legs:
+// they glide, not hop.
 const FLOATERS: Record<string, { always: boolean; height: number }> = {
   wisp: { always: true, height: 0.22 },
-  jack: { always: false, height: 0.34 },
+  jack: { always: true, height: 0.3 },
 };
 const LIFT_RATE = 7; // how fast a floater rises / settles (1/s)
+
+/** True for characters that float instead of hopping (Wisp, Jack). */
+export function isFloater(key: string): boolean {
+  return key in FLOATERS;
+}
+
+/**
+ * True for characters whose walk is one continuous motion (floaters glide,
+ * Pip cartwheels), so the turn loop moves them at a steady speed instead of
+ * the hoppers' surge-and-settle per space.
+ */
+export function travelsSmoothly(key: string): boolean {
+  return isFloater(key) || key === 'pip';
+}
+
+// Pip's cartwheel sparkle trail.
+const SPARK_COUNT = 28;
+const SPARK_LIFE = 0.75; // seconds a sparkle lives
+const SPARK_EVERY = 0.04; // one new sparkle this often while rolling
+
+interface StarRoll {
+  coreY: number;
+  restDepth: number;
+  tips: { deg: number; reach: number }[];
+}
+const TRAIL_RATE = 5; // how fast Jack's pumpkin trail fades in / out (1/s)
 
 /**
  * Pose for one frame, relative to the rig's rest pose. Built fresh each frame
@@ -169,8 +196,90 @@ export function createAnimController(
   let fidgetExpr: Expression | null = null;
 
   const floater = FLOATERS[kind.key];
+  const starArms = kind.key === 'pip';
+  const roll = parts.star?.userData.roll as StarRoll | undefined;
+  // Rattle's skull lifts off his neck on a jump: a position offset on the
+  // head part, set by jump() each frame and applied after the pose.
+  const headBaseY = parts.head?.position.y ?? 0;
+  let headPop = 0;
+  // Face held while cartwheeling (blinks still win for their few frames).
+  let walkExpr: Expression | null = null;
   let lift = floater?.always ? 1 : 0; // 0 = resting on the ground, 1 = fully afloat
-  const sparkles = parts.sparkles;
+  const trail = parts.trail;
+  let trailOn = 0; // 0 = hidden, 1 = the mini pumpkins are fully out
+
+  // Pip's sparkle trail. The sparkles hang off the placement root (the
+  // rig's parent) but keep a world position, so they stay where they were
+  // dropped as he rolls on: a real trail. Own rng stream, presentation only.
+  const sparkRng = mulberry32(0x5ba2c1e);
+  type Spark = { mesh: THREE.Mesh; world: THREE.Vector3; vel: THREE.Vector3; age: number; spin: number; size: number };
+  const sparks: Spark[] = [];
+  let sparkRoot: THREE.Group | null = null;
+  let sparkAcc = 0;
+  const sparkTmp = new THREE.Vector3();
+
+  const tickSparkles = (dt: number, emit: boolean, r: StarRoll): void => {
+    const root = rig.parent;
+    if (!root) return;
+    if (!sparkRoot) {
+      if (!emit) return;
+      sparkRoot = new THREE.Group();
+      sparkRoot.name = 'sparkTrail';
+      root.add(sparkRoot);
+      const geo = new THREE.OctahedronGeometry(0.065, 0);
+      const mats = [
+        new THREE.MeshBasicMaterial({ color: palette.sun }),
+        new THREE.MeshBasicMaterial({ color: palette.white }),
+      ];
+      for (let i = 0; i < SPARK_COUNT; i++) {
+        const mesh = new THREE.Mesh(geo, mats[i % 2]);
+        mesh.visible = false;
+        sparkRoot.add(mesh);
+        sparks.push({ mesh, world: new THREE.Vector3(), vel: new THREE.Vector3(), age: SPARK_LIFE, spin: 0, size: 1 });
+      }
+    }
+    root.updateWorldMatrix(true, false);
+    if (emit) {
+      sparkAcc += dt;
+      while (sparkAcc >= SPARK_EVERY) {
+        sparkAcc -= SPARK_EVERY;
+        const s = sparks.find((p) => p.age >= SPARK_LIFE);
+        if (!s) break;
+        // Just behind him along his travel (facing yaw), around his middle.
+        const back = 0.3 + sparkRng() * 0.2;
+        sparkTmp.set(
+          -Math.sin(yaw) * back + (sparkRng() - 0.5) * 0.35,
+          r.coreY + (sparkRng() - 0.5) * 0.6,
+          -Math.cos(yaw) * back + (sparkRng() - 0.5) * 0.35,
+        );
+        root.localToWorld(s.world.copy(sparkTmp));
+        s.vel.set((sparkRng() - 0.5) * 0.5, 0.45 + sparkRng() * 0.45, (sparkRng() - 0.5) * 0.5);
+        s.age = 0;
+        s.spin = (sparkRng() - 0.5) * 12;
+        s.size = 0.7 + sparkRng() * 0.7;
+        s.mesh.visible = true;
+      }
+    } else {
+      sparkAcc = 0;
+    }
+    for (const s of sparks) {
+      if (s.age >= SPARK_LIFE) continue;
+      s.age += dt;
+      if (s.age >= SPARK_LIFE) {
+        s.mesh.visible = false;
+        continue;
+      }
+      s.world.addScaledVector(s.vel, dt);
+      s.vel.multiplyScalar(Math.exp(-dt * 2)); // the drift eases off
+      const k = s.age / SPARK_LIFE;
+      // Pop in fast, then shrink away.
+      const grow = k < 0.15 ? k / 0.15 : 1 - (k - 0.15) / 0.85;
+      s.mesh.scale.setScalar(Math.max(0.001, s.size * grow));
+      s.mesh.position.copy(root.worldToLocal(sparkTmp.copy(s.world)));
+      s.mesh.rotation.y += s.spin * dt;
+      s.mesh.rotation.x += s.spin * 0.5 * dt;
+    }
+  };
 
   const set = (name: AnimName): void => {
     if (currentName === name) return; // keep phase continuity for repeats
@@ -193,9 +302,14 @@ export function createAnimController(
 
   const fidget = (e: number): void => {
     switch (kind.key) {
-      case 'pip':
-        pose.parts.star[1] = e * TAU * 0.5; // star head spins half a turn
+      case 'pip': {
+        // A twinkle: the crown wiggles and the whole star gives a little spin-wobble.
+        const w = Math.sin(Math.PI * e);
+        pose.parts.antenna[2] = Math.sin(e * TAU * 2) * 0.35 * w;
+        pose.parts.star[2] = Math.sin(e * TAU) * 0.35 * w;
+        pose.y += w * 0.06;
         break;
+      }
       case 'bounce': {
         const arc = Math.sin(Math.PI * e);
         pose.y += arc * 0.18;
@@ -233,6 +347,11 @@ export function createAnimController(
       case 'wisp':
         pose.yaw = e * TAU; // twirls round on the spot
         pose.y += Math.sin(Math.PI * e) * 0.12;
+        break;
+      case 'rattle':
+        // Spins his skull all the way round on his neck, jaw clacking.
+        pose.parts.head[1] = smoothstep(e) * TAU;
+        pose.parts.jaw[0] = Math.abs(Math.sin(e * TAU * 3)) * 0.3;
         break;
       default:
         break;
@@ -286,19 +405,45 @@ export function createAnimController(
   };
 
   const glide = (): void => {
-    // Floaters sail from space to space: a soft bob per space, leaning into
-    // the travel, arms fluttering, no squash and stretch.
-    const cycle = settings.hopDuration;
-    const p = (t % cycle) / cycle;
-    pose.y = Math.sin(p * TAU) * 0.05;
-    pose.rx = 0.22;
-    pose.rz = Math.sin(t * 5) * 0.07;
-    const flap = Math.sin(p * TAU * 2) * 0.35;
-    arm('armL', -0.5 + flap, 0.5);
-    arm('armR', -0.5 - flap, -0.5);
+    // Floaters sail from space to space in one smooth drift: a slow swell
+    // that ignores the per-space step, a gentle lean into the travel, a lazy
+    // sway. No hop, no squash and stretch. Arms (Wisp's nubs) trail softly.
+    pose.y = Math.sin(t * 1.7) * 0.035;
+    pose.rx = 0.12;
+    pose.rz = Math.sin(t * 1.3) * 0.04;
+    const drift = Math.sin(t * 2.2) * 0.12;
+    arm('armL', 0.35 + drift, 0.4);
+    arm('armR', 0.35 - drift, -0.4);
+  };
+
+  // How far the star must rise so its lowest tip stays on the ground at roll
+  // angle `ang` (counter-clockwise from the front).
+  const rollLift = (r: StarRoll, ang: number): number => {
+    let depth = 0;
+    for (const tip of r.tips) {
+      depth = Math.max(depth, -tip.reach * Math.cos((tip.deg * Math.PI) / 180 - ang));
+    }
+    return Math.max(0, depth - r.restDepth);
+  };
+
+  const cartwheel = (r: StarRoll): void => {
+    // Pip turns side-on so the path runs through his body, then rolls one
+    // full turn per board space, tip over tip, with a light floaty arc.
+    // The angle is wrapped, so stopping on a space blends back without
+    // unwinding the turns he made.
+    const turns = t / settings.hopDuration;
+    const ang = angleDelta(0, turns * TAU);
+    pose.yaw = Math.PI / 2;
+    pose.parts.star[2] = ang;
+    pose.y = rollLift(r, ang) + Math.sin(Math.PI * (turns % 1)) * 0.12;
+    walkExpr = 'happy';
   };
 
   const walk = (): void => {
+    if (roll) {
+      cartwheel(roll);
+      return;
+    }
     if (floater) {
       glide();
       return;
@@ -322,6 +467,8 @@ export function createAnimController(
     arm('armR', -swing, -0.1);
     leg('legL', -WALK_TUCK * air + 0.15);
     leg('legR', -WALK_TUCK * air - 0.15);
+    // Rattle's jaw clacks open at the top of every hop.
+    if (kind.key === 'rattle') pose.parts.jaw[0] = air * 0.32;
   };
 
   const jump = (): void => {
@@ -341,11 +488,17 @@ export function createAnimController(
       pose.sy = 1 + s;
       pose.sx = pose.sz = 1 - s * 0.6;
       if (kind.key === 'bounce') pose.rx = p * TAU; // front flip
-      if (kind.key === 'pip') pose.parts.star[1] = p * TAU; // star head spins
+      if (kind.key === 'pip') pose.parts.star[2] = -smoothstep(p) * TAU; // a full cartwheel
       if (kind.key === 'glimmer') pose.yaw = p * TAU; // pirouette
       if (kind.key === 'jack') pose.parts.head[1] = p * TAU; // pumpkin spin
       if (kind.key === 'wisp') pose.rz = Math.sin(p * TAU) * 0.5; // loop-de-sway
       if (kind.key === 'rumble') pose.parts.tail[0] = -0.6; // tail up
+      if (kind.key === 'rattle') {
+        // His skull pops clean off, spins once, and lands back on his neck.
+        headPop = Math.sin(Math.PI * p) * 0.6;
+        pose.parts.head[1] = smoothstep(p) * TAU;
+        pose.parts.jaw[0] = 0.4;
+      }
       const up = ARMS_UP * smoothstep(Math.min(1, p * 3));
       arm('armL', up, 0.25);
       arm('armR', up, -0.25);
@@ -381,7 +534,9 @@ export function createAnimController(
     // Each hero celebrates their own way.
     switch (kind.key) {
       case 'pip':
-        pose.parts.star[1] = t * 5; // star head whirls
+        // Rocks side to side on his tips, crown bobbing along.
+        pose.parts.star[2] = Math.sin(t * 7) * 0.22;
+        pose.parts.antenna[2] = Math.sin(t * 14) * 0.2;
         break;
       case 'bounce':
         pose.y += hop * 0.12; // extra-springy
@@ -416,6 +571,11 @@ export function createAnimController(
         pose.y += 0.1;
         pose.rz += Math.sin(t * 6) * 0.15;
         break;
+      case 'rattle':
+        // Cackles: the jaw chatters fast and the skull bobbles.
+        pose.parts.jaw[0] = 0.08 + (0.5 + 0.5 * Math.sin(t * 30)) * 0.32;
+        pose.parts.head[2] = Math.sin(t * 9) * 0.16;
+        break;
       default:
         break;
     }
@@ -437,6 +597,7 @@ export function createAnimController(
     if (kind.key === 'jack') pose.parts.antenna[2] = 0.7; // stem wilts
     if (kind.key === 'rumble') pose.parts.tail[0] = 0.5; // tail drags
     if (kind.key === 'wisp') pose.y = -0.12; // sinks low
+    if (kind.key === 'rattle') pose.parts.jaw[0] = 0.38; // jaw hangs open
   };
 
   const squash = (): void => {
@@ -461,6 +622,16 @@ export function createAnimController(
       const obj = parts[k];
       const b = partBase[k];
       if (!obj || !b) continue;
+      if (starArms && (k === 'armL' || k === 'armR')) {
+        // Pip's arms are sideways star points: swinging them about x would
+        // only twist them. A raise (rx < 0) sweeps the point up instead,
+        // clamped so it never folds into the crown; a little rx stays for depth.
+        const side = k === 'armR' ? 1 : -1;
+        const [rx, ry, rz] = p.parts[k];
+        const lift = Math.min(0.7, Math.max(-0.5, -rx * 0.4));
+        obj.rotation.set(b.x + rx * 0.15, b.y + ry, b.z + side * lift + rz * 0.3);
+        continue;
+      }
       obj.rotation.set(b.x + p.parts[k][0], b.y + p.parts[k][1], b.z + p.parts[k][2]);
     }
   };
@@ -474,6 +645,8 @@ export function createAnimController(
     yawRate = dt > 0 ? angleDelta(prevYaw, yaw) / dt : 0;
 
     resetPose(pose);
+    walkExpr = null;
+    headPop = 0;
     fidgetExpr = null;
     switch (currentName) {
       case 'idle':
@@ -496,8 +669,7 @@ export function createAnimController(
         break;
     }
 
-    // Floaters: rise to hover height (always for Wisp, while moving for
-    // Jack) and settle back down gently.
+    // Floaters: rise to hover height and settle back down gently.
     if (floater) {
       const target = floater.always || currentName === 'walk' || currentName === 'cheer' ? 1 : 0;
       lift += (target - lift) * (1 - Math.exp(-dt * LIFT_RATE));
@@ -510,12 +682,25 @@ export function createAnimController(
         pose.sz *= 1 - rising * 0.5;
       }
     }
-    if (sparkles) {
-      sparkles.visible = lift > 0.08;
-      sparkles.rotation.y = t * 3;
-      sparkles.scale.setScalar(Math.max(0.001, lift));
-      sparkles.position.y = -lift * 0.04;
+    // Jack's pumpkin trail: out while he travels, tucked away at rest. Each
+    // mini pumpkin bobs and sways a beat behind the one in front of it.
+    if (trail) {
+      const want = currentName === 'walk' ? 1 : 0;
+      trailOn += (want - trailOn) * (1 - Math.exp(-dt * TRAIL_RATE));
+      trail.visible = trailOn > 0.03;
+      if (trail.visible) {
+        trail.scale.setScalar(Math.max(0.001, trailOn));
+        trail.children.forEach((mini, k) => {
+          const ph = t * 4.2 - (k + 1) * 0.9;
+          mini.position.y = (mini.userData.baseY as number) + Math.sin(ph) * 0.07;
+          mini.position.x = Math.sin(ph * 0.5) * 0.08 * (k + 1);
+          mini.rotation.y = Math.sin(ph * 0.7) * 0.4;
+          mini.rotation.z = Math.sin(ph) * 0.15;
+        });
+      }
     }
+
+    if (roll) tickSparkles(dt, currentName === 'walk', roll);
 
     // Expressions owned by the idle/walk states: blink now and then.
     if (currentName === 'idle' || currentName === 'walk') {
@@ -530,7 +715,7 @@ export function createAnimController(
           if (animRng() < 0.25) nextBlink = t + 0.18;
         }
       } else {
-        setExpression(fidgetExpr ?? 'normal');
+        setExpression(fidgetExpr ?? (currentName === 'walk' ? walkExpr : null) ?? 'normal');
       }
     }
 
@@ -572,7 +757,11 @@ export function createAnimController(
     }
     // Keep the shown yaw offset bounded so a spin-on-the-spot blends cleanly.
     shown.yaw = angleDelta(0, shown.yaw);
+    // Pip rolls on his tips: whatever the blend or animation, never let the
+    // star's lowest tip sink into the ground at its current spin.
+    if (roll) shown.y = Math.max(shown.y, rollLift(roll, shown.parts.star[2]));
     applyPose(shown);
+    if (kind.key === 'rattle' && parts.head) parts.head.position.y = headBaseY + headPop;
   };
 
   const setFacing = (angle: number): void => {

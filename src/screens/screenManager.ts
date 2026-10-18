@@ -98,8 +98,17 @@ class ScreenManager {
     });
   }
 
+  /**
+   * The screen on show. "none" until the first goto() has entered one: the title
+   * is pre-registered as _current, but nothing is showing until the boot render.
+   */
   get current(): string {
-    return this._current?.id ?? "none";
+    return this._entered ? (this._current?.id ?? "none") : "none";
+  }
+
+  /** True once the first goto() has entered a screen (the wipe-free boot render). */
+  get booted(): boolean {
+    return this._bootDone;
   }
 
   /** The wipe kind that the next goto will use (QA/preview aid). */

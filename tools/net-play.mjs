@@ -12,11 +12,11 @@ import { chromium } from "@playwright/test";
 
 const BASE = process.env.SSP_URL ?? "http://localhost:5177";
 const URL = `${BASE}/?audio=0&speed=8&partyAssist=1&turns=2&seed=7`;
-// SSP_BOARD=downtown|carnival goes on the HOST's URL only: the host picks the
+// SSP_BOARD=downtown|carnival|cruise goes on the HOST's URL only: the host picks the
 // board and the guest must follow it through MatchSetup.board.
 const BOARD_ARG = (process.env.SSP_BOARD ?? "").trim();
 const HOST_URL = BOARD_ARG ? `${URL}&board=${BOARD_ARG}` : URL;
-const EXPECT_BOARD = BOARD_ARG === "downtown" ? "downtown" : BOARD_ARG === "carnival" ? "fizzy-fairground" : BOARD_ARG ? null : "fizzy-fairground";
+const EXPECT_BOARD = BOARD_ARG === "downtown" ? "downtown" : BOARD_ARG === "cruise" ? "cruise-ship" : BOARD_ARG === "carnival" ? "fizzy-fairground" : BOARD_ARG ? null : "fizzy-fairground";
 // SSP_OLD_CLIENT=0 skips the old-client refusal check (on by default).
 const OLD_CLIENT = process.env.SSP_OLD_CLIENT !== "0";
 

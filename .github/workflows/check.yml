@@ -3,10 +3,25 @@ name: check
 on:
   pull_request:
 
+# Split into parallel jobs instead of one 110-minute job (the last green
+# single-job run, 38896904939 on 70feea93, took ~82 min of steps).
+# Estimated wall time is ~27 min, set by `probe-registry`.
+# The final job is still called `check`, so the required status check name
+# does not change: it passes only when every job above it passed.
+#
+# Estimated job durations (from run 38896904939 step times + ~1.5 min setup):
+#   core            ~20 min  typecheck, build, unit, no-core-rng, screen lock,
+#                            pads, camera lock, opening, contact x3, prod hook
+#   twin-carnival   ~19 min  Twin match
+#   twin-downtown   ~16 min  Twin match on Downtown, fork walk, playtest
+#   probe-registry  ~27 min  Board registry (carnival seed-7 + Downtown graph)
+#   probe-cruise    ~20 min  Cruise Ship graph, seed-7 replay to the finale,
+#                            autoplay fork coverage, match opening, fork walk (estimate)
+#   check           <1 min   gate
 jobs:
-  check:
+  core:
     runs-on: ubuntu-latest
-    timeout-minutes: 110
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,23 +75,8 @@ jobs:
       - name: Minigame camera lock
         run: node tools/probe-camera-lock.mjs
 
-      - name: Twin match
-        run: node tools/twin-seed.mjs
-
-      - name: Twin match on Downtown
-        run: SSP_BOARD=downtown node tools/twin-seed.mjs
-
-      - name: Board registry (carnival seed-7 parity + Downtown graph)
-        run: node tools/probe-board-downtown.mjs
-
-      - name: Fork walk-through and item-then-roll (both boards)
-        run: node tools/probe-fork-walk.mjs --ci
-
       - name: Match opening (line-up, board tour, order blocks, starting coins)
         run: node tools/probe-opening.mjs
-
-      - name: Playtest
-        run: node tools/smoke-play.mjs
 
       - name: Contact controls
         run: SSP_EXPECT_TRANSPORT=tabs node tools/probe-contact-control.mjs
@@ -98,7 +98,11 @@ jobs:
             cat "$RUNNER_TEMP/vite-party.log"
             exit 1
           fi
-          SSP_URL=http://127.0.0.1:5178 SSP_EXPECT_TRANSPORT=server node tools/probe-contact-control.mjs
+          if ! SSP_URL=http://127.0.0.1:5178 SSP_EXPECT_TRANSPORT=server node tools/probe-contact-control.mjs; then
+            echo "--- vite (party-url) log ---"
+            cat "$RUNNER_TEMP/vite-party.log"
+            exit 1
+          fi
 
       - name: Prod build ignores the contact hook
         run: |
@@ -118,3 +122,169 @@ jobs:
             exit 1
           fi
           SSP_URL=http://127.0.0.1:5179 SSP_PROD=1 node tools/probe-contact-control.mjs
+
+  twin-carnival:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.0"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the game
+        run: |
+          RUNNER_TRACKING_ID="" nohup npm run dev -- --host 127.0.0.1 > "$RUNNER_TEMP/vite.log" 2>&1 < /dev/null &
+          disown
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:5177/; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "The game did not listen on port 5177."
+          cat "$RUNNER_TEMP/vite.log"
+          exit 1
+
+      - name: Twin match
+        run: node tools/twin-seed.mjs
+
+  twin-downtown:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.0"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the game
+        run: |
+          RUNNER_TRACKING_ID="" nohup npm run dev -- --host 127.0.0.1 > "$RUNNER_TEMP/vite.log" 2>&1 < /dev/null &
+          disown
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:5177/; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "The game did not listen on port 5177."
+          cat "$RUNNER_TEMP/vite.log"
+          exit 1
+
+      - name: Twin match on Downtown
+        run: SSP_BOARD=downtown node tools/twin-seed.mjs
+
+      - name: Fork walk-through and item-then-roll (carnival + Downtown)
+        run: SSP_FW_BOARDS=carnival,downtown node tools/probe-fork-walk.mjs --ci
+
+      - name: Playtest
+        run: node tools/smoke-play.mjs
+
+  probe-registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.0"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the game
+        run: |
+          RUNNER_TRACKING_ID="" nohup npm run dev -- --host 127.0.0.1 > "$RUNNER_TEMP/vite.log" 2>&1 < /dev/null &
+          disown
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:5177/; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "The game did not listen on port 5177."
+          cat "$RUNNER_TEMP/vite.log"
+          exit 1
+
+      - name: Board registry (carnival seed-7 parity + Downtown graph)
+        run: node tools/probe-board-downtown.mjs
+
+  probe-cruise:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.0"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the game
+        run: |
+          RUNNER_TRACKING_ID="" nohup npm run dev -- --host 127.0.0.1 > "$RUNNER_TEMP/vite.log" 2>&1 < /dev/null &
+          disown
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:5177/; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "The game did not listen on port 5177."
+          cat "$RUNNER_TEMP/vite.log"
+          exit 1
+
+      - name: Cruise Ship (graph, seed-7 replay to the finale, autoplay)
+        run: node tools/probe-board-cruise.mjs
+
+      - name: Match opening on the Cruise Ship
+        run: SSP_BOARD=cruise node tools/probe-opening.mjs
+
+      - name: Fork walk-through and item-then-roll (Cruise Ship)
+        run: SSP_FW_BOARDS=cruise node tools/probe-fork-walk.mjs --ci
+
+  check:
+    if: always()
+    needs: [core, twin-carnival, twin-downtown, probe-registry, probe-cruise]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: All check jobs passed
+        run: |
+          echo '${{ toJSON(needs) }}'
+          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "true" ]; then
+            echo "A check job did not pass."
+            exit 1
+          fi

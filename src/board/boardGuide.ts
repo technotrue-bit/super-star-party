@@ -32,6 +32,19 @@ const WELCOME: Record<string, string> = {
     "Welcome to Fizzy Fairground, a carnival on its own little island! Whoever holds the most Stars after the last turn wins. Coins buy Stars, so grab every coin you can.",
   downtown:
     "Welcome to Downtown! Race around the Ring Road, cut through the side streets, and collect the most Stars by the final turn. Coins buy Stars.",
+  "cruise-ship":
+    "Welcome aboard the S.S. Super Star, a party cruise out at sea! Collect the most Stars by the final turn. Coins buy Stars, so grab every coin you can on the way round the decks.",
+};
+
+/** Extra stops a board adds after the fork stop, keyed by board id. */
+const EXTRA: Record<string, GuideStop[]> = {
+  "cruise-ship": [
+    {
+      title: "Upstairs, Downstairs",
+      body: "The Lido Deck runs round the pool the other way. Climb any Lido Stairs to double back, cross the Pool Bridge, then take the Promenade Stairs down. The Captain's Walk and the Grand Ballroom cut off the bow and the stern.",
+      focus: { kind: "point", x: 0, z: -0.5 },
+    },
+  ],
 };
 
 function firstOf(def: BoardDef, type: SpaceType): number | undefined {
@@ -106,6 +119,8 @@ export function boardGuide(def: BoardDef, totalTurns: number = settings.totalTur
       });
     }
   }
+
+  stops.push(...(EXTRA[def.id] ?? []));
 
   if (def.gate) {
     const g = def.gate;

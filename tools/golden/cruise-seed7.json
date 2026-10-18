@@ -1,0 +1,447 @@
+{
+ "finale": true,
+ "url": "http://127.0.0.1:5177/?seed=7&screen=board&autoplay=1&audio=0&speed=4&board=cruise",
+ "turns": [
+  {
+   "turn": 1,
+   "hash": "c8f924bd",
+   "coins": [],
+   "spaces": [],
+   "balloon": 0,
+   "boardId": "fizzy-fairground"
+  },
+  {
+   "turn": 2,
+   "hash": "7e8de1f1",
+   "coins": [
+    12,
+    9,
+    7,
+    7
+   ],
+   "spaces": [
+    2,
+    2,
+    5,
+    5
+   ],
+   "balloon": 7,
+   "boardId": "cruise-ship"
+  },
+  {
+   "turn": 3,
+   "hash": "d2a59f64",
+   "coins": [
+    24,
+    1,
+    0,
+    10
+   ],
+   "spaces": [
+    3,
+    8,
+    102,
+    100
+   ],
+   "balloon": 129,
+   "boardId": "cruise-ship"
+  },
+  {
+   "turn": 4,
+   "hash": "24664466",
+   "coins": [
+    27,
+    9,
+    7,
+    9
+   ],
+   "spaces": [
+    94,
+    108,
+    104,
+    103
+   ],
+   "balloon": 129,
+   "boardId": "cruise-ship"
+  },
+  {
+   "turn": 5,
+   "hash": "843af33b",
+   "coins": [
+    44,
+    15,
+    10,
+    22
+   ],
+   "spaces": [
+    78,
+    33,
+    106,
+    108
+   ],
+   "balloon": 129,
+   "boardId": "cruise-ship"
+  },
+  {
+   "turn": 6,
+   "hash": "d725684d",
+   "coins": [
+    41,
+    18,
+    13,
+    25
+   ],
+   "spaces": [
+    127,
+    126,
+    30,
+    31
+   ],
+   "balloon": 129,
+   "boardId": "cruise-ship"
+  },
+  {
+   "turn": 7,
+   "hash": "6fbdd572",
+   "coins": [
+    31,
+    11,
+    16,
+    25
+   ],
+   "spaces": [
+    130,
+    38,
+    82,
+    83
+   ],
+   "balloon": 7,
+   "boardId": "cruise-ship"
+  },
+  {
+   "turn": 8,
+   "hash": "9d931be7",
+   "coins": [
+    25,
+    0,
+    19,
+    25
+   ],
+   "spaces": [
+    42,
+    83,
+    65,
+    109
+   ],
+   "balloon": 7,
+   "boardId": "cruise-ship"
+  },
+  {
+   "turn": 9,
+   "hash": "3996dc16",
+   "coins": [
+    25,
+    0,
+    12,
+    38
+   ],
+   "spaces": [
+    113,
+    8,
+    3,
+    112
+   ],
+   "balloon": 7,
+   "boardId": "cruise-ship"
+  },
+  {
+   "turn": 10,
+   "hash": "1381b449",
+   "coins": [
+    18,
+    3,
+    2,
+    41
+   ],
+   "spaces": [
+    61,
+    7,
+    5,
+    3
+   ],
+   "balloon": 7,
+   "boardId": "cruise-ship"
+  },
+  {
+   "turn": 11,
+   "hash": "5464cf82",
+   "coins": [
+    33,
+    0,
+    7,
+    26
+   ],
+   "spaces": [
+    63,
+    101,
+    98,
+    98
+   ],
+   "balloon": 30,
+   "boardId": "cruise-ship"
+  }
+ ],
+ "marks": [
+  {
+   "event": "match:start",
+   "turn": 1,
+   "draws": 0
+  },
+  {
+   "event": "turn:start",
+   "turn": 1,
+   "draws": 5
+  },
+  {
+   "event": "turn:start",
+   "turn": 1,
+   "draws": 8
+  },
+  {
+   "event": "turn:start",
+   "turn": 1,
+   "draws": 11
+  },
+  {
+   "event": "turn:start",
+   "turn": 1,
+   "draws": 14
+  },
+  {
+   "event": "turn:start",
+   "turn": 2,
+   "draws": 28
+  },
+  {
+   "event": "turn:start",
+   "turn": 2,
+   "draws": 31
+  },
+  {
+   "event": "turn:start",
+   "turn": 2,
+   "draws": 37
+  },
+  {
+   "event": "turn:start",
+   "turn": 2,
+   "draws": 41
+  },
+  {
+   "event": "minigame:start",
+   "turn": 3,
+   "draws": 58
+  },
+  {
+   "event": "minigame:end",
+   "turn": 3,
+   "draws": 58
+  },
+  {
+   "event": "match:start",
+   "turn": 3,
+   "draws": 58
+  },
+  {
+   "event": "turn:start",
+   "turn": 3,
+   "draws": 58
+  },
+  {
+   "event": "turn:start",
+   "turn": 3,
+   "draws": 64
+  },
+  {
+   "event": "turn:start",
+   "turn": 3,
+   "draws": 68
+  },
+  {
+   "event": "turn:start",
+   "turn": 3,
+   "draws": 71
+  },
+  {
+   "event": "minigame:start",
+   "turn": 4,
+   "draws": 86
+  },
+  {
+   "event": "minigame:end",
+   "turn": 4,
+   "draws": 86
+  },
+  {
+   "event": "match:start",
+   "turn": 4,
+   "draws": 86
+  },
+  {
+   "event": "turn:start",
+   "turn": 4,
+   "draws": 86
+  },
+  {
+   "event": "turn:start",
+   "turn": 4,
+   "draws": 90
+  },
+  {
+   "event": "turn:start",
+   "turn": 4,
+   "draws": 94
+  },
+  {
+   "event": "turn:start",
+   "turn": 4,
+   "draws": 100
+  },
+  {
+   "event": "turn:start",
+   "turn": 5,
+   "draws": 113
+  },
+  {
+   "event": "turn:start",
+   "turn": 5,
+   "draws": 116
+  },
+  {
+   "event": "turn:start",
+   "turn": 5,
+   "draws": 119
+  },
+  {
+   "event": "turn:start",
+   "turn": 5,
+   "draws": 122
+  },
+  {
+   "event": "turn:start",
+   "turn": 6,
+   "draws": 135
+  },
+  {
+   "event": "turn:start",
+   "turn": 6,
+   "draws": 146
+  },
+  {
+   "event": "turn:start",
+   "turn": 6,
+   "draws": 149
+  },
+  {
+   "event": "turn:start",
+   "turn": 6,
+   "draws": 155
+  },
+  {
+   "event": "turn:start",
+   "turn": 7,
+   "draws": 169
+  },
+  {
+   "event": "turn:start",
+   "turn": 7,
+   "draws": 172
+  },
+  {
+   "event": "turn:start",
+   "turn": 7,
+   "draws": 175
+  },
+  {
+   "event": "turn:start",
+   "turn": 7,
+   "draws": 181
+  },
+  {
+   "event": "turn:start",
+   "turn": 8,
+   "draws": 196
+  },
+  {
+   "event": "turn:start",
+   "turn": 8,
+   "draws": 199
+  },
+  {
+   "event": "turn:start",
+   "turn": 8,
+   "draws": 202
+  },
+  {
+   "event": "turn:start",
+   "turn": 8,
+   "draws": 210
+  },
+  {
+   "event": "turn:start",
+   "turn": 9,
+   "draws": 226
+  },
+  {
+   "event": "turn:start",
+   "turn": 9,
+   "draws": 229
+  },
+  {
+   "event": "turn:start",
+   "turn": 9,
+   "draws": 232
+  },
+  {
+   "event": "turn:start",
+   "turn": 9,
+   "draws": 237
+  },
+  {
+   "event": "minigame:start",
+   "turn": 10,
+   "draws": 255
+  },
+  {
+   "event": "minigame:end",
+   "turn": 10,
+   "draws": 255
+  },
+  {
+   "event": "match:start",
+   "turn": 10,
+   "draws": 255
+  },
+  {
+   "event": "turn:start",
+   "turn": 10,
+   "draws": 255
+  },
+  {
+   "event": "turn:start",
+   "turn": 10,
+   "draws": 257
+  },
+  {
+   "event": "turn:start",
+   "turn": 10,
+   "draws": 265
+  },
+  {
+   "event": "turn:start",
+   "turn": 10,
+   "draws": 270
+  }
+ ],
+ "ms": 175436
+}

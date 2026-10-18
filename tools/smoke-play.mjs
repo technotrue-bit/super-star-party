@@ -19,7 +19,7 @@ const fxQuery = fxArg === "off" || fxArg === "low" || fxArg === "high" ? `&fx=${
 // SSP_SEED pins the match seed (and so the turn order). Unset = random, as before.
 const seedArg = (process.env.SSP_SEED ?? "").trim();
 const seedQuery = /^\d+$/.test(seedArg) ? `&seed=${seedArg}` : "";
-// SSP_BOARD=downtown|carnival|random plays that board.
+// SSP_BOARD=downtown|carnival|cruise|random plays that board.
 const boardQuery = process.env.SSP_BOARD ? `&board=${process.env.SSP_BOARD}` : "";
 const BASE = process.env.SSP_URL ?? "http://localhost:5177";
 
@@ -244,7 +244,7 @@ await page.screenshot({ path: `${OUT}/05-finale.png` });
 fs.writeFileSync(`${OUT}/console-errors.txt`, errors.join("\n") || "(none)");
 console.log(`\nconsole errors: ${errors.length ? errors.length + " -> " + JSON.stringify(errors.slice(0, 4)) : "none"}`);
 const playedBoard = await page.evaluate(() => window.__SSP__?.state?.()?.match?.boardId ?? null);
-const wantBoard = process.env.SSP_BOARD === "downtown" ? "downtown" : process.env.SSP_BOARD === "carnival" || !process.env.SSP_BOARD ? "fizzy-fairground" : null;
+const wantBoard = process.env.SSP_BOARD === "downtown" ? "downtown" : process.env.SSP_BOARD === "cruise" ? "cruise-ship" : process.env.SSP_BOARD === "carnival" || !process.env.SSP_BOARD ? "fizzy-fairground" : null;
 const boardOk = wantBoard === null || playedBoard === wantBoard;
 console.log(`board played: ${playedBoard}${wantBoard ? ` (expected ${wantBoard})` : ""}`);
 const ok = errors.length === 0 && moved && reachedFinale && minigameClicks > 0 && howtoMisses.length === 0 && boardOk;

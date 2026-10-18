@@ -16,6 +16,7 @@ import { audio, unlock } from "./audio/audioEngine";
 import { fitAppToViewport, onViewportChange, viewportSize } from "./ui/viewport";
 import { installScreenLock } from "./ui/screenLock";
 import { installPostFx, renderPostFx, resizePostFx } from "./render/postFx";
+import { warmPortraits } from "./characters/portrait";
 
 export const world = {
   renderer: null as THREE.WebGLRenderer | null,
@@ -110,7 +111,10 @@ function boot(): void {
     import("./screens/minigameReady").then((m) => screens.register(m.minigameReadyScreen)),
   ];
   void Promise.all(screenImports).then(() => {
-    screens.goto(screen);
+    // A debug hook (__SSP__.goto / openMinigame, from a test) can navigate before
+    // every screen chunk has loaded. That goto already took the wipe-free first
+    // render; going to the boot screen now would wipe it away and cancel it.
+    if (!screens.booted) screens.goto(screen);
   });
 
   // Resize to the visible phone viewport (Safari toolbar), not the layout viewport.
@@ -157,6 +161,9 @@ function boot(): void {
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+  // Hero face avatars for the HUD and cards: drawn by this renderer into an
+  // offscreen target, one per idle moment.
+  warmPortraits(renderer);
 
   console.log(`[SSP] SUPER STAR PARTY booted — seed ${seed}, screen ${screen}`);
 }

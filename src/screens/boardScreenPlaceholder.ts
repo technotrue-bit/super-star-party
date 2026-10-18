@@ -160,6 +160,8 @@ const CAM_LEAD_JUMP = 2.5;
 const CAM_SETTLE_HOLD = 0.4;
 /** Final smoothing over swoops and punches (s): short, so shots still read. */
 const CAM_OUTPUT_SMOOTH = 0.22;
+/** Camera-to-target distance past which the near plane is pulled out (see update). */
+const FAR_VIEW = 60;
 
 function computeCameraFit(): CamFit {
   const b = boardBounds();
@@ -1145,6 +1147,11 @@ const boardScreenImpl: BoardScreenState & Screen = {
     this._flash = undefined;
     this._cam = undefined;
     this._punch = null;
+    // Give the next screen back the close-up near plane (far views pulled it out).
+    if (world.camera && world.camera.near !== 0.1) {
+      world.camera.near = 0.1;
+      world.camera.updateProjectionMatrix();
+    }
     if (this._onPauseKey) {
       window.removeEventListener("keydown", this._onPauseKey);
       this._onPauseKey = undefined;
@@ -1360,6 +1367,19 @@ const boardScreenImpl: BoardScreenState & Screen = {
 
       cam.position.copy(pos);
       cam.lookAt(lk);
+    }
+    // Far views (the cruise ship's overview and flyover sit 100+ units out):
+    // with the close-up 0.1 near plane a 24-bit depth buffer can't tell the
+    // lanes from the space disks a few hundredths above them, so the path
+    // bleeds through the disks. Nothing is within a fifth of that distance.
+    const lookAt = introPose ? introPose.look : this._outLook;
+    if (cam && lookAt) {
+      const d = cam.position.distanceTo(lookAt);
+      const near = d > FAR_VIEW ? d * 0.2 : 0.1;
+      if (Math.abs(cam.near - near) > 1e-3) {
+        cam.near = near;
+        cam.updateProjectionMatrix();
+      }
     }
 
     this._loop?.update(dt);

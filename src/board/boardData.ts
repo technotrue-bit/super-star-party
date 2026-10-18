@@ -42,7 +42,7 @@ export interface BoardDef {
    */
   prizeStartRandom?: boolean;
   /** Scenery theme key; boardScene builds the carnival look for "carnival". */
-  theme: "carnival" | "downtown";
+  theme: "carnival" | "downtown" | "cruise";
   /**
    * Open fork lanes on "graph" boards: `from` forks into `path`, whose last
    * tile steps onto `to`. Read by the fork popup label and the lane decal
@@ -109,7 +109,7 @@ export interface GiverSkin {
 // junction tile can sit exactly beside the lane it branches to while the rest
 // of the loop flows freely. Pure math, no rng: the board is fixed design data.
 
-interface Ctrl {
+export interface Ctrl {
   x: number;
   z: number;
   /** Space index pinned to this control point. */
@@ -117,7 +117,7 @@ interface Ctrl {
 }
 
 /** Centripetal Catmull-Rom point between p1 and p2 (t in [0, 1]). */
-function crPoint(p0: Ctrl, p1: Ctrl, p2: Ctrl, p3: Ctrl, t: number): { x: number; z: number } {
+export function crPoint(p0: Ctrl, p1: Ctrl, p2: Ctrl, p3: Ctrl, t: number): { x: number; z: number } {
   const knot = (a: Ctrl, b: Ctrl): number => Math.max(1e-4, Math.sqrt(Math.hypot(b.x - a.x, b.z - a.z)));
   const t0 = 0;
   const t1 = t0 + knot(p0, p1);
@@ -140,7 +140,7 @@ function crPoint(p0: Ctrl, p1: Ctrl, p2: Ctrl, p3: Ctrl, t: number): { x: number
  * Place `count` spaces (local indices 0..count-1) on the closed curve through
  * `ctrl`. ctrl[0] must pin index 0; pins must increase around the loop.
  */
-function anchoredLoop(ctrl: Ctrl[], count: number): { x: number; y: number }[] {
+export function anchoredLoop(ctrl: Ctrl[], count: number): { x: number; y: number }[] {
   const n = ctrl.length;
   const STEPS = 48;
   // Dense polyline with the arc length at every control point.
@@ -261,13 +261,74 @@ export interface HillDef {
   slope: number;
 }
 
+/**
+ * A flat deck with vertical sides (the cruise ship's decks): a rounded
+ * rectangle centred on (x, z) at height `h`. A negative `h` is a sunken floor.
+ */
+export interface DeckLayer {
+  kind: "deck";
+  x: number;
+  z: number;
+  hx: number;
+  hz: number;
+  /** Corner radius (world units). */
+  r: number;
+  h: number;
+}
+
+/**
+ * Stairs or a ramp between two decks: an oriented strip from (x0, z0) at
+ * height h0 to (x1, z1) at h1, `w` wide, rising evenly along its length.
+ */
+export interface RampLayer {
+  kind: "ramp";
+  x0: number;
+  z0: number;
+  h0: number;
+  x1: number;
+  z1: number;
+  h1: number;
+  w: number;
+}
+
+export type TerrainLayer = DeckLayer | RampLayer;
+
 /** Board ground shape. Absent: flat ground at y = 0. */
 export interface TerrainDef {
   hills: HillDef[];
+  /**
+   * Decks and ramps in painter's order: the last layer that contains a point
+   * sets its height. Hills (and flat ground) count only where no layer does.
+   */
+  layers?: TerrainLayer[];
+}
+
+/** Height of `layer` at (x, z), or null when the point is outside it. */
+export function layerHeight(layer: TerrainLayer, x: number, z: number): number | null {
+  if (layer.kind === "deck") {
+    const ix = Math.max(0, Math.abs(x - layer.x) - (layer.hx - layer.r));
+    const iz = Math.max(0, Math.abs(z - layer.z) - (layer.hz - layer.r));
+    return ix * ix + iz * iz <= layer.r * layer.r ? layer.h : null;
+  }
+  const dx = layer.x1 - layer.x0;
+  const dz = layer.z1 - layer.z0;
+  const len2 = dx * dx + dz * dz || 1;
+  const u = ((x - layer.x0) * dx + (z - layer.z0) * dz) / len2;
+  if (u < 0 || u > 1) return null;
+  const side = Math.abs((x - layer.x0) * dz - (z - layer.z0) * dx) / Math.sqrt(len2);
+  if (side > layer.w / 2) return null;
+  return layer.h0 + (layer.h1 - layer.h0) * u;
 }
 
 /** Ground height at world (x, z). Pure: no state, no rng. */
 export function groundHeight(def: Pick<BoardDef, "terrain">, x: number, z: number): number {
+  const layers = def.terrain?.layers;
+  if (layers) {
+    for (let i = layers.length - 1; i >= 0; i--) {
+      const lh = layerHeight(layers[i], x, z);
+      if (lh !== null) return lh;
+    }
+  }
   const hills = def.terrain?.hills;
   if (!hills) return 0;
   let h = 0;

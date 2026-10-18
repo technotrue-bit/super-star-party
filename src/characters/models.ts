@@ -17,6 +17,7 @@ const HAND_COLORS: Record<string, string> = {
   rumble: palette.cream,
   jack: palette.pumpkinStem,
   wisp: palette.white,
+  rattle: palette.bone,
 };
 
 // Darken a palette color toward the ink outline color. Legs read as a deeper
@@ -195,25 +196,116 @@ export function buildModel(kind: CharacterKind): BuiltModel {
 
   switch (kind.key) {
     case 'pip': {
-      // Orange star kid: squashed body + 4-point star head.
-      parts.body = buildBody(0.5, 0.8, 0.5, 0, true);
+      // The star of the show: Pip IS a chubby five-point star. A soft, puffy
+      // core carries the face; the top point is his crown, the two side
+      // points are his arms and the two lower points are his legs, so he
+      // stands on his tips. Everything hangs off one `star` group centred on
+      // the core, so a jump can cartwheel him round his middle (anims.ts).
+      const CORE_Y = 0.59; // core centre above the ground (leg tips just touch down)
+      const DEPTH = 0.72; // front-to-back squash: a star is flatter than a ball
       const star = new THREE.Group();
-      star.position.set(0, 1.08, 0);
-      const octa = new THREE.OctahedronGeometry(0.42, 0);
-      octa.scale(1, 0.62, 1);
-      const a = addMesh(star, octa, bodyMat, [0, 0, 0]);
-      const b = addMesh(star, octa, bodyMat, [0, 0, 0]);
-      b.rotation.y = Math.PI / 4;
-      inkClone(a, star);
-      inkClone(b, star);
+      star.position.set(0, CORE_Y, 0);
       group.add(star);
-      parts.head = star;
       parts.star = star;
-      parts.face = buildFace(0.28, 0.06, 0.34, star);
-      parts.armL = buildArm('L', [-0.38, 0.7, 0]);
-      parts.armR = buildArm('R', [0.38, 0.7, 0]);
-      parts.legL = buildLeg('L', [-0.16, 0.1, 0.05]);
-      parts.legR = buildLeg('R', [0.16, 0.1, 0.05]);
+
+      // Core: a flattened sphere. It is the head too, so look-arounds turn
+      // the face; its ink shell rides along inside it.
+      const head = new THREE.Group();
+      star.add(head);
+      const coreGeo = new THREE.SphereGeometry(0.42, 32, 24);
+      coreGeo.scale(1, 1, DEPTH);
+      inkClone(addMesh(head, coreGeo, bodyMat, [0, 0, 0]), head);
+      parts.head = head;
+
+      // One rounded, slightly puffy cone per point, built pointing up (+y)
+      // from just inside the core, flattened like the core. `ink` > 0 builds
+      // the outline shell: a constant offset that fades in only past the
+      // joint, so no dark seam pokes through the core where the point meets it.
+      const pointGeo = (len: number, base: number, ink = 0): THREE.LatheGeometry => {
+        const tip = 0.075;
+        const prof: THREE.Vector2[] = [];
+        const y0 = -0.12;
+        const yTip = len - tip;
+        const grow = (y: number): number => ink * THREE.MathUtils.smoothstep(y, 0.08, 0.2);
+        for (let k = 0; k <= 12; k++) {
+          const s = k / 12;
+          const y = y0 + (yTip - y0) * s;
+          const r = base + (tip - base) * s + 0.035 * Math.sin(Math.PI * s);
+          prof.push(new THREE.Vector2(r + grow(y), y));
+        }
+        for (let k = 1; k <= 6; k++) {
+          const a = (k / 6) * (Math.PI / 2);
+          prof.push(new THREE.Vector2(Math.cos(a) * (tip + ink), yTip + Math.sin(a) * (tip + ink)));
+        }
+        const g = new THREE.LatheGeometry(prof, 24);
+        g.scale(1, 1, DEPTH);
+        return g;
+      };
+      // A point on a pivot at the core's rim, aimed `deg` round from straight
+      // up (clockwise, as seen from the front).
+      const SHOULDER = 0.26;
+      const buildPoint = (name: string, deg: number, len: number, base: number): THREE.Group => {
+        const a = THREE.MathUtils.degToRad(deg);
+        const pivot = new THREE.Group();
+        pivot.name = name;
+        pivot.position.set(Math.sin(a) * SHOULDER, Math.cos(a) * SHOULDER, 0);
+        pivot.rotation.z = -a;
+        addMesh(pivot, pointGeo(len, base), bodyMat, [0, 0, 0]);
+        pivot.add(new THREE.Mesh(pointGeo(len, base, 0.022), inkMat));
+        star.add(pivot);
+        return pivot;
+      };
+      const crown = buildPoint('crown', 0, 0.44, 0.22);
+      parts.antenna = crown;
+      parts.armR = buildPoint('armR', 72, 0.4, 0.2);
+      parts.armL = buildPoint('armL', -72, 0.4, 0.2);
+      // The lower points reach the ground: 0.26 + 0.44 along a 36° lean
+      // drops about 0.57, so the rounded tips (plus ink) just touch down.
+      parts.legR = buildPoint('legR', 144, 0.44, 0.2);
+      parts.legL = buildPoint('legL', -144, 0.44, 0.2);
+      // Tip layout for the cartwheel walk (anims.ts): it lifts the star so
+      // whichever tip is lowest stays on the ground while he rolls.
+      const tips = [
+        { deg: 0, reach: SHOULDER + 0.44 },
+        { deg: 72, reach: SHOULDER + 0.4 },
+        { deg: -72, reach: SHOULDER + 0.4 },
+        { deg: 144, reach: SHOULDER + 0.44 },
+        { deg: -144, reach: SHOULDER + 0.44 },
+      ];
+      star.userData.roll = {
+        coreY: CORE_Y,
+        tips,
+        restDepth: -(SHOULDER + 0.44) * Math.cos(THREE.MathUtils.degToRad(144)),
+      };
+
+      // A glossy sticker-star shine streak on the crown's left flank.
+      const shineMat = new THREE.MeshBasicMaterial({ color: palette.white, transparent: true, opacity: 0.85 });
+      const shineGeo = new THREE.SphereGeometry(1, 12, 8);
+      shineGeo.scale(0.03, 0.1, 0.012);
+      const shine = new THREE.Mesh(shineGeo, shineMat);
+      shine.position.set(-0.06, 0.16, 0.11); // seated in the crown's front surface
+      shine.rotation.z = 0.32;
+      crown.add(shine);
+
+      // Face wraps the front of the core (a squashed sphere slice, like
+      // Jack's), so it never floats off the surface from the side.
+      {
+        const FACE_R = 0.43;
+        const faceW = 1.5;
+        const faceH = 1.05;
+        const faceGeo = new THREE.SphereGeometry(
+          FACE_R, 24, 16,
+          Math.PI / 2 - faceW / 2, faceW,
+          Math.PI / 2 - faceH / 2 - 0.08, faceH, // a touch above centre
+        );
+        const face = new THREE.Group();
+        face.scale.set(1, 1, DEPTH);
+        const fm = addMesh(face, faceGeo, faceMat, [0, 0, 0]);
+        fm.castShadow = false;
+        fm.receiveShadow = false;
+        head.add(face);
+        parts.face = face;
+      }
       break;
     }
     case 'bounce': {
@@ -412,8 +504,8 @@ export function buildModel(kind: CharacterKind): BuiltModel {
     }
     case 'jack': {
       // Cute pumpkin: one big ribbed gourd that is head and body at once,
-      // a curly stem with a leaf on top, leaf-green mitts, and no legs. It
-      // lifts off and floats whenever it moves (anims.ts), trailing sparkles.
+      // a curly stem with a leaf on top, and no arms or legs. It always
+      // floats (anims.ts), and a trail of mini pumpkins follows it on the move.
       const pumpkin = new THREE.Group();
       pumpkin.position.set(0, 0.46, 0);
       const pumpkinGeo = new THREE.SphereGeometry(0.5, 64, 32);
@@ -439,7 +531,27 @@ export function buildModel(kind: CharacterKind): BuiltModel {
       group.add(pumpkin);
       parts.head = pumpkin;
       parts.body = pumpkin;
-      parts.face = buildFace(0.36, 0.04, 0.6, pumpkin);
+      // The face wraps the gourd: a slice of a sphere just outside the rib
+      // crests, squashed like the pumpkin, so it never juts past the outline
+      // from the side the way a flat card would.
+      {
+        const FACE_R = 0.585;
+        const faceW = 1.36; // radians across
+        const faceH = 0.95; // radians tall
+        const faceTilt = 0.04 / 0.9 / FACE_R; // centre a touch above the equator
+        const faceGeo = new THREE.SphereGeometry(
+          FACE_R, 24, 16,
+          Math.PI / 2 - faceW / 2, faceW,
+          Math.PI / 2 - faceTilt - faceH / 2, faceH,
+        );
+        const face = new THREE.Group();
+        face.scale.set(1, 0.9, 1);
+        const fm = addMesh(face, faceGeo, faceMat, [0, 0, 0]);
+        fm.castShadow = false;
+        fm.receiveShadow = false;
+        pumpkin.add(face);
+        parts.face = face;
+      }
       const stemMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: palette.pumpkinStem });
       const stem = new THREE.Group();
       stem.position.set(0, 0.36, 0);
@@ -455,24 +567,30 @@ export function buildModel(kind: CharacterKind): BuiltModel {
       inkClone(lm, stem);
       pumpkin.add(stem);
       parts.antenna = stem;
-      parts.armL = buildArm('L', [-0.55, 0.5, 0.02]);
-      parts.armR = buildArm('R', [0.55, 0.5, 0.02]);
-      parts.armL.scale.setScalar(0.8);
-      parts.armR.scale.setScalar(0.8);
-      // Float sparkles: little gold stars circling under Jack in the air.
-      const sparkles = new THREE.Group();
-      sparkles.name = 'sparkles';
-      const sparkMat = new THREE.MeshBasicMaterial({ color: palette.sun, transparent: true, opacity: 0.9 });
-      const sparkGeo = new THREE.OctahedronGeometry(0.055, 0);
-      for (let k = 0; k < 4; k++) {
-        const a = (k / 4) * Math.PI * 2;
-        const sp = new THREE.Mesh(sparkGeo, sparkMat);
-        sp.position.set(Math.cos(a) * 0.36, 0.02 + (k % 2) * 0.05, Math.sin(a) * 0.36);
-        sparkles.add(sp);
+      // Pumpkin trail: three mini pumpkins, each smaller, floating in a line
+      // behind Jack while he travels. anims.ts bobs them and fades them in.
+      const trail = new THREE.Group();
+      trail.name = 'trail';
+      const miniStemGeo = new THREE.CylinderGeometry(0.05, 0.07, 0.16, 6);
+      const TRAIL = [
+        { s: 0.34, z: -0.86, y: 0.42 },
+        { s: 0.25, z: -1.26, y: 0.48 },
+        { s: 0.18, z: -1.58, y: 0.54 },
+      ];
+      for (const m of TRAIL) {
+        const mini = new THREE.Group();
+        mini.position.set(0, m.y, m.z);
+        mini.scale.setScalar(m.s);
+        mini.userData.baseY = m.y;
+        const mm = addMesh(mini, pumpkinGeo, bodyMat, [0, 0, 0]);
+        inkClone(mm, mini);
+        const ms = addMesh(mini, miniStemGeo, stemMat, [0, 0.46, 0], new THREE.Euler(0, 0, -0.25));
+        inkClone(ms, mini);
+        trail.add(mini);
       }
-      sparkles.visible = false;
-      group.add(sparkles);
-      parts.sparkles = sparkles;
+      trail.visible = false;
+      group.add(trail);
+      parts.trail = trail;
       break;
     }
     case 'wisp': {
@@ -526,6 +644,150 @@ export function buildModel(kind: CharacterKind): BuiltModel {
       parts.armR = buildArm('R', [0.42, 0.42, 0.04]);
       parts.armL.scale.setScalar(0.7);
       parts.armR.scale.setScalar(0.7);
+      break;
+    }
+    case 'rattle': {
+      // Chibi skeleton: a big round skull with glowing lime eyes and a jaw
+      // that clacks, a tiny ribcage on a stubby spine, bony limbs, and a lime
+      // scarf whose tail flutters behind him (the scarf carries his color;
+      // the bones stay ivory). The skull can pop off on a jump (anims.ts).
+      const boneMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: palette.bone });
+      const mouthMat = new THREE.MeshBasicMaterial({ color: palette.ink });
+
+      // Feet and leg bones.
+      const buildBoneLeg = (side: 'L' | 'R', x: number): THREE.Group => {
+        const pivot = new THREE.Group();
+        pivot.name = 'leg' + side;
+        pivot.position.set(x, 0.3, 0.02);
+        const shin = addMesh(pivot, new THREE.CapsuleGeometry(0.05, 0.14, 4, 8), boneMat, [0, -0.13, 0]);
+        const footGeo = new THREE.SphereGeometry(1, 14, 10);
+        footGeo.scale(0.09, 0.055, 0.13);
+        const foot = addMesh(pivot, footGeo, boneMat, [0, -0.245, 0.04]);
+        inkClone(shin, pivot);
+        inkClone(foot, pivot);
+        group.add(pivot);
+        return pivot;
+      };
+      parts.legL = buildBoneLeg('L', -0.12);
+      parts.legR = buildBoneLeg('R', 0.12);
+
+      // Pelvis, a short spine, and the ribcage.
+      const pelvisGeo = new THREE.SphereGeometry(1, 16, 10);
+      pelvisGeo.scale(0.19, 0.085, 0.14);
+      inkClone(addMesh(group, pelvisGeo, boneMat, [0, 0.33, 0]), outline);
+      inkClone(addMesh(group, new THREE.CapsuleGeometry(0.045, 0.16, 4, 8), boneMat, [0, 0.43, -0.02]), outline);
+      const ribs = new THREE.Group();
+      ribs.position.set(0, 0.6, 0);
+      const cageGeo = new THREE.SphereGeometry(0.25, 28, 20);
+      cageGeo.scale(1, 1.05, 0.82);
+      // Its ink shell lives in the same group, so it sits where the cage does.
+      inkClone(addMesh(ribs, cageGeo, boneMat, [0, 0, 0]), ribs);
+      {
+        // Painted rib gaps on the front of the cage: a sternum down the
+        // middle and three curved gaps either side.
+        const c = document.createElement('canvas');
+        c.width = 128;
+        c.height = 128;
+        const g = c.getContext('2d')!;
+        g.strokeStyle = palette.ink;
+        g.lineCap = 'round';
+        g.lineWidth = 9;
+        for (let k = 0; k < 3; k++) {
+          const y = 34 + k * 26;
+          for (const dir of [-1, 1]) {
+            g.beginPath();
+            g.moveTo(64 + dir * 12, y);
+            g.quadraticCurveTo(64 + dir * 40, y - 4, 64 + dir * 54, y + 12);
+            g.stroke();
+          }
+        }
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        const ribMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
+        const ribGeo = new THREE.SphereGeometry(0.254, 20, 14, Math.PI / 2 - 0.95, 1.9, Math.PI / 2 - 0.75, 1.5);
+        ribGeo.scale(1, 1.05, 0.82);
+        const rm = addMesh(ribs, ribGeo, ribMat, [0, 0, 0]);
+        rm.castShadow = false;
+      }
+      group.add(ribs);
+      parts.body = ribs;
+
+      // Bony arms: a shoulder knob, an arm bone and a round mitt of a hand.
+      const buildBoneArm = (side: 'L' | 'R', x: number): THREE.Group => {
+        const pivot = new THREE.Group();
+        pivot.name = 'arm' + side;
+        pivot.position.set(x, 0.74, 0);
+        const knob = addMesh(pivot, new THREE.SphereGeometry(0.065, 10, 8), boneMat, [0, 0, 0]);
+        const bone = addMesh(pivot, new THREE.CapsuleGeometry(0.04, 0.2, 4, 8), boneMat, [0, -0.14, 0]);
+        const hand = addMesh(pivot, new THREE.SphereGeometry(0.08, 12, 10), boneMat, [0, -0.3, 0]);
+        inkClone(knob, pivot);
+        inkClone(bone, pivot);
+        inkClone(hand, pivot);
+        group.add(pivot);
+        return pivot;
+      };
+      parts.armL = buildBoneArm('L', -0.28);
+      parts.armR = buildBoneArm('R', 0.28);
+
+      // The scarf: a lime ring round the neck, its tail flying out behind.
+      const scarfGeo = new THREE.TorusGeometry(0.17, 0.065, 10, 28);
+      scarfGeo.rotateX(Math.PI / 2);
+      inkClone(addMesh(group, scarfGeo, bodyMat, [0, 0.84, 0]), outline);
+      const tail = new THREE.Group();
+      tail.position.set(0.1, 0.84, -0.14);
+      const flapGeo = new THREE.BoxGeometry(0.11, 0.26, 0.035);
+      flapGeo.translate(0, -0.13, 0);
+      const f1 = addMesh(tail, flapGeo, bodyMat, [0, 0, 0], new THREE.Euler(0.55, 0, -0.25));
+      const f2 = addMesh(tail, flapGeo, bodyMat, [0.07, -0.02, -0.02], new THREE.Euler(0.8, 0, 0.15));
+      f2.scale.set(0.9, 0.8, 1);
+      inkClone(f1, tail);
+      inkClone(f2, tail);
+      group.add(tail);
+      parts.tail = tail;
+
+      // The skull: a big round cranium. The face wraps it (a sphere slice,
+      // like Jack's and Pip's), so it never juts out from the side.
+      const head = new THREE.Group();
+      head.position.set(0, 1.17, 0);
+      const SQ = { x: 1, y: 0.94, z: 0.96 };
+      const skullGeo = new THREE.SphereGeometry(0.38, 36, 26);
+      skullGeo.scale(SQ.x, SQ.y, SQ.z);
+      inkClone(addMesh(head, skullGeo, boneMat, [0, 0, 0]), head);
+      {
+        const FACE_R = 0.386;
+        const faceW = 1.5;
+        const faceH = 1.25;
+        const faceGeo = new THREE.SphereGeometry(
+          FACE_R, 24, 16,
+          Math.PI / 2 - faceW / 2, faceW,
+          Math.PI / 2 - faceH / 2 + 0.16, faceH,
+        );
+        const face = new THREE.Group();
+        face.scale.set(SQ.x, SQ.y, SQ.z);
+        const fm = addMesh(face, faceGeo, faceMat, [0, 0, 0]);
+        fm.castShadow = false;
+        fm.receiveShadow = false;
+        head.add(face);
+        parts.face = face;
+      }
+      // The mouth's dark inside, tucked under the front of the skull: only
+      // seen when the jaw drops.
+      const mouthGeo = new THREE.SphereGeometry(1, 16, 10);
+      mouthGeo.scale(0.17, 0.06, 0.12);
+      addMesh(head, mouthGeo, mouthMat, [0, -0.27, 0.17]).castShadow = false;
+      // The jaw: hinged at the back of the skull's underside so it swings
+      // open at the front.
+      const jaw = new THREE.Group();
+      jaw.name = 'jaw';
+      jaw.position.set(0, -0.25, -0.04);
+      const jawGeo = new THREE.SphereGeometry(1, 20, 12, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2);
+      jawGeo.scale(0.22, 0.13, 0.21);
+      const jm = addMesh(jaw, jawGeo, boneMat, [0, 0.0, 0.2]);
+      inkClone(jm, jaw);
+      head.add(jaw);
+      parts.jaw = jaw;
+      group.add(head);
+      parts.head = head;
       break;
     }
     default:

@@ -3,6 +3,7 @@
  * the RUNNING game: deep state snapshots, deterministic stepping, autoplay.
  * Must always exist, even with audio off. Never remove fields; add freely.
  */
+import { decideFinalResults } from "../game/finalResults";
 import { match, snapshot, startMatch } from "./game";
 import type { SeatController } from "./seat";
 import { rng } from "./rng";
@@ -184,6 +185,8 @@ export interface SSPDebug {
   startMatch(kinds: string[], names?: string[], controllers?: SeatController[]): void;
   /** Debug-only: jump to end-of-match (set phase='ended' for finale wiring). */
   endMatch(): void;
+  /** Debug-only: change how many turns the current match lasts (1..99). */
+  setTurns(n: number): void;
   resetWipeRotation(): void;
   /**
    * Open the Gumball Shop for `playerId` (default 0 = human) on demand for
@@ -614,7 +617,12 @@ export function installDebugAPI(): void {
       }
       match.phase = "ended";
       match.turn = match.totalTurns;
+      // Debug-only: decide the results the way the turn loop does at the end.
+      decideFinalResults();
       screens.goto("finale");
+    },
+    setTurns(n: number) {
+      match.totalTurns = Math.max(1, Math.min(99, Math.floor(n)));
     },
     openShop(playerId = 0, shopSpace?: number) {
       // Open the shop directly for inspection — no auto-resolve timer.

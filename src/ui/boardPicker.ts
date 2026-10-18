@@ -1,5 +1,5 @@
 /**
- * SUPER STAR PARTY — board picker: Carnival / Downtown / Random.
+ * SUPER STAR PARTY — board picker: Carnival / Downtown / Cruise / Random.
  * One small segmented row plus a one-line blurb for the selected option.
  * Used by character select (inside the Match settings card) and by the
  * host's friends lobby. Taps save through setBoardRule().
@@ -11,11 +11,11 @@ import { readPersistedRules, setBoardRule } from "../minigames/packRules";
 
 const RANDOM_BLURB = "A surprise board each match";
 
-/** Short button labels. The carnival reads "Carnival"; others use the registry name. */
+/** Short button labels. The carnival reads "Carnival"; others use the registry short name or name. */
 export function boardRuleLabel(rule: BoardRule): string {
   if (rule === "random") return "Random";
   if (rule === "fizzy-fairground") return "Carnival";
-  return BOARDS[rule].name;
+  return BOARDS[rule].short ?? BOARDS[rule].name;
 }
 
 export function boardRuleBlurb(rule: BoardRule): string {
