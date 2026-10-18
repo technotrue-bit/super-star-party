@@ -6,8 +6,11 @@
  * tagline plate under it. The three CPU rivals sit in a small row of DOM
  * cards; tapping one opens a "pick a rival" sheet (rivals.ts keeps the
  * lineup valid: nobody twice, never the hero). One "Match settings" card and
- * one big START! row finish the column. START! makes the chosen hero the
- * local seat and the rivals the CPU seats; BACK returns to the title.
+ * one big NEXT row finish the column. In a party, NEXT saves the chosen hero
+ * as the local seat and the rivals as the CPU seats, then opens the board
+ * menu (the line-up after it starts the match). In minigame free play it
+ * starts a throwaway match and opens the minigame menu. BACK returns to the
+ * mode menu.
  *
  * The camera is fitted to the DOM hero slot every resize/selection: the
  * hero's projected box sits inside the slot with an 8% margin, so no phone
@@ -29,6 +32,7 @@ import { onViewportChange, viewportSize } from "../ui/viewport";
 import { mountMatchSettings } from "../ui/packPicker";
 import { setSelectBoundsReader, type SelectBounds, type SelectRect } from "../core/debug";
 import { isFreeplay } from "../game/freeplay";
+import { setPartySetup } from "../game/partySetup";
 import { chooseRival, defaultRivals, reconcileRivals } from "./rivals";
 
 const SLOT_COUNT = roster.length;
@@ -433,23 +437,23 @@ const characterSelectImpl: SelectScreenState & Screen = {
     cardRow.className = "ssp-sel-cards";
     this._cardRow = cardRow;
 
-    const settingsCard = mountMatchSettings().el;
+    // The board is picked on the next screen (the board menu).
+    const settingsCard = mountMatchSettings({ board: false }).el;
     this._settingsEl = settingsCard;
 
     const okBtn = ui.button({
-      label: "START!",
+      label: "NEXT ▶",
       kind: "gold",
       size: "lg",
       onClick: () => this._confirmStart(),
-      ariaLabel: "Start the match",
+      ariaLabel: "Next: pick a board",
     });
     okBtn.el.classList.add("ssp-sel-start");
     this._startEl = okBtn.el;
 
-    // Minigame free play: no board or match rules to set, and START reads NEXT.
+    // Minigame free play: no board or match rules to set.
     if (isFreeplay()) {
       settingsCard.style.display = "none";
-      okBtn.setLabel("NEXT ▶");
       okBtn.el.setAttribute("aria-label", "Next: pick a minigame");
     }
     // The body scrolls when the settings don't fit (short phones, landscape);
@@ -781,21 +785,23 @@ const characterSelectImpl: SelectScreenState & Screen = {
       /* URL parse must never break the game */
     }
 
-    setOnlineMatch(false);
-    startMatch(kinds, names, 10, urlSeed, controllers);
     if (isFreeplay()) {
       // The match only seats the four players for the minigames.
+      setOnlineMatch(false);
+      startMatch(kinds, names, 10, urlSeed, controllers);
       audio.sfx.play("pop");
       screens.goto("minigames");
       return;
     }
-    audio.sfx.play("fanfare.win");
-    screens.goto("board");
+    // A party: pick the board next; the line-up starts the match.
+    setPartySetup({ kinds, names, controllers, seed: urlSeed });
+    audio.sfx.play("pop");
+    screens.goto("boards");
   },
 
   _goBack() {
     audio.sfx.play("ui.back");
-    screens.goto("title");
+    screens.goto("mode");
   },
 
   exit() {

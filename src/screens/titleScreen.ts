@@ -3,8 +3,9 @@
  *
  * A living front door: the full Fizzy Fairground board scene seen from above
  * while the camera slowly orbits it (board/titleOrbit.ts), a chunky animated
- * "SUPER STAR PARTY" wordmark with sparkles, and a three-button menu
- * (PLAY / HOW TO PLAY / SETTINGS) with full keyboard + touch nav, MP7-style
+ * "SUPER STAR PARTY" wordmark with sparkles, and a button menu
+ * (PLAY / WITH FRIENDS / HOW TO PLAY / SETTINGS; PLAY opens the PARTY or
+ * MINIGAMES menu) with full keyboard + touch nav, MP7-style
  * hover/press bounce, live audio, persisted settings and a polished scale
  * wipe on exit.
  *
@@ -273,7 +274,6 @@ interface TitleState {
   _placeCamera: () => void;
   _goPlay: () => void;
   _goHowTo: () => void;
-  _goMinigames: () => void;
   _openSettings: () => void;
   _showSettingsPanel: () => void;
   _sliderRow: (label: string, initial: number, apply: (v: number) => void) => HTMLDivElement;
@@ -347,20 +347,9 @@ const titleImpl: TitleState & Screen = {
       size: "lg",
       onClick: () => this._goPlay(),
       sound: "pop",
-      ariaLabel: "Play — start the game",
+      ariaLabel: "Play — pick party or minigames",
     });
     playBtn.el.classList.add("ssp-title-btn");
-
-    const gamesBtn = ui.button({
-      label: "MINIGAMES",
-      kind: "primary",
-      size: "lg",
-      onClick: () => this._goMinigames(),
-      sound: "pop",
-      ariaLabel: "Minigames — just play the minigames",
-    });
-    gamesBtn.el.classList.add("ssp-title-btn");
-    gamesBtn.el.dataset.sspMenu = "minigames";
 
     const friendsBtn = ui.button({
       label: "WITH FRIENDS",
@@ -393,7 +382,7 @@ const titleImpl: TitleState & Screen = {
     });
     setBtn.el.classList.add("ssp-title-btn");
 
-    this._buttons = [playBtn, gamesBtn, friendsBtn, howBtn, setBtn];
+    this._buttons = [playBtn, friendsBtn, howBtn, setBtn];
     for (const b of this._buttons) menu.appendChild(b.el);
     stage.appendChild(menu);
 
@@ -498,21 +487,11 @@ const titleImpl: TitleState & Screen = {
   },
 
   /* ---- actions ---- */
+  /** PLAY opens the mode menu: PARTY or MINIGAMES. */
   _goPlay() {
     setFreeplay(false);
-    audio.sfx.play("fanfare.win");
-    ui.confettiBurst(window.innerWidth / 2, window.innerHeight * 0.4, {
-      sound: null,
-      count: 80,
-    });
-    screens.goto("select");
-  },
-
-  /** Minigame free play: pick a hero, then a minigame. */
-  _goMinigames() {
-    setFreeplay(true);
     audio.sfx.play("pop");
-    screens.goto("select");
+    screens.goto("mode");
   },
 
   _goHowTo() {
