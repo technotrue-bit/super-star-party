@@ -18,6 +18,8 @@ import { installScreenLock } from "./ui/screenLock";
 import { installPostFx, renderPostFx, resizePostFx } from "./render/postFx";
 import { warmPortraits } from "./characters/portrait";
 
+import "./analytics";
+
 export const world = {
   renderer: null as THREE.WebGLRenderer | null,
   scene: null as THREE.Scene | null,
