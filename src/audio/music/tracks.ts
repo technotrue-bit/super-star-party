@@ -63,7 +63,7 @@ export const DRUM_TOKENS = new Set([
   "K", "S", "H", "h", "O", "C", "T", "B", "W", "L", "R", "Q", "D",
 ]);
 
-/** Chord voicings for the harmony (pad) voice. */
+/** Chord voicings for the harmony (pad) voice, as MIDI notes; parsing turns them into Hz. */
 export const CHORDS: Record<string, number[]> = {
   C: [48, 52, 55, 60], // C3 E3 G3 C4
   G: [43, 47, 50, 55], // G2 B2 D3 G3
@@ -145,9 +145,9 @@ function parseVoices(defId: string, voices: VoiceDef[]): ParsedVoice[] {
     } else if (v.chords) {
       chordNames = v.chords;
       bars = v.chords.map((c) => {
-        const freqs = CHORDS[c];
-        if (!freqs) throw new Error(`unknown chord '${c}' in track ${defId}`);
-        return [{ s: 0, kind: "note", freqs, token: c, len: 16, vel: 0.8, slide: 0 }];
+        const midis = CHORDS[c];
+        if (!midis) throw new Error(`unknown chord '${c}' in track ${defId}`);
+        return [{ s: 0, kind: "note", freqs: midis.map(midiToFreq), token: c, len: 16, vel: 0.8, slide: 0 }];
       });
     } else {
       throw new Error(`track ${defId}: voice ${out.length} has no pattern/chords/source`);

@@ -177,6 +177,11 @@ function instrumentsFor(style, instruments) {
   return Object.keys(instruments).filter((name) => (instruments[name].replaces ?? []).includes(style));
 }
 
+/** Nearest MIDI note to a frequency, as the sampler reads every note (chords included). */
+function midiFromHz(hz) {
+  return Math.round(69 + 12 * Math.log2(hz / 440));
+}
+
 /** The velocity layer for `vel`, as the sampler picks it. */
 function layerFor(velUpper, vel) {
   const i = velUpper.findIndex((u) => vel <= u);
@@ -198,7 +203,7 @@ function spans(notes) {
 /**
  * Reports the notes of the played tracks that the built zones do not cover: the nearest root on the
  * note's layer is more than maxShift away (the sampler's rule; slides excluded, as in Task 8's coverage
- * test). Chord voices carry CHORDS entries, which are MIDI notes, not Hz.
+ * test).
  */
 async function printRanges(instruments) {
   const { TRACKS, parseTrack, parseSection } = await import(tsUrl("music/tracks.ts"));
@@ -219,7 +224,6 @@ async function printRanges(instruments) {
   }
   console.log("\nPlayed notes outside them (note + voice transpose, +1 on board.* for the lift; slides excluded):");
   let outside = 0;
-  let chordVoices = 0;
   const unmapped = new Set();
   for (const id of PLAYED_TRACKS) {
     const def = TRACKS[id];
@@ -229,8 +233,6 @@ async function printRanges(instruments) {
     for (const v of voices) {
       const names = instrumentsFor(v.style, instruments);
       if (names.length === 0) unmapped.add(`${v.style} (${id})`);
-      const isChord = v.chordNames.length > 0;
-      if (isChord && names.length > 0) chordVoices++;
       for (const name of names) {
         const inst = SAMPLED[name];
         if (!inst) {
@@ -245,7 +247,7 @@ async function printRanges(instruments) {
               if (!ZONES[name].zones.some((z) => z.token === ev.token && z.layer === layer)) missed.push(ev.token);
             } else if (ev.kind === "note" && inst.kind === "melodic" && !ev.slide) {
               for (const f of ev.freqs) {
-                const midi = (isChord ? f : Math.round(69 + 12 * Math.log2(f / 440))) + v.transpose;
+                const midi = midiFromHz(f) + v.transpose;
                 for (const lift of lifts) if (!covered(name, midi + lift, layer)) missed.push(midi + lift);
               }
             }
@@ -261,9 +263,6 @@ async function printRanges(instruments) {
   }
   if (outside === 0) console.log("  none");
   for (const u of unmapped) console.log(`  no sampled instrument replaces ${u}`);
-  if (chordVoices > 0) {
-    console.log(`note: ${chordVoices} chord voices read as MIDI notes (CHORDS); parseVoices hands them to players as Hz`);
-  }
 }
 
 /* ------------------------------------------------------------------ */
