@@ -9,7 +9,8 @@
  *   5. /music/ answered 3 s late  music is audible within 1 s on stand-ins
  *   6. one core file answered 404 no console errors; named in failed once the set is requested again
  *   7. ?audio=0                   no sample request at all, format "off"
- *   8. title > SETTINGS > CREDITS the overlay shows the sample credits, and closes
+ *   8. title > SETTINGS > CREDITS the overlay shows the sample credits, and closes; Enter twice on
+ *                                 CREDITS opens one overlay, and CLOSE hands focus back
  *
  * Local only (needs `npm run dev` on port 5177); it is not part of CI.
  *   node tools/probe-music.mjs
@@ -254,7 +255,7 @@ testCase("?audio=0: no sample request, format off", async (t) => {
   }
 });
 
-testCase("title > SETTINGS > CREDITS: the credits show, and close", async (t) => {
+testCase("title > SETTINGS > CREDITS: the credits show, close, and Enter twice opens one", async (t) => {
   const { page, log, close } = await openPage();
   try {
     await boot(page, "audio=0");
@@ -289,8 +290,41 @@ testCase("title > SETTINGS > CREDITS: the credits show, and close", async (t) =>
     const after = await bodyText();
     t.expect(!after.includes("VCSL"), "the credits stayed open after CLOSE");
     t.expect(/MUSIC VOLUME/.test(after), "CLOSE took the settings panel with it");
+
+    // Keyboard: focus moves into the credits on open, so a second Enter cannot stack another panel,
+    // and CLOSE hands focus back to CREDITS.
+    const focused = await page.evaluate(() => {
+      const credits = Array.from(document.querySelectorAll("button")).filter(
+        (b) => (b.textContent || "").trim().toUpperCase().endsWith("CREDITS") && b.offsetParent !== null,
+      );
+      credits.at(-1)?.focus();
+      return !!credits.length && document.activeElement === credits.at(-1);
+    });
+    t.expect(focused, "could not focus the CREDITS button");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await sleep(300);
+    const panel = await page.evaluate(() => ({
+      count: document.querySelectorAll(".ssp-title-settings--credits").length,
+      focusInside: !!document.activeElement?.closest(".ssp-title-settings--credits"),
+      role: document.querySelector(".ssp-title-credits__text")?.getAttribute("role") ?? null,
+    }));
+    t.expect(panel.count === 1, `${panel.count} credits overlays after Enter twice on CREDITS, wanted 1`);
+    t.expect(panel.focusInside, "focus did not move into the credits on open");
+    t.expect(panel.role === "region", `the credits text has role ${panel.role}, not region (its aria-label needs one)`);
+    await press("CLOSE");
+    await sleep(300);
+    const back = await page.evaluate(() => ({
+      count: document.querySelectorAll(".ssp-title-settings--credits").length,
+      focus: (document.activeElement?.textContent || "").trim().toUpperCase(),
+    }));
+    t.expect(back.count === 0, `${back.count} credits overlays left after CLOSE`);
+    t.expect(back.focus.endsWith("CREDITS"), `focus is on "${back.focus}" after CLOSE, not the CREDITS button`);
     t.expect(log.errors.length === 0, `console errors: ${JSON.stringify(log.errors)}`);
-    t.note(`credits ${shown ? "shown" : "missing"}, closed ${!after.includes("VCSL")}`);
+    t.note(
+      `credits ${shown ? "shown" : "missing"}, closed ${!after.includes("VCSL")}; Enter twice: ${panel.count} overlay, ` +
+        `focus inside ${panel.focusInside}, back on ${back.focus || "(nothing)"}`,
+    );
   } finally {
     await close();
   }

@@ -297,7 +297,7 @@ interface TitleState {
   _goMinigames: () => void;
   _openSettings: () => void;
   _showSettingsPanel: () => void;
-  _showCreditsPanel: () => void;
+  _showCreditsPanel: (returnTo: HTMLElement) => void;
   _sliderRow: (label: string, initial: number, apply: (v: number) => void) => HTMLDivElement;
 }
 
@@ -620,7 +620,7 @@ const titleImpl: TitleState & Screen = {
       label: "CREDITS",
       kind: "ghost",
       sound: "ui.click",
-      onClick: () => this._showCreditsPanel(),
+      onClick: () => this._showCreditsPanel(creditsBtn.el),
     });
     creditsBtn.el.style.alignSelf = "center";
     creditsBtn.el.style.width = "160px";
@@ -653,8 +653,12 @@ const titleImpl: TitleState & Screen = {
     });
   },
 
-  /** The music sample credits (public/music/CREDITS.txt) over the settings panel. */
-  _showCreditsPanel() {
+  /**
+   * The music sample credits (public/music/CREDITS.txt) over the settings panel. Focus moves to the
+   * credits text, so a second Enter or Space cannot open another panel, and back to `returnTo` (the
+   * CREDITS button) on close.
+   */
+  _showCreditsPanel(returnTo: HTMLElement) {
     // Same class as the settings overlay: exit() sweeps it with the rest.
     const overlay = document.createElement("div");
     overlay.className = "ssp-title-settings-overlay";
@@ -670,6 +674,7 @@ const titleImpl: TitleState & Screen = {
     const text = document.createElement("pre");
     text.className = "ssp-title-credits__text";
     text.tabIndex = 0; // keyboard users can scroll it
+    text.setAttribute("role", "region"); // a labelled landmark: aria-label is not allowed on a bare <pre>
     text.setAttribute("aria-label", "Music credits");
     text.textContent = "Loading the credits…";
     panel.appendChild(text);
@@ -685,12 +690,16 @@ const titleImpl: TitleState & Screen = {
         text.textContent = "The credits could not be loaded. Check your connection and try again.";
       });
 
+    const close = () => {
+      overlay.remove();
+      returnTo.focus();
+    };
     const closeBtn = ui.button({
       label: "CLOSE",
       kind: "gold",
       size: "md",
       sound: "ui.back",
-      onClick: () => overlay.remove(),
+      onClick: close,
     });
     closeBtn.el.classList.add("ssp-title-settings__close");
     closeBtn.el.style.width = "160px";
@@ -698,10 +707,11 @@ const titleImpl: TitleState & Screen = {
 
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
+    text.focus();
 
     // Click scrim to close (the settings panel stays open underneath)
     overlay.addEventListener("pointerdown", (e) => {
-      if (e.target === overlay) overlay.remove();
+      if (e.target === overlay) close();
     });
   },
 
