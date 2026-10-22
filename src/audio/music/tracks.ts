@@ -16,6 +16,8 @@
  * Q count tick, D low tom.
  */
 
+import type { SetId } from "../samples/types";
+
 export type Layer = "base" | "perc2" | "counter" | "bright" | "lift";
 
 export interface StepEvent {
@@ -44,7 +46,7 @@ export interface TrackDef {
   swing: number; // 0.5 = straight; 0.62 = light shuffle; 0.7 = heavy
   loop: boolean;
   voices: VoiceDef[];
-  sets?: string[]; // sample sets the track needs; defaults to ["core"]
+  sets?: SetId[]; // sample sets the track needs; defaults to ["core"]
   fill?: VoiceDef[]; // one-bar section (e.g. a drum fill), outside voices
   pickup?: VoiceDef[]; // one-bar section leading into the loop, outside voices
 }
@@ -177,7 +179,7 @@ export function parseTrack(def: TrackDef): ParsedVoice[] {
 }
 
 /** The sample sets a track needs loaded; ["core"] unless it names its own. */
-export function trackSets(def: TrackDef): string[] {
+export function trackSets(def: TrackDef): SetId[] {
   return def.sets ?? ["core"];
 }
 

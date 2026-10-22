@@ -19,7 +19,8 @@
  *   counter fades in across [0.50, 0.85]
  *   bright  fades in across [0.60, 0.95]
  * At 0.2 the board track is a calm cruise; at 1.0 it is a full party.
- * The `lift` layer ignores intensity: the clock switches it on a bar line.
+ * The `lift` layer ignores intensity: the clock switches it on a bar line,
+ * and its notes play only on lifted steps.
  *
  * What a note sounds like is the NotePlayer's business (player.ts); the
  * default is the oscillator synth every track was written for.
@@ -96,7 +97,8 @@ function isDrumStyle(style: string): boolean {
  *
  * A pickup step plays the pickup section's bar. A main step plays bar
  * `ps.bar % barCount`; in a fill bar the drum voices are swapped for the
- * fill section's voices and everything else plays as normal.
+ * fill section's voices and everything else plays as normal. Notes on the
+ * lift layer play only when the step is lifted.
  */
 export function scheduleStep(
   ctx: BaseAudioContext,
@@ -122,7 +124,7 @@ export function scheduleStep(
   if (fill) for (const v of sections.fill) playVoice(ctx, v, 0, ps, layers, player);
 }
 
-/** Send the events of one voice's bar that start on this step to the player. */
+/** Send the events of one voice's bar that start on this step to the player (none from the lift layer on a step that is not lifted). */
 function playVoice(
   ctx: BaseAudioContext,
   v: ParsedVoice,
@@ -131,6 +133,7 @@ function playVoice(
   layers: LayerBus,
   player: NotePlayer,
 ): void {
+  if (v.layer === "lift" && !ps.lift) return;
   const local = ps.step % 16;
   const out = layers[v.layer];
   for (const e of v.bars[bar]) {

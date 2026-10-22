@@ -196,8 +196,22 @@ describe("scheduleStep", () => {
     expect(gains.lift.gain.sets).toEqual([[1, 2]]);
     go(ps({ t: 4, lift: false }));
     expect(gains.lift.gain.sets).toEqual([[1, 2], [0.0001, 4]]);
-    // lift voices always feed the lift bus; the gain decides whether they are heard
-    expect(hits.filter((h) => h.out === gains.lift)).toHaveLength(5);
+    // lift voices feed the lift bus, and only on lifted steps
+    expect(hits.filter((h) => h.out === gains.lift)).toHaveLength(2);
+  });
+
+  it("skips lift-layer notes on a step that is not lifted", () => {
+    const def = track(
+      [
+        { style: "pad", pattern: ["C4:16"] },
+        { style: "pad", layer: "lift", pattern: ["E4:16"] },
+      ],
+      { pickup: [{ style: "pad", layer: "lift", pattern: ["G4:16"] }] },
+    );
+    expect(run(def, ps()).hits.map((h) => h.freqs[0])).toEqual([hz("C4")]);
+    expect(run(def, ps({ lift: true })).hits.map((h) => h.freqs[0])).toEqual([hz("C4"), hz("E4")]);
+    expect(run(def, ps({ pickup: true, bar: -1 })).hits).toEqual([]);
+    expect(run(def, ps({ pickup: true, bar: -1, lift: true })).hits.map((h) => h.freqs[0])).toEqual([hz("G4")]);
   });
 });
 

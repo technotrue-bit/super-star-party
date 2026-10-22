@@ -14,7 +14,11 @@
  * - With an anchor, each main bar line is moved onto the game clock's grid
  *   when it has drifted more than 5 ms. Steps inside a bar never move. Bars
  *   whose grid time is already behind now are skipped whole, and a bar line
- *   never starts before the step planned ahead of it.
+ *   never starts before the step planned ahead of it. A bar line whose grid
+ *   time is not a finite number (a NaN game time, a zero speed) ignores the
+ *   anchor and keeps the free-running grid.
+ * - A tempo or a length that is not a positive number throws: plan() would
+ *   never reach its horizon.
  */
 
 export interface PlannedStep {
@@ -69,6 +73,11 @@ const RESYNC_LEAD = 0.03;
 const ANCHOR_TOLERANCE = 0.005;
 const BAR_HISTORY = 8;
 
+/** Throws on a tempo that would stall plan(): zero, negative, NaN or infinite. */
+function checkBpm(bpm: number): void {
+  if (!(Number.isFinite(bpm) && bpm > 0)) throw new RangeError(`StepClock: bpm must be a positive number, not ${bpm}`);
+}
+
 export class StepClock {
   private readonly swing: number;
   private readonly totalSteps: number;
@@ -93,6 +102,10 @@ export class StepClock {
   private bars: number[] = [];
 
   constructor(o: StepClockOpts) {
+    checkBpm(o.bpm);
+    if (!(Number.isInteger(o.totalSteps) && o.totalSteps > 0)) {
+      throw new RangeError(`StepClock: totalSteps must be a positive whole number, not ${o.totalSteps}`);
+    }
     this.swing = o.swing;
     this.totalSteps = o.totalSteps;
     this.loop = o.loop;
@@ -113,6 +126,10 @@ export class StepClock {
     }
   }
 
+  /**
+   * True once a non-looping track's last step has been planned. That step may not have sounded
+   * yet: the Sequencer ends the track (onEnded) after it and its notes have rung out.
+   */
   get ended(): boolean {
     return this._ended;
   }
@@ -131,6 +148,7 @@ export class StepClock {
 
   /** Queue a change for the next unplanned bar line. Repeated calls merge; later fields win. */
   queueChange(c: ClockChange): void {
+    if (c.bpm !== undefined) checkBpm(c.bpm);
     const p = this.pending ?? {};
     this.pending = {
       bpm: c.bpm ?? p.bpm,
@@ -187,14 +205,16 @@ export class StepClock {
    * Where the next main bar line starts: on the anchor's grid if it has
    * drifted. Bars already behind now are skipped whole; the result is
    * never before the previous step. Ends a non-looping track that runs out.
+   * A target that is not a finite time leaves the bar line where the free-running grid has it.
    */
   private anchoredTime(a: ClockAnchor, now: number): number {
     const target = () => a.audioNow() + (a.beat0 + this.bar * a.barSec - a.gameNow()) / a.speed;
     let t = target();
-    while (t < now) {
+    while (Number.isFinite(t) && t < now) {
       if (!this.skipBar()) return t;
       t = target();
     }
+    if (!Number.isFinite(t)) return this.nextT;
     if (Math.abs(t - this.nextT) <= ANCHOR_TOLERANCE) t = this.nextT;
     return Math.max(t, this.prevT);
   }

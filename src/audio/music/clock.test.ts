@@ -242,6 +242,26 @@ describe("StepClock", () => {
     expect(clock.plan(6.025)).toEqual([]);
   });
 
+  it("rejects a tempo or a length that would make plan() loop forever", () => {
+    for (const bpm of [0, -120, NaN, Infinity]) expect(() => make({ bpm }), `bpm ${bpm}`).toThrow(RangeError);
+    for (const totalSteps of [0, -16, NaN, 8.5]) expect(() => make({ totalSteps }), `totalSteps ${totalSteps}`).toThrow(RangeError);
+    const clock = make();
+    for (const bpm of [0, -60, NaN]) expect(() => clock.queueChange({ bpm }), `queued bpm ${bpm}`).toThrow(RangeError);
+    expect(clock.bpm).toBe(120);
+  });
+
+  it("ignores an anchor whose target is not a finite time, and keeps the free-running grid", () => {
+    for (const loop of [false, true]) {
+      const free = collect(make({ pickupStartStep: 8, totalSteps: 32, loop }), 0, 6);
+      for (const game of [NaN, -Infinity, Infinity]) {
+        const clock = make({ pickupStartStep: 8, totalSteps: 32, loop });
+        clock.setAnchor({ beat0: 1.0, barSec: 2.0, speed: 1, audioNow: () => simNow, gameNow: () => game });
+        const steps = collect(clock, 0, 6);
+        expect(steps.map((s) => s.t), `loop ${loop}, game time ${game}`).toEqual(free.map((s) => s.t));
+      }
+    }
+  });
+
   it("barTimes keeps the last 8 bar lines", () => {
     const clock = make({ totalSteps: 32, pickupStartStep: 8 }); // main bar lines at 1, 3, 5, ...
     expect(clock.barTimes()).toEqual([]);

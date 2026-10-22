@@ -342,7 +342,7 @@ function probeClips(): { opus: ArrayBuffer; aac: ArrayBuffer } {
 
 /** The sample sets a track needs. */
 function setsOf(def: TrackDef): SetId[] {
-  return trackSets(def) as SetId[];
+  return trackSets(def);
 }
 
 /** Load a set now, or once the format is known. Never awaited: music starts on stand-ins. */

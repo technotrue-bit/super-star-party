@@ -43,6 +43,9 @@
 //   velocity per round robin). A token with fewer `vel` entries than the kit has layers reuses its
 //   last zone for the layers above.
 //
+// The SFZ reader takes keys at face value: it fails on note_offset, octave_offset and transpose
+// opcodes, and on more than one <control> header with a default_path, rather than misread them.
+//
 // Needs git, curl, ffmpeg/ffprobe (libopus, aac, soxr) and, for .7z archives, python3 (py7zr is
 // installed into tools/samples/.venv).
 
@@ -568,13 +571,22 @@ function preprocessSfz(text, readInclude, defines, depth = 0) {
   return out.join("\n");
 }
 
-/** Every region of an SFZ with its inherited opcodes, normalised. Sample paths are relative to `sampleDir`. */
-function parseSfz(text, readInclude, sampleDir) {
+/** Opcodes that move key numbers or playback pitch, which this reader does not apply: it fails on them. */
+const UNSUPPORTED_SFZ = /^(note_offset|octave_offset|transpose\w*)$/;
+
+/**
+ * Every region of an SFZ with its inherited opcodes, normalised. Sample paths are relative to
+ * `sampleDir`. `file` names the SFZ in errors.
+ */
+function parseSfz(text, readInclude, sampleDir, file) {
   const src = preprocessSfz(text, readInclude, new Map());
   const tokens = [...src.matchAll(/<(\w+)>|([A-Za-z0-9_]+)=/g)];
   const scopes = { control: {}, global: {}, master: {}, group: {}, region: null };
   let target = null;
   const raw = [];
+  // Each <control> header's default_path applies to the regions after it; this reader keeps one for all.
+  let controls = 0;
+  const pathControls = new Set();
   const closeRegion = () => {
     if (scopes.region) raw.push({ ...scopes.global, ...scopes.master, ...scopes.group, ...scopes.region });
     scopes.region = null;
@@ -589,7 +601,7 @@ function parseSfz(text, readInclude, sampleDir) {
         target = scopes.region;
       } else {
         closeRegion();
-        if (header === "control") target = scopes.control;
+        if (header === "control") (controls += 1), (target = scopes.control);
         else if (header === "global") (scopes.global = {}), (scopes.master = {}), (scopes.group = {}), (target = scopes.global);
         else if (header === "master") (scopes.master = {}), (scopes.group = {}), (target = scopes.master);
         else if (header === "group") (scopes.group = {}), (target = scopes.group);
@@ -599,9 +611,12 @@ function parseSfz(text, readInclude, sampleDir) {
     }
     const end = i + 1 < tokens.length ? tokens[i + 1].index : src.length;
     const value = src.slice(t.index + t[0].length, end).trim();
+    if (UNSUPPORTED_SFZ.test(t[2])) fail(`SFZ ${file}: ${t[2]}=${value} moves keys or pitch, which this build does not apply`);
+    if (target === scopes.control && t[2] === "default_path") pathControls.add(controls);
     if (target) target[t[2]] = value;
   }
   closeRegion();
+  if (pathControls.size > 1) fail(`SFZ ${file}: ${pathControls.size} <control> headers set a default_path; this build applies one to every region`);
 
   const defaultPath = (scopes.control.default_path ?? "").replaceAll("\\", "/");
   const num = (v, d) => (v === undefined ? d : Number(v));
@@ -614,8 +629,7 @@ function parseSfz(text, readInclude, sampleDir) {
         sample: posix.normalize(posix.join(sampleDir, defaultPath, op.sample.replaceAll("\\", "/"))),
         lokey: op.lokey !== undefined ? sfzKey(op.lokey) : key ?? 0,
         hikey: op.hikey !== undefined ? sfzKey(op.hikey) : key ?? 127,
-        // The note the recording sounds at unshifted: `transpose` moves playback, so undo it.
-        root: center - num(op.transpose, 0),
+        root: center,
         tune: num(op.tune, 0),
         lovel: num(op.lovel, 0),
         hivel: num(op.hivel, 127),
@@ -671,7 +685,7 @@ function pickRegion(regions, v, rr, what) {
 function readRegions(handle, sfzPath, sfzRoot) {
   const base = sfzRoot ?? posix.dirname(sfzPath);
   const text = handle.readText(sfzPath);
-  return parseSfz(text, (inc) => handle.readText(posix.normalize(posix.join(base, inc))), base);
+  return parseSfz(text, (inc) => handle.readText(posix.normalize(posix.join(base, inc))), base, sfzPath);
 }
 
 /**

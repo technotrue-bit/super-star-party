@@ -422,6 +422,15 @@ describe("createSamplerPlayer: sampled notes", () => {
       expect(asked.map(([, f]) => f)).toEqual(["60.l0.rr0", "60.l0.rr0"]);
     });
 
+    it("cycle each velocity layer on its own when soft and loud notes alternate", () => {
+      const layered: Record<string, InstrumentZones> = {
+        piano: { source: "fixture", zones: [0, 1].flatMap((layer) => [0, 1].map((rr) => zone({ root: 60, layer, rr }))) },
+      };
+      const { c, out, player, asked } = setup({ zones: () => layered });
+      for (let i = 0; i < 4; i++) player.note(c, out, i, "s:piano", [C4], 0.2, i % 2 === 0 ? 0.3 : 0.9, opts);
+      expect(asked.map(([, f]) => f)).toEqual(["60.l0.rr0", "60.l1.rr0", "60.l0.rr1", "60.l1.rr1"]);
+    });
+
     it("belong to the player, not the module", () => {
       const a = setup({ table: rrTable, zones: () => rrZones });
       const b = setup({ table: rrTable, zones: () => rrZones });
@@ -528,6 +537,15 @@ describe("createSamplerPlayer: kits", () => {
       "K.l0.rr0", "S.l0.rr0", "K.l0.rr1", "S.l0.rr1",
       "K.l0.rr0", "S.l0.rr0", "K.l0.rr1", "S.l0.rr1",
     ]);
+  });
+
+  it("cycles each velocity layer of a token on its own when soft and loud hits alternate", () => {
+    const layered: Record<string, InstrumentZones> = {
+      "kit.core": { source: "fixture", zones: [0, 1].flatMap((layer) => [0, 1].map((rr) => zone({ token: "S", layer, rr }))) },
+    };
+    const { c, out, player, asked } = setup({ table: { "kit.core": { ...kitCore, velUpper: [0.6, 1] } }, zones: () => layered });
+    for (let i = 0; i < 4; i++) player.drum(c, out, i, "s:kit.core", "S", i % 2 === 0 ? 0.3 : 0.9);
+    expect(asked.map(([, f]) => f)).toEqual(["S.l0.rr0", "S.l1.rr0", "S.l0.rr1", "S.l1.rr1"]);
   });
 
   it("an unmapped token does not advance the kit's round robins", () => {

@@ -148,8 +148,8 @@ function playSample(
  * to the oscillator engine. `zones` is read per event so tables can load
  * after the player is made; `buffer` returns a decoded buffer or null while
  * it is still loading. Round-robin counters live in the player, one per
- * instrument and kit token (or melodic zone root). `onStandIn` fires each
- * time a synth voice or drum covers for a sample that is not there.
+ * instrument, velocity layer and kit token (or melodic zone root). `onStandIn`
+ * fires each time a synth voice or drum covers for a sample that is not there.
  */
 export function createSamplerPlayer(deps: {
   table: Record<string, SampledInstrument>;
@@ -161,8 +161,9 @@ export function createSamplerPlayer(deps: {
   const counters = new Map<string, number>();
   const warned = new Set<string>();
 
-  // One counter per instrument and sound: a kit token or a melodic zone root. A shared counter would
-  // lock a regular pattern to one slot (K S K S with two round robins each plays K rr 0 every time).
+  // One counter per instrument, velocity layer and sound (a kit token or a melodic zone root). A shared
+  // counter would lock a regular pattern to one slot: K S K S with two round robins each plays K rr 0
+  // every time, and so do alternating soft and loud notes on each layer.
   /** Round-robin position of the next sample under `key`. */
   const rrOf = (key: string): number => counters.get(key) ?? 0;
   /** Advance `key` past a sample that played; stand-ins do not count. */
@@ -185,8 +186,9 @@ export function createSamplerPlayer(deps: {
       const zones = deps.zones();
       for (const freq of freqs) {
         const midi = midiFromHz(freq);
-        const root = inst && nearestRoot(zones[name]?.zones ?? [], midi, layerFor(inst.velUpper, vel));
-        const key = `${name}:${root}`;
+        const layer = inst ? layerFor(inst.velUpper, vel) : 0;
+        const root = inst && nearestRoot(zones[name]?.zones ?? [], midi, layer);
+        const key = `${name}:${layer}:${root}`;
         const r = resolveNote(table, zones, style, midi, vel, rrOf(key), buffer);
         if (r.kind === "sample") {
           played(key);
@@ -206,8 +208,9 @@ export function createSamplerPlayer(deps: {
       const name = instrumentName(style);
       const inst = table[name];
       if (!inst) warnUnknown(name);
-      const key = `${name}:${token}`;
-      const zone = inst ? pickKitZone(deps.zones()[name]?.zones ?? [], token, layerFor(inst.velUpper, vel), rrOf(key)) : null;
+      const layer = inst ? layerFor(inst.velUpper, vel) : 0;
+      const key = `${name}:${layer}:${token}`;
+      const zone = inst ? pickKitZone(deps.zones()[name]?.zones ?? [], token, layer, rrOf(key)) : null;
       const buf = zone ? buffer(name, zone) : null;
       if (!inst || !buf) {
         drumHit(ctx, out, t, token, vel);
