@@ -24,7 +24,7 @@ Assumptions (not said by the player, correct me):
 2. Board themes run 32 bars (about a minute) before repeating; action and puzzle themes run 16 bars; the rhythm theme covers Drum Solo's song.
 3. In the last 5 turns the board theme is up one semitone, 6% faster, with an extra layer, starting on a bar line right after a one-bar drum fill.
 4. During Drum Solo every bar line of the music falls within 10 ms of the chart's grid, including after a 200 ms frame stall and at every game speed (today the music runs at 118 BPM against a 120 BPM chart).
-5. Download stays small and lazy (Opus sizes): core about 1.5 MB, about 1-1.5 MB per board, about 0.5-1 MB per minigame type. Decoded audio stays at or under 24 MB per set and 44 MB resident at any time.
+5. Download stays small and lazy (Opus sizes): core about 1.5 MB, about 1-1.5 MB per board, about 0.5-1 MB per minigame type. Decoded audio stays at or under 24 MiB per set and 44 MiB resident at any time.
 6. Every sample comes from a CC0, Unlicense, or CC BY source, and every CC BY source is credited in the game.
 7. Nothing waits on loading. Seeded matches play identically with music on, off, loaded, or failed.
 8. CI stays green: typecheck, build, unit tests, all probes.
@@ -177,7 +177,7 @@ An instrument lives in exactly one set. Any instrument used by more than one set
 | `mg-puzzle` | pizzicato strings, clarinet, bassoon, vibraphone, woodblock | about 0.5-1 MB |
 | `mg-rhythm` | nothing beyond core (an empty set is allowed) | 0 |
 
-The build computes each set's decoded size (sum of `frames` x 4 bytes) and fails if any set exceeds 24 MB, or if core + any board set, or core + any minigame set, exceeds 44 MB (48 MB minus headroom for WebKit's late release of decoded audio). It warns when a download target is exceeded by more than 25%. **The caps win over the recipe.** An instrument that pushes a set over gets a shorter max length, one velocity layer, or a narrower range. Expected trims: downtown saxes at 2.0 s, and the Wurlitzer's second layer only across its comping range.
+The build computes each set's decoded size (sum of `frames` x 4 bytes) and fails if any set exceeds 24 MiB, or if core + any board set, or core + any minigame set, exceeds 44 MiB (48 MiB minus headroom for WebKit's late release of decoded audio). It warns when a download target is exceeded by more than 25%. **The caps win over the recipe.** An instrument that pushes a set over gets a shorter max length, one velocity layer, or a narrower range. Expected trims: downtown saxes at 2.0 s, and the Wurlitzer's second layer only across its comping range.
 
 ## Samples
 
@@ -261,7 +261,7 @@ No loop points: party arrangements rarely hold a note past the cap, and themes a
   - every zone's file exists in both formats (`import.meta.glob(..., { query: "?url" })`, so binaries are not loaded)
   - every instrument's source is in `sources.json` with a license in {CC0-1.0, Unlicense, CC-BY-3.0}
   - every CC BY entry in `CREDITS.txt` has title, author, URL, license URL and changes
-  - each set's sum of `frames` x 4 is at most 24 MB, and core + any board set and core + any minigame set are at most 44 MB
+  - each set's sum of `frames` x 4 is at most 24 MiB, and core + any board set and core + any minigame set are at most 44 MiB
   - `SAMPLED` and `zones.gen.ts` list the same instruments
 - **Director:** `resolveTheme` for every board id and genre, plus defaults. `MinigameEntry.genre` equals each module's `genre`.
 - **Lift:** idempotence; queued once when turned on mid-theme; a theme started while lifted starts lifted with no fill; reset clears it. Tested through the director with a fake sequencer.
