@@ -260,7 +260,7 @@ describe("load", () => {
     expect(loader.failed()).toEqual(["piano"]);
     expect(loader.status("core")).toBe("failed");
     expect(loader.buffer("piano", bad)).toBeNull();
-    expect(loader.buffer("piano", pianoZones[2])).not.toBeNull(); // the rest of the set still plays
+    expect(loader.buffer("piano", pianoZones[2])).toBeNull(); // the whole instrument is on its stand-in
     expect(h.warn).toHaveBeenCalledTimes(1);
     expect(h.warn.mock.calls[0][0]).toMatch(/^\[audio\]/);
 
@@ -280,7 +280,25 @@ describe("load", () => {
     expect(loader.failed()).toEqual(["piano"]);
     expect(loader.status("core")).toBe("failed");
     expect(loader.buffer("piano", bad)).toBeNull();
-    expect(loader.buffer("piano", pianoZones[0])).not.toBeNull();
+    expect(loader.buffer("piano", pianoZones[0])).toBeNull();
+  });
+
+  it("once a file fails twice its whole instrument plays its stand-in, and other instruments still play", async () => {
+    const organZones = [48, 55].map((root) => zone("core", "organ", root));
+    const h = harness({
+      table: { ...table, organ: instrument("core") },
+      zones: async () => ({ ...zoneTable, organ: { source: "fixture", zones: organZones } }),
+    });
+    const loader = await loaderFor(h);
+    h.missing.add(urlOf(pianoZones[1]));
+    await loader.load("core", ctx);
+    for (const z of [pianoZones[0], pianoZones[2]]) expect(loader.buffer("piano", z)).not.toBeNull(); // one failure: a retry is due
+    await loader.load("core", ctx);
+    expect(loader.failed()).toEqual(["piano"]);
+    for (const z of pianoZones) expect(loader.buffer("piano", z), z.file).toBeNull(); // samples and synth never mix in one part
+    for (const z of organZones) expect(loader.buffer("organ", z), z.file).not.toBeNull();
+    expect(h.warn).toHaveBeenCalledTimes(1);
+    expect(h.warn.mock.calls[0][0]).toMatch(/^\[audio\] .*"piano" stays on its stand-in/);
   });
 
   it("failed() lists an instrument once however many of its files failed", async () => {
@@ -291,7 +309,7 @@ describe("load", () => {
     await loader.load("core", ctx);
     await loader.load("core", ctx);
     expect(loader.failed()).toEqual(["piano"]);
-    expect(h.warn).toHaveBeenCalledTimes(2); // one per file
+    expect(h.warn).toHaveBeenCalledTimes(1); // one per instrument
   });
 
   it("a file that recovers on the retry leaves the set ready", async () => {
@@ -321,6 +339,18 @@ describe("load", () => {
       expect(h.warn.mock.calls[0][0]).toMatch(/^\[audio\]/);
       expect(h.fetched).toEqual([]);
     }
+  });
+
+  it("a zone-table failure lists every instrument of each set asked for in failed()", async () => {
+    const h = harness({ zones: () => Promise.reject(new Error("chunk gone")) });
+    const loader = await loaderFor(h);
+    await loader.load("core", ctx);
+    expect(loader.failed()).toEqual(["piano"]);
+    await loader.load("fairground", ctx);
+    expect(loader.failed()).toEqual(["piano", "bells"]);
+    await loader.load("core", ctx);
+    expect(loader.failed()).toEqual(["piano", "bells"]);
+    expect(h.warn).toHaveBeenCalledTimes(1);
   });
 
   it("asks for the tables once; later loads fail quietly", async () => {

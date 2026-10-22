@@ -2,8 +2,9 @@
  * SUPER STAR PARTY — sample loader: picks the audio format this browser can decode, then
  * fetches and decodes a set's files, keeps the fetched bytes so a set can be released and
  * re-decoded without the network, and retries a failed file once before leaving its
- * instrument on the synth stand-in. All I/O goes through `LoaderDeps`, so this module is
- * safe to import anywhere and the tests run on fakes.
+ * whole instrument on the synth stand-in (samples and synth never mix inside one part).
+ * All I/O goes through `LoaderDeps`, so this module is safe to import anywhere and the
+ * tests run on fakes.
  */
 
 import type { InstrumentZones, LoadedBuffer, SampledInstrument, SetId, Zone } from "./types";
@@ -11,7 +12,8 @@ import type { InstrumentZones, LoadedBuffer, SampledInstrument, SetId, Zone } fr
 /**
  * `idle`: nothing is loaded and `load()` has work to do (before the first load, after
  * `releaseDecoded` or `free`, or while a file that failed once awaits its retry).
- * `ready`: every file decoded. `failed`: at least one file failed twice (the rest still plays).
+ * `ready`: every file decoded. `failed`: a file failed twice (its instrument is on its stand-in;
+ * the set's other instruments still play), or the zone tables could not be read.
  */
 export type SetStatus = "idle" | "loading" | "ready" | "failed";
 
@@ -137,13 +139,20 @@ export class SampleLoader {
     return this.sets.get(set)?.status ?? "idle";
   }
 
-  /** Instruments that have a file on stand-in for the rest of the session, each listed once. */
+  /**
+   * Instruments on their stand-in for the rest of the session, each listed once: a file of theirs
+   * failed twice, or the zone tables could not be read when their set was asked for.
+   */
   failed(): string[] {
     return [...this.failedInstruments];
   }
 
-  /** The decoded sample for a zone, or null while it is not loaded. Looked up by `zone.file`. */
-  buffer(_instrument: string, zone: Zone): LoadedBuffer | null {
+  /**
+   * The decoded sample for a zone, or null while it is not loaded. Looked up by `zone.file`. Null
+   * for every zone of a failed instrument, so the whole instrument plays its stand-in.
+   */
+  buffer(instrument: string, zone: Zone): LoadedBuffer | null {
+    if (this.failedInstruments.has(instrument)) return null;
     return this.files.get(zone.file)?.loaded ?? null;
   }
 
@@ -182,7 +191,9 @@ export class SampleLoader {
       st.files ??= await this.listFiles(instruments);
       files = st.files;
     } catch {
-      if (st.epoch === epoch) st.status = "failed"; // warned once, where the tables were asked for
+      // Warned once, where the tables were asked for. Every instrument of the set stays on its stand-in.
+      for (const name of instruments) this.failedInstruments.add(name);
+      if (st.epoch === epoch) st.status = "failed";
       return;
     }
     await Promise.all(files.map((f) => this.loadFile(st, f, ctx, epoch)));
@@ -230,7 +241,7 @@ export class SampleLoader {
     } catch (err) {
       f.bytes = null; // the next try starts from the network
       f.failures++;
-      if (f.failures >= MAX_FAILURES) {
+      if (f.failures >= MAX_FAILURES && !this.failedInstruments.has(f.instrument)) {
         this.failedInstruments.add(f.instrument);
         this.deps.warn(`[audio] ${f.zone.file} failed twice (${message(err)}); "${f.instrument}" stays on its stand-in`);
       }

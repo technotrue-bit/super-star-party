@@ -248,12 +248,13 @@ const playedBoard = await page.evaluate(() => window.__SSP__?.state?.()?.match?.
 const wantBoard = process.env.SSP_BOARD === "downtown" ? "downtown" : process.env.SSP_BOARD === "cruise" ? "cruise-ship" : process.env.SSP_BOARD === "carnival" || !process.env.SSP_BOARD ? "fizzy-fairground" : null;
 const boardOk = wantBoard === null || playedBoard === wantBoard;
 console.log(`board played: ${playedBoard}${wantBoard ? ` (expected ${wantBoard})` : ""}`);
-// The music samples (this run has ?audio=1): the format must be Opus and no instrument may have
-// given up on its recorded sound. A file that is missing or does not decode leaves its instrument
-// on the synth stand-in, which sounds fine in a smoke run, so only this check can catch it.
+// The music samples (this run has ?audio=1): the format must be Opus, the core set loaded, and no
+// instrument may have given up on its recorded sound. A file that is missing or does not decode
+// leaves its instrument on the synth stand-in, which sounds fine in a smoke run, so only this check
+// can catch it. sets.core must read "ready": an empty failed list alone also holds when nothing loaded.
 const samples = await page.evaluate(() => window.__SSP__?.state?.()?.audio?.samples ?? null);
-const samplesOk = samples !== null && samples.format === "opus" && samples.failed.length === 0;
-console.log(`music samples: format ${samples?.format ?? "n/a"} (expected opus) | failed: ${JSON.stringify(samples?.failed ?? "n/a")} (expected [])`);
+const samplesOk = samples !== null && samples.format === "opus" && samples.sets?.core === "ready" && samples.failed.length === 0;
+console.log(`music samples: format ${samples?.format ?? "n/a"} (expected opus) | core ${samples?.sets?.core ?? "n/a"} (expected ready) | failed: ${JSON.stringify(samples?.failed ?? "n/a")} (expected [])`);
 const ok = errors.length === 0 && moved && reachedFinale && minigameClicks > 0 && howtoMisses.length === 0 && boardOk && samplesOk;
 console.log(ok
   ? "\nVERDICT: the game plays end to end - title -> select -> a human ROLL that moves the token -> a full match -> finale, with zero console errors and every music sample loaded."
