@@ -11,6 +11,7 @@ import type { NotePlayer } from "./player";
 class FakeParam {
   value = 0;
   sets: Array<[value: number, t: number]> = [];
+  ramps: Array<[value: number, t: number]> = [];
   targets: number[] = [];
   setValueAtTime(v: number, t: number): void {
     this.sets.push([v, t]);
@@ -19,7 +20,9 @@ class FakeParam {
     this.targets.push(v);
   }
   cancelScheduledValues(): void {}
-  linearRampToValueAtTime(): void {}
+  linearRampToValueAtTime(v: number, t: number): void {
+    this.ramps.push([v, t]);
+  }
 }
 
 class FakeGain {
@@ -59,9 +62,11 @@ interface Hit {
   slide: number | undefined;
 }
 
-function recorder(): { player: NotePlayer; hits: Hit[] } {
+/** A player that records every note and drum; `tail` (optional) is how long its notes ring past their end. */
+function recorder(tail?: (style: string) => number): { player: NotePlayer; hits: Hit[] } {
   const hits: Hit[] = [];
   const player: NotePlayer = {
+    ...(tail ? { tail } : {}),
     note(_ctx, out, t, style, freqs, lenSec, vel, opts) {
       hits.push({ kind: "note", t, style, out, vel, freqs, lenSec, token: "", step: opts.step, slide: opts.slide });
     },
@@ -284,7 +289,7 @@ describe("Sequencer", () => {
   });
 
   /** A Sequencer on a fake context whose clock the test advances 25 ms at a time. */
-  function setup(def: TrackDef, opts: ConstructorParameters<typeof Sequencer>[3] = {}) {
+  function setup(def: TrackDef, opts: ConstructorParameters<typeof Sequencer>[3] = {}, tail?: (style: string) => number) {
     vi.useFakeTimers();
     vi.stubGlobal("window", {
       setInterval: (f: () => void, ms: number) => globalThis.setInterval(f, ms),
@@ -294,7 +299,7 @@ describe("Sequencer", () => {
     });
     const ctx = new FakeCtx();
     const out = new FakeGain();
-    const { player, hits } = recorder();
+    const { player, hits } = recorder(tail);
     const seq = new Sequencer(ctx as unknown as AudioContext, out as unknown as GainNode, def, { player, ...opts });
     const advance = (seconds: number) => {
       for (let i = 0; i < Math.round(seconds / 0.025); i++) {
@@ -315,6 +320,49 @@ describe("Sequencer", () => {
     expect(hits).toHaveLength(32);
     hits.forEach((h, i) => expect(h.t).toBeCloseTo(0.08 + i * 0.125, 9));
     expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+
+  // One bar at 120 BPM from t0 0.08: the last step starts at 1.955 and ends at 2.08, where the
+  // note on step 12 (4 steps long) ends too.
+  const LAST_NOTE = track([{ style: "pad", pattern: ["-:12 C4:4"] }, { style: "drums", pattern: ["K:16"] }], { loop: false });
+
+  it("ends a one-shot once its notes have rung out: the fade and onEnded wait for the longest tail", () => {
+    const { seq, out, advance } = setup(LAST_NOTE, {}, (style) => (style === "pad" ? 1 : 0.2));
+    const onEnded = vi.fn();
+    seq.onEnded = onEnded;
+    seq.start();
+    advance(3); // the last step was planned near 1.9; the pad note rings until 2.08 + 1
+    expect(onEnded).not.toHaveBeenCalled();
+    expect(out.gain.sets).toHaveLength(1);
+    expect(out.gain.sets[0][1]).toBeCloseTo(3.08, 9); // holds until the tail is over
+    expect(out.gain.ramps).toHaveLength(1);
+    expect(out.gain.ramps[0][0]).toBe(0.0001);
+    expect(out.gain.ramps[0][1]).toBeCloseTo(3.16, 9); // then the 80 ms fade
+    advance(0.25);
+    expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits at most 2.5 s past the last step", () => {
+    const { seq, out, advance } = setup(LAST_NOTE, {}, () => 10);
+    const onEnded = vi.fn();
+    seq.onEnded = onEnded;
+    seq.start();
+    advance(4.5);
+    expect(onEnded).not.toHaveBeenCalled();
+    expect(out.gain.sets[0][1]).toBeCloseTo(4.58, 9);
+    advance(0.25);
+    expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call onEnded once stopped while its notes ring out", () => {
+    const { seq, advance } = setup(LAST_NOTE, {}, () => 1);
+    const onEnded = vi.fn();
+    seq.onEnded = onEnded;
+    seq.start();
+    advance(2.5); // the clock has ended; the tail runs to 3.08
+    seq.stop(0.1);
+    advance(2);
+    expect(onEnded).not.toHaveBeenCalled();
   });
 
   it("keeps a looping track going, wrapping through its bars", () => {

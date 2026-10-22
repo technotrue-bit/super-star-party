@@ -10,7 +10,7 @@
  */
 
 import { VOICES, drumHit } from "../music/instruments";
-import { synthPlayer, voiceRoute } from "../music/player";
+import { SYNTH_TAIL, synthPlayer, voiceRoute } from "../music/player";
 import type { NotePlayer } from "../music/player";
 import type { InstrumentZones, LoadedBuffer, SampledInstrument, Zone } from "./types";
 
@@ -219,6 +219,16 @@ export function createSamplerPlayer(deps: {
       }
       played(key);
       playSample(ctx, out, t, inst, buf, 1, 0, vel, undefined);
+    },
+
+    // A sampled style rings for its one-shot length or its release, or as long as the synth voice
+    // standing in for a sample that is not loaded, whichever is longer.
+    tail(style) {
+      if (voiceRoute(style) === "synth") return synthPlayer.tail(style);
+      const inst = table[instrumentName(style)];
+      if (!inst) return 0;
+      const own = inst.oneShot ? (inst.maxLen > 0 ? inst.maxLen : Infinity) : inst.release;
+      return Math.max(own, SYNTH_TAIL);
     },
   };
 }

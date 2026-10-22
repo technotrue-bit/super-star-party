@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as instruments from "../music/instruments";
+import { SYNTH_TAIL } from "../music/player";
 import { createSamplerPlayer, layerFor, midiFromHz, pickKitZone, pickZone, rateFor, resolveNote } from "./sampler";
 import type { InstrumentZones, LoadedBuffer, SampledInstrument, Zone } from "./types";
 
@@ -595,5 +596,17 @@ describe("createSamplerPlayer: kits", () => {
     const { c, out, player } = setup();
     for (let i = 0; i < 4; i++) player.drum(c, out, i, "s:kit.nope", "K", 0.4);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createSamplerPlayer: tail", () => {
+  it("is a one-shot's max length, a held note's release, and never shorter than a synth stand-in's", () => {
+    const { player } = setup({ table: { ...table, bell: { ...piano, oneShot: true, maxLen: 1.2 }, organ: { ...piano, release: 0.9 } } });
+    expect(player.tail?.("s:bell")).toBe(1.2);
+    expect(player.tail?.("s:kit.core")).toBe(SYNTH_TAIL); // maxLen 0.4: the synth drum standing in rings longer
+    expect(player.tail?.("s:organ")).toBe(0.9);
+    expect(player.tail?.("s:piano")).toBe(SYNTH_TAIL); // release 0.3
+    expect(player.tail?.("pad")).toBe(SYNTH_TAIL);
+    expect(player.tail?.("s:nothing")).toBe(0);
   });
 });

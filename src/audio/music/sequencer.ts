@@ -42,6 +42,10 @@ const LAYER_ORDER: LayerName[] = ["base", "perc2", "counter", "bright", "lift"];
 
 /** A silent layer gain: exponential ramps cannot reach 0. */
 const SILENT = 0.0001;
+/** Longest a one-shot track waits past its last step for its notes to ring out, in seconds. */
+const MAX_TAIL = 2.5;
+/** The fade that ends a one-shot track, in seconds. */
+const END_FADE = 0.08;
 
 function smoothstep(x: number): number {
   const v = Math.min(1, Math.max(0, x));
@@ -99,6 +103,9 @@ function isDrumStyle(style: string): boolean {
  * `ps.bar % barCount`; in a fill bar the drum voices are swapped for the
  * fill section's voices and everything else plays as normal. Notes on the
  * lift layer play only when the step is lifted.
+ *
+ * Returns when the last note it scheduled stops sounding (its end plus the
+ * player's tail for its style), or -Infinity when it scheduled none.
  */
 export function scheduleStep(
   ctx: BaseAudioContext,
@@ -107,24 +114,29 @@ export function scheduleStep(
   ps: PlannedStep,
   layers: LayerBus,
   player: NotePlayer,
-): void {
+): number {
   if ((liftState.get(layers.lift) ?? false) !== ps.lift) {
     liftState.set(layers.lift, ps.lift);
     layers.lift.gain.setValueAtTime(ps.lift ? 1 : SILENT, ps.t);
   }
+  let until = -Infinity;
   if (ps.pickup) {
-    for (const v of sections.pickup) playVoice(ctx, v, 0, ps, layers, player);
-    return;
+    for (const v of sections.pickup) until = Math.max(until, playVoice(ctx, v, 0, ps, layers, player));
+    return until;
   }
   const fill = ps.fill && sections.fill.length > 0;
   for (const v of voices) {
     if (fill && isDrumStyle(v.style)) continue;
-    playVoice(ctx, v, ps.bar % v.barCount, ps, layers, player);
+    until = Math.max(until, playVoice(ctx, v, ps.bar % v.barCount, ps, layers, player));
   }
-  if (fill) for (const v of sections.fill) playVoice(ctx, v, 0, ps, layers, player);
+  if (fill) for (const v of sections.fill) until = Math.max(until, playVoice(ctx, v, 0, ps, layers, player));
+  return until;
 }
 
-/** Send the events of one voice's bar that start on this step to the player (none from the lift layer on a step that is not lifted). */
+/**
+ * Send the events of one voice's bar that start on this step to the player (none from the lift
+ * layer on a step that is not lifted). Returns when the last of them stops sounding, or -Infinity.
+ */
 function playVoice(
   ctx: BaseAudioContext,
   v: ParsedVoice,
@@ -132,16 +144,19 @@ function playVoice(
   ps: PlannedStep,
   layers: LayerBus,
   player: NotePlayer,
-): void {
-  if (v.layer === "lift" && !ps.lift) return;
+): number {
+  let until = -Infinity;
+  if (v.layer === "lift" && !ps.lift) return until;
   const local = ps.step % 16;
   const out = layers[v.layer];
+  const tail = player.tail?.(v.style) ?? 0;
   for (const e of v.bars[bar]) {
     if (e.s !== local || e.kind === "rest") continue;
     const et = ps.t + (e.s % 2 === 1 ? ps.swingOffset : 0);
     const vel = Math.min(1, e.vel * v.gain);
     if (e.kind === "drum") {
       player.drum(ctx, out, et, v.style, e.token, vel);
+      until = Math.max(until, et + tail);
       continue;
     }
     const freqs = e.freqs.map((f) => f * Math.pow(2, (v.transpose + ps.transpose) / 12));
@@ -149,7 +164,9 @@ function playVoice(
       step: ps.stepDur,
       slide: e.slide,
     });
+    until = Math.max(until, et + e.len * ps.stepDur + tail);
   }
+  return until;
 }
 
 /** Length of the main pattern in steps (every main voice has the same bar count). */
@@ -219,8 +236,18 @@ export class Sequencer {
   private player: NotePlayer;
   private stepClock: StepClock;
   private timer: number | null = null;
+  /** The pending end of a one-shot track: the fade is scheduled, onEnded waits for it. */
+  private endTimer: number | null = null;
   private intensity = 0.5;
-  /** Called when a non-looping track finishes. */
+  /** When the last step planned so far ends. */
+  private lastStepEnd = -Infinity;
+  /** When the notes scheduled so far stop sounding, tails included. */
+  private soundsUntil = -Infinity;
+  /**
+   * Called once when a non-looping track has ended: its last step has played, its notes have rung
+   * out (the longest tail the player gives, at most MAX_TAIL past the last step), and the END_FADE
+   * fade is over. Never called after stop().
+   */
   onEnded: (() => void) | null = null;
 
   /** The first step lands 80 ms after construction, so call start() right away. */
@@ -283,6 +310,10 @@ export class Sequencer {
       window.clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.endTimer !== null) {
+      window.clearTimeout(this.endTimer);
+      this.endTimer = null;
+    }
     const now = this.ctx.currentTime;
     try {
       this.out.gain.cancelScheduledValues(now);
@@ -302,31 +333,39 @@ export class Sequencer {
 
   private tick(): void {
     for (const ps of this.stepClock.plan(this.ctx.currentTime)) {
-      scheduleStep(this.ctx, this.voices, this.sections, ps, this.layers, this.player);
+      const until = scheduleStep(this.ctx, this.voices, this.sections, ps, this.layers, this.player);
+      this.lastStepEnd = ps.t + ps.stepDur;
+      this.soundsUntil = Math.max(this.soundsUntil, until);
     }
     if (this.stepClock.ended) this.finish();
   }
 
+  /** The last step is planned: fade out once it and its notes have rung out, then disconnect and call onEnded. */
   private finish(): void {
     if (this.timer !== null) {
       window.clearInterval(this.timer);
       this.timer = null;
     }
     const now = this.ctx.currentTime;
+    const fadeAt = Math.max(now, this.lastStepEnd, Math.min(this.soundsUntil, this.lastStepEnd + MAX_TAIL));
     try {
       this.out.gain.cancelScheduledValues(now);
-      this.out.gain.setValueAtTime(this.out.gain.value, now);
-      this.out.gain.linearRampToValueAtTime(0.0001, now + 0.08);
+      this.out.gain.setValueAtTime(this.out.gain.value, fadeAt);
+      this.out.gain.linearRampToValueAtTime(0.0001, fadeAt + END_FADE);
     } catch {
       /* context closed */
     }
-    window.setTimeout(() => {
-      try {
-        this.out.disconnect();
-      } catch {
-        /* already gone */
-      }
-    }, 150);
-    this.onEnded?.();
+    this.endTimer = window.setTimeout(
+      () => {
+        this.endTimer = null;
+        try {
+          this.out.disconnect();
+        } catch {
+          /* already gone */
+        }
+        this.onEnded?.();
+      },
+      (fadeAt + END_FADE - now) * 1000 + 20,
+    );
   }
 }
