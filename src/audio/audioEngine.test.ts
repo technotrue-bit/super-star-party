@@ -230,7 +230,9 @@ describe("live engine wiring (fake AudioContext)", () => {
     expect(audio.debug().samples.sets).toEqual({ cruise: "idle", core: "idle" });
     expect(fetchSpy).not.toHaveBeenCalled();
     await quiet(audio);
-    expect(audio.debug().samples).toEqual({ format: "opus", sets: { cruise: "ready", core: "ready" }, failed: [], standInNotes: 0 });
+    const { standInNotes, ...samples } = audio.debug().samples;
+    expect(samples).toEqual({ format: "opus", sets: { cruise: "ready", core: "ready" }, failed: [] });
+    expect(standInNotes).toBeGreaterThan(0); // the board's first notes, planned at unlock before core loaded, played on stand-ins
     expect(fetchedFiles(fetchSpy, ".webm")).toEqual(setFiles("core")); // each core file once, as Opus; cruise has none yet
     expect(warn).not.toHaveBeenCalled();
   });
