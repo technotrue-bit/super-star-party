@@ -668,3 +668,45 @@ git push -u origin feat/sampled-music
   - the Drum Solo anchor (`clock()` from `_playT`, `StepClock.setAnchor`, `state().audio.anchor`)
   - the last interim fallback removed
   - the budget and loudness passes, and the iPhone check
+
+## Carried forward from Plan 1's reviews
+
+Plan 1 finished after one final fix wave (e572838..9742b19). These items were reviewed and deliberately deferred to Plans 2 and 3.
+
+**Plan 2 (board themes)**
+- Retune bass zones 45, 59 and 62 (measured +13.8, -13.0 and -12.9 cents; two independent measurements agree) with `tune` entries in `tools/samples/instruments.json`. Piano 37 measures -11.8 cents but reads differently per harmonic, so judge it by ear. Until then the build's pitch check warns on these four on every run.
+- `tools/samples/build.mjs`:
+  - `ArchiveSource` downloads to a `.part` file, then renames (before the first archive source).
+  - `removeStale` runs after the tables are written.
+  - Add tests for the SFZ parser and the root planner.
+  - The credits test checks pinned commits (with the first CC BY source, Greg Sullivan E-Pianos).
+  - Refresh the stale header comment; `replaces` is vestigial.
+- Every new library: read the pitch check's output, since `rootOffset` and per-zone `tune` exist for exactly the glock-style problem.
+- Lift: test it live once `startMatch()` and `turn:start` wire it. Lift-layer notes are skipped when the lift is off.
+- Fills:
+  - Non-drum fill voices play on top of the bar; drum voices replace it.
+  - `source` inside a section indexes that section's voices.
+  - Add `parseSection` tests with the first real fill.
+- `renderTrack` loads only the track's own sets.
+- When `releaseDecoded` is wired:
+  - add a stale-epoch guard before the fetch;
+  - `loader.ts` (around the epoch check after the fetch) should keep freshly fetched bytes after a release.
+- `turnLoop.ts` resumes after star_fanfare on a 4500 ms timer, which trims the final ring by about 0.13 s. Lengthen it or rely on `onEnded`.
+- The sampler's one-shot `tail` overestimates by the note length and uses the kit-wide `maxLen` (bounded by the 2.5 s cap).
+- Listening review:
+  - mg.action's bright glock and its octave-dropped bars 5-8;
+  - lead and stab share a register in win, results and mg.puzzle;
+  - board.fairground's `bassOom` triads (replaced by the new theme anyway);
+  - the unison bright glock layers on shop.
+- Credits and settings overlays: focus trap and dialog semantics (`role="dialog"`, `aria-modal`, Escape).
+
+**Plan 3 (minigame themes, Drum Solo anchor)**
+- Blocking acceptance test: a 200 ms stall on a bar line must not drop a whole anchored bar (currently a stall under 0.5 s skips the bar).
+- Unanchored stalls between 0.12 s and 0.5 s return already-due steps that play in a burst. Advance past steps more than about 20 ms late.
+- `setAnchor` rejects `barSec` or `speed` <= 0 (a zero `barSec` loops forever).
+- Merge the duplicated section parsing and clock setup between live and render paths when `pickupStartStep` lands.
+- If every decode of the first set fails while the fetches succeed, switch format once. Exercise this in the iPhone AAC check.
+- Retry the zone table once on a later set request.
+- Loudness pass: mixes currently peak -1.2 to -1.8 dB at the limiter.
+- A twin-seed run with `?audio=1`, plus the iPhone check.
+- Add `Cache-Control: public, max-age=31536000, immutable` for `/music/<set>/**` (not `CREDITS.txt`) once the repo has deploy config.
