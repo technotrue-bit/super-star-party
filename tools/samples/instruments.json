@@ -91,6 +91,8 @@
     "replaces": ["glock", "sparkle", "musicbox", "blip", "calliope"],
     "standIn": "glock",
     "files": "Idiophones/Struck Idiophones/Glockenspiel.sfz",
+    "rootOffset": 12,
+    "tune": { "76": -8, "79": -8, "82": -12, "84": -12, "87": -12, "90": -12, "93": -16, "96": -15, "99": -16, "102": -16, "105": -24, "108": -24, "111": -24 },
     "velUpper": [1],
     "vel": [96],
     "oneShot": true,

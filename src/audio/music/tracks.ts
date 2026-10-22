@@ -278,8 +278,7 @@ export const TRACKS: Record<string, TrackDef> = {
           "F4:2 A4:2 F4:2 C4:2 B4:2 D5:2 B4:2 G4:2",
         ],
       },
-      // bright: the glock sounds an octave above written, where the old +12 doubling sat
-      { style: "s:glock", layer: "bright", source: 0, gain: 0.55 },
+      { style: "s:glock", layer: "bright", source: 0, transpose: 12, gain: 0.55 },
     ],
   },
 
@@ -293,6 +292,7 @@ export const TRACKS: Record<string, TrackDef> = {
       {
         style: "s:glock",
         layer: "base",
+        transpose: 12,
         pattern: [
           "-:1 E5:3 G5:1 E5:3 G5:1 C6:3 G5:1 C6:3",
           "G5:1 C6:3 E6:1 C6:3 G5:3 E5:1 D5:3 -:1",
@@ -350,6 +350,7 @@ export const TRACKS: Record<string, TrackDef> = {
       {
         style: "s:glock",
         layer: "counter",
+        transpose: 12,
         pattern: [
           "C5:6 G5:6 E5:4",
           "E5:6 C5:6 G5:4",
@@ -361,8 +362,8 @@ export const TRACKS: Record<string, TrackDef> = {
           "D5:6 G5:6 B5:4",
         ],
       },
-      // bright: a unison doubling; +12 would take F6 (and E6, lifted) past the glock's zones (100)
-      { style: "s:glock", layer: "bright", source: 0, gain: 0.5 },
+      // bright: a unison doubling; another octave would take F6 (and E6, lifted) past the glock's zones (112)
+      { style: "s:glock", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
     ],
   },
 
@@ -446,8 +447,8 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       { style: "s:trombone", layer: "counter", source: 5, transpose: -12 }, // the stab's trombone half, an octave down to fit its zones
-      // bright: still +12 on the glock (which sounds an octave above written); at 0, bar 8's D4 falls below its zones
-      { style: "s:glock", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
+      // bright: two octaves over the lead; at +12, bar 8's D4 falls below the glock's zones
+      { style: "s:glock", layer: "bright", source: 0, transpose: 24, gain: 0.5 },
     ],
   },
 
@@ -530,8 +531,7 @@ export const TRACKS: Record<string, TrackDef> = {
           "{C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1",
         ],
       },
-      // bright: the glock sounds an octave above written, where the old +12 doubling sat
-      { style: "s:glock", layer: "bright", source: 0, gain: 0.5 },
+      { style: "s:glock", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
     ],
   },
 
@@ -708,6 +708,7 @@ export const TRACKS: Record<string, TrackDef> = {
       {
         style: "s:glock",
         layer: "base",
+        transpose: 12,
         pattern: [
           "E5:1 E5:1 G5:1 C6:1 G5:1 E5:1 G5:1 E5:1 C5:1 E5:1 G5:1 E5:1 D5:1 C5:1 D5:1 E5:1",
           "F5:1 F5:1 A5:1 C6:1 A5:1 F5:1 A5:1 F5:1 C5:1 F5:1 A5:1 F5:1 E5:1 F5:1 G5:1 A5:1",
@@ -765,6 +766,7 @@ export const TRACKS: Record<string, TrackDef> = {
       {
         style: "s:glock",
         layer: "counter",
+        transpose: 12,
         pattern: [
           "C5:4 E5:4 G5:4 E5:4",
           "F5:4 A5:4 C6:4 A5:4",
@@ -776,8 +778,8 @@ export const TRACKS: Record<string, TrackDef> = {
           "G5:4 B5:4 D6:4 G5:4",
         ],
       },
-      // bright: a unison doubling; at +12 the top G6 is past the glock's zones (100)
-      { style: "s:glock", layer: "bright", source: 0, gain: 0.5 },
+      // bright: a unison doubling; another octave would take the top G6 past the glock's zones (112)
+      { style: "s:glock", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
     ],
   },
 
@@ -861,8 +863,8 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       { style: "s:trombone", layer: "counter", source: 5, transpose: -12 }, // the stab's trombone half, an octave down to fit its zones
-      // bright: the glock sounds an octave above written, where the old +12 doubling sat (two octaves over the trumpet now)
-      { style: "s:glock", layer: "bright", source: 0, gain: 0.5 },
+      // bright: two octaves over the trumpet, which plays an octave down
+      { style: "s:glock", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
     ],
   },
 
@@ -905,7 +907,6 @@ export const TRACKS: Record<string, TrackDef> = {
       {
         style: "s:glock",
         layer: "counter",
-        transpose: -12, // the glock sounds an octave above written: this sounds where the old sparkle did
         pattern: [
           "C7:2 -:2 G6:2 -:2 E6:2 -:2 C7:2 -:2",
           "F6:2 -:2 C7:2 -:2 A6:2 -:2 F6:2 -:2",

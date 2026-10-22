@@ -15,7 +15,10 @@
 //      inputs are unchanged since the last build (build-state.json) is skipped unless --force
 //   5. writes public/music/<set>/<instrument>/<root|token>[-v<layer>][-r<rr>].<hash8>.webm|.m4a,
 //      src/audio/samples/instruments.gen.ts, zones.gen.ts and public/music/CREDITS.txt, prints the
-//      sizes and fails when a decoded-size cap is broken.
+//      sizes and fails when a decoded-size cap is broken
+//   6. pitch check: measures the fundamental of every melodic zone's Opus file (tools/samples/
+//      pitch.mjs), prints its deviation from the zone's root with its tune applied, and warns when
+//      a zone is more than 10 cents off, or sits an octave or two off its root.
 //
 // tools/samples/sources.json, one entry per library:
 //   { id, kind: "git" | "archive", url, commit | sha256, mappingRef?, mappingCommit?, sparse?,
@@ -28,9 +31,12 @@
 //   files) the source may be read from; the build checks out only the files its recipes use.
 // tools/samples/instruments.json, one recipe per instrument:
 //   { source, set, kind: "melodic" | "kit", replaces, standIn, oneShot, maxLen, release, gain,
-//     velUpper, melodic: files (SFZ), range? [lo, hi], vel (SFZ velocity read per layer), rr;
+//     velUpper, melodic: files (SFZ), range? [lo, hi], vel (SFZ velocity read per layer), rr,
+//     rootOffset? (semitones added to every SFZ keycenter, for a library whose files sound away
+//     from them), tune? { <zone key>: cents } (added to the zone's tune, from the pitch check);
 //     kit: sfzRoot (folder sample paths start from), tokens: { <token>: { files, key?, vel, rr?,
 //     source?, level? (dB), maxLen? (at most the kit's) } } }
+//   Roots, `range` and zone keys are the pitches the files sound at, rootOffset included.
 //   A melodic instrument's zones span its recorded compass: a root every 3 semitones between the
 //   lowest and highest recordings, plus at most one root derived within 3 semitones beyond each end.
 //   `range` narrows that to the notes it lists. A kit token's `vel` entry may be a list (one SFZ
@@ -45,6 +51,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { measurePitch } from "./pitch.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HERE = join(ROOT, "tools", "samples");
@@ -80,6 +87,10 @@ const TARGET_RMS_DB = -18;
 /** No zone peaks above this after matching, in dBFS. */
 const PEAK_CEILING_DB = -1;
 const MELODIC_MAX_SHIFT = 1.5;
+/** The pitch check warns about a zone further off its root than this, in cents. */
+const PITCH_TOLERANCE = 10;
+/** ...and names it an octave error within this many cents of 12 or 24 semitones off. */
+const OCTAVE_NEAR = 50;
 /** Farthest a derived root may sit beyond the lowest or highest recording, in semitones. */
 const END_REACH = 3;
 const MB = 2 ** 20;
@@ -298,6 +309,7 @@ async function validate(instruments, sources) {
       if (inst.standIn !== "drums") fail(`${where}: a kit's standIn must be "drums", not "${inst.standIn}"`);
       if (inst.oneShot !== true) fail(`${where}: kits must be oneShot (the player schedules kit hits with no length)`);
       if (!inst.tokens || Object.keys(inst.tokens).length === 0) fail(`${where}: a kit needs tokens`);
+      if (inst.rootOffset !== undefined || inst.tune !== undefined) fail(`${where}: rootOffset and tune are for melodic instruments`);
       for (const [tok, t] of Object.entries(inst.tokens)) {
         if (!DRUM_TOKENS.has(tok)) fail(`${where}: ${tok} is not a drum token`);
         if (t.source) checkSource(`${where} ${tok}`, t.source);
@@ -314,6 +326,13 @@ async function validate(instruments, sources) {
       }
       if (!Array.isArray(inst.vel) || inst.vel.length !== inst.velUpper.length) fail(`${where}: one vel per layer`);
       if (!inst.files) fail(`${where}: no files`);
+      if (inst.rootOffset !== undefined && !Number.isInteger(inst.rootOffset)) fail(`${where}: rootOffset must be a whole number of semitones`);
+      if (inst.tune !== undefined) {
+        if (typeof inst.tune !== "object" || Array.isArray(inst.tune)) fail(`${where}: tune must be { <zone key>: cents }`);
+        for (const [key, cents] of Object.entries(inst.tune)) {
+          if (!Number.isFinite(cents)) fail(`${where}: tune for ${key} must be a number of cents`);
+        }
+      }
     } else {
       fail(`${where}: kind must be melodic or kit`);
     }
@@ -705,7 +724,9 @@ function planInstrument(name, inst, handles) {
   const tag = (layer, rr, rrCount) => `${layers > 1 ? `-v${layer}` : ""}${rrCount > 1 ? `-r${rr}` : ""}`;
   if (inst.kind === "melodic") {
     const handle = handles.get(inst.source);
-    const regions = readRegions(handle, inst.files, inst.sfzRoot);
+    // From here on a root is the pitch the file sounds at.
+    const offset = inst.rootOffset ?? 0;
+    const regions = readRegions(handle, inst.files, inst.sfzRoot).map((r) => ({ ...r, root: r.root + offset }));
     const rrCount = inst.rr ?? 1;
     for (let layer = 0; layer < layers; layer++) {
       const v = inst.vel[layer];
@@ -714,9 +735,10 @@ function planInstrument(name, inst, handles) {
       for (const { root, from } of keptRoots(recorded, inst.range, `${name} layer ${layer}`)) {
         for (let rr = 0; rr < rrCount; rr++) {
           const region = pickRegion(regions.filter((r) => r.root === from), v, rr, `${name} root ${from}`);
+          const key = `${root}${tag(layer, rr, rrCount)}`;
           zones.push({
-            key: `${root}${tag(layer, rr, rrCount)}`,
-            entry: { root, layer, rr, tune: region.tune },
+            key,
+            entry: { root, layer, rr, tune: region.tune + (inst.tune?.[key] ?? 0) },
             source: inst.source,
             sample: region.sample,
             shift: root - from,
@@ -725,6 +747,9 @@ function planInstrument(name, inst, handles) {
           });
         }
       }
+    }
+    for (const key of Object.keys(inst.tune ?? {})) {
+      if (!zones.some((z) => z.key === key)) fail(`${name}: tune names zone ${key}, which the build does not make`);
     }
   } else {
     for (const [token, t] of Object.entries(inst.tokens)) {
@@ -828,10 +853,15 @@ function shapeZone(x, maxLen, levelDb) {
   return { pcm: y, limited, cut: natural > cap };
 }
 
+/** An encoded file decoded to mono 48 kHz float. */
+function decodePcm(file) {
+  const buf = run("ffmpeg", ["-v", "error", "-i", file, "-ac", "1", "-ar", String(SR), "-f", "f32le", "-acodec", "pcm_f32le", "-"]);
+  return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length));
+}
+
 /** Frames ffmpeg decodes from an encoded file. */
 function decodedFrames(file) {
-  const buf = run("ffmpeg", ["-v", "error", "-i", file, "-ac", "1", "-ar", String(SR), "-f", "f32le", "-acodec", "pcm_f32le", "-"]);
-  return buf.length / 4;
+  return decodePcm(file).length;
 }
 
 function encode(pcm, outBase) {
@@ -1068,6 +1098,7 @@ async function build(args, instruments, sources) {
   // files go only once the tables that reference them are rewritten.
   writeIfChanged(STATE_PATH, stateJson(all));
   printReport(all, instruments, decoded, sets);
+  pitchCheck(all, instruments, sets);
   console.log(`\nZones: ${encoded} encoded, ${skipped} unchanged`);
   if (errors.length > 0) fail(`decoded-size caps broken:\n  ${errors.join("\n  ")}`);
   const removed = removeStale(sets, keep);
@@ -1136,6 +1167,36 @@ function printReport(all, instruments, decoded, sets) {
     const aac = sum(unique.map((f) => size(`${f}.m4a`)));
     const warn = DOWNLOAD_TARGET[s] > 0 && opus > DOWNLOAD_TARGET[s] * 1.25 ? `   WARNING: over the ${fmtMB(DOWNLOAD_TARGET[s])} target by more than 25%` : "";
     console.log(`  ${s.padEnd(14)} ${fmtMB(opus).padEnd(11)} ${fmtMB(aac).padEnd(11)} ${fmtMiB(decoded[s])} (cap ${fmtMiB(SET_CAP)})${warn}`);
+  }
+}
+
+/**
+ * Measures the fundamental of every melodic zone of the built sets from its Opus file and prints
+ * its deviation from the zone's root, with the zone's tune applied (what the sampler plays at the
+ * root). Warns beyond PITCH_TOLERANCE cents, and names a zone an octave or two off its root.
+ */
+function pitchCheck(all, instruments, sets) {
+  console.log(`\nPitch check (each zone's Opus file against its root, tune applied; warns beyond ${PITCH_TOLERANCE} cents)`);
+  const signed = (c) => `${c >= 0 ? "+" : ""}${c.toFixed(1)}`;
+  for (const [name, { zones }] of Object.entries(all)) {
+    const inst = instruments[name];
+    if (inst.kind !== "melodic" || !sets.includes(inst.set)) continue;
+    let worst = 0;
+    for (const z of zones) {
+      const { midi, harmonic, edge } = measurePitch(decodePcm(join(OUT, `${z.file}.webm`)), SR, z.root - z.tune / 100);
+      const off = (midi - z.root) * 100 + z.tune;
+      if (Math.abs(off) > Math.abs(worst)) worst = off;
+      const from = z.shift ? ` (from ${z.derivedFrom}, ${z.shift > 0 ? "+" : ""}${z.shift})` : "";
+      const how = `harmonic ${harmonic}${edge ? ", fine search at its edge: to 5 cents" : ""}`;
+      console.log(
+        `  ${name.padEnd(9)} ${z.key.padEnd(9)} sounds ${midi.toFixed(2)}${from}, tune ${signed(z.tune)} c: ${signed(off)} c  [${how}]`,
+      );
+      if (Math.abs(off) <= PITCH_TOLERANCE) continue;
+      const octaves = [12, 24].find((n) => Math.abs(Math.abs(off) - n * 100) <= OCTAVE_NEAR);
+      const why = octaves ? `, ${octaves === 12 ? "an octave" : "two octaves"} ${off > 0 ? "above" : "below"} its root: check the SFZ keycenters (rootOffset)` : "";
+      console.warn(`  warning: ${name} zone ${z.key} is ${signed(off)} cents off its root${why}`);
+    }
+    console.log(`  ${name.padEnd(9)} worst ${signed(worst)} c`);
   }
 }
 
