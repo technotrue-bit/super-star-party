@@ -60,7 +60,8 @@ export interface SelectRect { x: number; y: number; w: number; h: number }
 /** Pick a Hero layout as last drawn: screen boxes in CSS px. */
 export interface SelectBounds {
   viewport: { w: number; h: number };
-  hero: { selected: string; box: SelectRect | null };
+  /** clipped: part of the hero is outside the camera's near..far range, so it isn't drawn. */
+  hero: { selected: string; box: SelectRect | null; clipped: boolean };
   slot: SelectRect | null;
   cards: SelectRect[];
   settings: SelectRect | null;

@@ -48,6 +48,13 @@ let rememberedRivals: number[] | null = null;
 const PARTY_FOV = 45;
 /** Lens for the hero shot: long enough that the model isn't fish-eyed. */
 const HERO_FOV = 30;
+/**
+ * Clip planes for the hero shot. The camera is shared with every screen and
+ * the title's far orbit pushes near out past 20 units, so the fit sets its
+ * own: the hero stands a few units away.
+ */
+const HERO_NEAR = 0.1;
+const HERO_FAR = 400;
 /** Fraction of the slot kept clear around the hero box. */
 const FIT_MARGIN = 0.08;
 /** Camera looks down on the hero by this much (radians). */
@@ -219,6 +226,22 @@ function projectBox(box: THREE.Box3, cam: THREE.PerspectiveCamera, w: number, h:
     y1 = Math.max(y1, py);
   }
   return { x: x0 + o.x, y: y0 + o.y, w: x1 - x0, h: y1 - y0 };
+}
+
+/**
+ * True when part of a world box lies outside the camera's near..far depth
+ * range. A projected box can sit neatly in the slot and still draw nothing
+ * when the near plane is past the hero.
+ */
+function clipsHero(box: THREE.Box3, cam: THREE.PerspectiveCamera): boolean {
+  cam.updateMatrixWorld(true);
+  for (let i = 0; i < 8; i++) {
+    corner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
+    corner.applyMatrix4(cam.matrixWorldInverse);
+    const depth = -corner.z;
+    if (depth < cam.near || depth > cam.far) return true;
+  }
+  return false;
 }
 
 // ------------------------------------------------------------------
@@ -700,6 +723,8 @@ const characterSelectImpl: SelectScreenState & Screen = {
     const size = box.getSize(new THREE.Vector3());
 
     cam.fov = HERO_FOV;
+    cam.near = HERO_NEAR;
+    cam.far = HERO_FAR;
     cam.aspect = w / h;
     const dir = new THREE.Vector3(0, Math.sin(CAM_ELEV), Math.cos(CAM_ELEV));
     let dist = (size.y * 0.5) / Math.tan(THREE.MathUtils.degToRad(HERO_FOV / 2)) / 0.8 + size.z;
@@ -734,14 +759,18 @@ const characterSelectImpl: SelectScreenState & Screen = {
     if (!this._active || !cam) return null;
     const { w, h } = viewportSize();
     let heroBox: SelectRect | null = null;
+    let clipped = false;
     if (ch) {
       ch.group.updateWorldMatrix(true, true);
       const b = new THREE.Box3().setFromObject(ch.group);
-      if (!b.isEmpty()) heroBox = projectBox(b, cam, w, h);
+      if (!b.isEmpty()) {
+        heroBox = projectBox(b, cam, w, h);
+        clipped = clipsHero(b, cam);
+      }
     }
     return {
       viewport: { w, h },
-      hero: { selected: roster[sel].key, box: heroBox },
+      hero: { selected: roster[sel].key, box: heroBox, clipped },
       slot: domRect(this._slot),
       cards: [...(this._cardRow?.querySelectorAll(".ssp-sel-card") ?? [])].map((c) => domRect(c)!),
       settings: domRect(this._settingsEl),

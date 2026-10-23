@@ -121,12 +121,17 @@ class ScreenManager {
     return this._wiping;
   }
 
+  // Only an entered screen is driven. The title is pre-registered as
+  // _current before boot, and frames run while the other screen chunks are
+  // still loading: ticking it then let its camera code move the shared
+  // camera's near plane out to the far orbit (~28 units) with nothing to put
+  // it back, so a later screen (Pick a Hero) drew nothing closer than that.
   update(dt: number): void {
-    this._current?.update(dt);
+    if (this._entered) this._current?.update(dt);
   }
 
   render(): void {
-    this._current?.render();
+    if (this._entered) this._current?.render();
   }
 
   /** Screens that exist (debug/QA aid). */
