@@ -30,3 +30,7 @@ tools/probe-*.json
 
 # capture-minigame-clips.mjs scratch frames
 .clip-frames/
+
+# sample pipeline: fetched libraries and the py7zr venv (tools/samples/build.mjs)
+tools/samples/.cache/
+tools/samples/.venv/

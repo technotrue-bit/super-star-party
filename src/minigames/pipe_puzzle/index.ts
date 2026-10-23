@@ -243,7 +243,7 @@ const pipePuzzle: Minigame = {
       if (next === state.cursor) return;
       state.cursor = next;
       main.setCursor(next);
-      ctx.playSfx("ui.click", { volume: 0.3, pitch: 2.2 });
+      ctx.playSfx("ui.click", { volume: 0.3, rate: 2.2 });
     };
   },
 
@@ -357,12 +357,12 @@ function step(s: PipeState): void {
     if (!ev) continue;
     if (ev.kind === "advance") {
       showPuzzle(s, i);
-      if (i === s.local) s.ctx.playSfx("whoosh", { volume: 0.35, pitch: 1.4 });
+      if (i === s.local) s.ctx.playSfx("whoosh", { volume: 0.35, rate: 1.4 });
       continue;
     }
     if (ev.cell === undefined) continue;
     viewTurn(s, i, ev.cell);
-    if (i === s.local) s.ctx.playSfx("pop", { volume: 0.4, pitch: 1.3 });
+    if (i === s.local) s.ctx.playSfx("pop", { volume: 0.4, rate: 1.3 });
     refreshWater(s, i);
     if (ev.result === "solved") onSolved(s, i);
   }
@@ -374,7 +374,7 @@ function humanPress(s: PipeState, cell: number): void {
   const result = pressTile(seat, puzzleAt(s, seat.puzzle), cell, s.t);
   if (result === "ignored") return;
   viewTurn(s, s.local, cell);
-  s.ctx.playSfx("pop", { volume: 0.45, pitch: 1.3 });
+  s.ctx.playSfx("pop", { volume: 0.45, rate: 1.3 });
   refreshWater(s, s.local);
   if (result === "solved") onSolved(s, s.local);
 }
@@ -415,7 +415,7 @@ function onSolved(s: PipeState, i: number): void {
   s.cheer[i] = CHEER_TIME;
   if (i !== s.local) {
     s.rivals.find((rv) => rv.index === i)?.board.flash();
-    ctx.playSfx("pop", { volume: 0.25, pitch: 0.8 });
+    ctx.playSfx("pop", { volume: 0.25, rate: 0.8 });
     return;
   }
   s.main.pulseStar();
@@ -431,8 +431,8 @@ function onSolved(s: PipeState, i: number): void {
   s.plus.origin.copy(splashAt);
   s.plus.life = 1;
   s.plus.sprite.visible = true;
-  ctx.playSfx("coin.gain", { volume: 0.7, pitch: 1.2 });
-  ctx.playSfx("whoosh", { volume: 0.35, pitch: 0.9 });
+  ctx.playSfx("coin.gain", { volume: 0.7, rate: 1.2 });
+  ctx.playSfx("whoosh", { volume: 0.35, rate: 0.9 });
 }
 
 function timeUp(s: PipeState): void {

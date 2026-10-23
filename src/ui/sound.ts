@@ -8,7 +8,7 @@ import { audio } from "../audio/audioEngine";
 /** Play a one-shot SFX by name; null/undefined = silent. Never throws. */
 export function sfx(
   name: string | null | undefined,
-  opts?: { volume?: number; pitch?: number }
+  opts?: { volume?: number; pitch?: number; rate?: number }
 ): void {
   if (!name) return;
   try {
@@ -17,8 +17,6 @@ export function sfx(
     /* audio stub/unavailable — UI must keep working silently */
   }
 }
-
-type Gainish = { gain?: { value: number } };
 
 export function getMasterGain(): number {
   try {
@@ -36,15 +34,10 @@ export function setMasterGain(v: number): void {
   }
 }
 
-/**
- * Music volume. Prefers the music bus gain when the wave-1 engine exposes
- * one; otherwise falls back to the master gain.
- */
+/** Music volume (the music bus, not master). */
 export function getMusicGain(): number {
   try {
-    const m = audio.music as unknown as Gainish;
-    if (typeof m?.gain?.value === "number") return m.gain.value;
-    return audio.master.gain;
+    return audio.music.volume;
   } catch {
     return 1;
   }
@@ -52,20 +45,16 @@ export function getMusicGain(): number {
 
 export function setMusicGain(v: number): void {
   try {
-    const m = audio.music as unknown as Gainish;
-    if (m?.gain) m.gain.value = v;
-    else audio.master.gain = v;
+    audio.music.volume = v;
   } catch {
     /* stub */
   }
 }
 
-/** SFX volume — same pattern as music. */
+/** SFX volume (the sfx bus, not master). */
 export function getSfxGain(): number {
   try {
-    const s = audio.sfx as unknown as Gainish;
-    if (typeof s?.gain?.value === "number") return s.gain.value;
-    return audio.master.gain;
+    return audio.sfx.volume;
   } catch {
     return 1;
   }
@@ -73,9 +62,7 @@ export function getSfxGain(): number {
 
 export function setSfxGain(v: number): void {
   try {
-    const s = audio.sfx as unknown as Gainish;
-    if (s?.gain) s.gain.value = v;
-    else audio.master.gain = v;
+    audio.sfx.volume = v;
   } catch {
     /* stub */
   }

@@ -16,5 +16,6 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "tools", "harness", "vite.config.ts", "vite.node.d.ts"]
+  "include": ["src", "tools", "harness", "vite.config.ts", "vite.node.d.ts"],
+  "exclude": ["tools/samples/.cache", "tools/samples/.venv"]
 }

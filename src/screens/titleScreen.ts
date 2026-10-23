@@ -239,6 +239,27 @@ function injectTitleStyles(): void {
       background: ${palette.cream};
       box-shadow: 0 -8px 0 ${palette.cream};
     }
+    /* Credits: the text scrolls inside the panel, so CLOSE never leaves the screen. */
+    .ssp-title-settings--credits {
+      box-sizing: border-box; /* max-height counts the padding, so a short landscape phone still fits it */
+      width: min(520px, 92vw);
+      overflow: hidden;
+    }
+    .ssp-title-credits__text {
+      flex: 1 1 auto;
+      min-height: 0;
+      margin: 0;
+      padding: 10px 12px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+      background: ${palette.white};
+      border: 3px solid ${palette.ink};
+      border-radius: 14px;
+      font: 500 13px/1.45 'Fredoka', 'Comic Sans MS', sans-serif;
+      color: ${palette.ink};
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -276,6 +297,7 @@ interface TitleState {
   _goHowTo: () => void;
   _openSettings: () => void;
   _showSettingsPanel: () => void;
+  _showCreditsPanel: (returnTo: HTMLElement) => void;
   _sliderRow: (label: string, initial: number, apply: (v: number) => void) => HTMLDivElement;
 }
 
@@ -572,6 +594,17 @@ const titleImpl: TitleState & Screen = {
 
     panel.appendChild(mountPackPicker().el);
 
+    // Credits
+    const creditsBtn = ui.button({
+      label: "CREDITS",
+      kind: "ghost",
+      sound: "ui.click",
+      onClick: () => this._showCreditsPanel(creditsBtn.el),
+    });
+    creditsBtn.el.style.alignSelf = "center";
+    creditsBtn.el.style.width = "160px";
+    panel.appendChild(creditsBtn.el);
+
     // Close button
     const closeBtn = ui.button({
       label: "CLOSE",
@@ -596,6 +629,68 @@ const titleImpl: TitleState & Screen = {
         this._settingsOpen = false;
         overlay.remove();
       }
+    });
+  },
+
+  /**
+   * The music sample credits (public/music/CREDITS.txt) over the settings panel. Focus moves to the
+   * credits text, so a second Enter or Space cannot open another panel, and back to `returnTo` (the
+   * CREDITS button) on close.
+   */
+  _showCreditsPanel(returnTo: HTMLElement) {
+    // Same class as the settings overlay: exit() sweeps it with the rest.
+    const overlay = document.createElement("div");
+    overlay.className = "ssp-title-settings-overlay";
+
+    const panel = document.createElement("div");
+    panel.className = "ssp-title-settings ssp-title-settings--credits";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "ssp-title-settings__title";
+    titleEl.textContent = "CREDITS";
+    panel.appendChild(titleEl);
+
+    const text = document.createElement("pre");
+    text.className = "ssp-title-credits__text";
+    text.tabIndex = 0; // keyboard users can scroll it
+    text.setAttribute("role", "region"); // a labelled landmark: aria-label is not allowed on a bare <pre>
+    text.setAttribute("aria-label", "Music credits");
+    text.textContent = "Loading the credits…";
+    panel.appendChild(text);
+    fetch(`${import.meta.env.BASE_URL}music/CREDITS.txt`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.text();
+      })
+      .then((body) => {
+        text.textContent = body.trim();
+      })
+      .catch(() => {
+        text.textContent = "The credits could not be loaded. Check your connection and try again.";
+      });
+
+    const close = () => {
+      overlay.remove();
+      returnTo.focus();
+    };
+    const closeBtn = ui.button({
+      label: "CLOSE",
+      kind: "gold",
+      size: "md",
+      sound: "ui.back",
+      onClick: close,
+    });
+    closeBtn.el.classList.add("ssp-title-settings__close");
+    closeBtn.el.style.width = "160px";
+    panel.appendChild(closeBtn.el);
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    text.focus();
+
+    // Click scrim to close (the settings panel stays open underneath)
+    overlay.addEventListener("pointerdown", (e) => {
+      if (e.target === overlay) close();
     });
   },
 

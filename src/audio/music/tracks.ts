@@ -16,7 +16,9 @@
  * Q count tick, D low tom.
  */
 
-export type Layer = "base" | "perc2" | "counter" | "bright";
+import type { SetId } from "../samples/types";
+
+export type Layer = "base" | "perc2" | "counter" | "bright" | "lift";
 
 export interface StepEvent {
   s: number; // step within the bar (0..15)
@@ -29,12 +31,12 @@ export interface StepEvent {
 }
 
 export interface VoiceDef {
-  style: string; // instrument style (see instruments.ts)
+  style: string; // synth voice (see instruments.ts) or `s:<name>`, a sampled instrument (see samples/instruments.gen.ts)
   pattern?: string[]; // one string per bar
   chords?: string[]; // one chord name per bar (harmony voice)
   source?: number; // index of another voice whose pattern this one reuses
   layer?: Layer; // which intensity layer it belongs to
-  transpose?: number; // semitone offset (bright octave layers)
+  transpose?: number; // semitone offset (octave layers, or an octave that fits an instrument's zones)
   gain?: number; // extra velocity multiplier
 }
 
@@ -44,6 +46,9 @@ export interface TrackDef {
   swing: number; // 0.5 = straight; 0.62 = light shuffle; 0.7 = heavy
   loop: boolean;
   voices: VoiceDef[];
+  sets?: SetId[]; // sample sets the track needs; defaults to ["core"]
+  fill?: VoiceDef[]; // one-bar section (e.g. a drum fill), outside voices
+  pickup?: VoiceDef[]; // one-bar section leading into the loop, outside voices
 }
 
 export interface ParsedVoice {
@@ -60,7 +65,7 @@ export const DRUM_TOKENS = new Set([
   "K", "S", "H", "h", "O", "C", "T", "B", "W", "L", "R", "Q", "D",
 ]);
 
-/** Chord voicings for the harmony (pad) voice. */
+/** Chord voicings for the harmony (pad) voice, as MIDI notes; parsing turns them into Hz. */
 export const CHORDS: Record<string, number[]> = {
   C: [48, 52, 55, 60], // C3 E3 G3 C4
   G: [43, 47, 50, 55], // G2 B2 D3 G3
@@ -125,16 +130,16 @@ export function parseBar(str: string, barIndex: number): StepEvent[] {
   return out;
 }
 
-/** Validate + parse a whole track definition. */
-export function parseTrack(def: TrackDef): ParsedVoice[] {
+/** Parse a list of voices; every voice must have the same bar count. */
+function parseVoices(defId: string, voices: VoiceDef[]): ParsedVoice[] {
   const out: ParsedVoice[] = [];
   let barCount = -1;
-  for (const v of def.voices) {
+  for (const v of voices) {
     let bars: StepEvent[][] = [];
     let chordNames: string[] = [];
     if (v.source !== undefined) {
       const src = out[v.source];
-      if (!src) throw new Error(`track ${def.id}: voice ${v.source} not yet parsed for source ref`);
+      if (!src) throw new Error(`track ${defId}: voice ${v.source} not yet parsed for source ref`);
       bars = src.bars;
       chordNames = src.chordNames;
     } else if (v.pattern) {
@@ -142,16 +147,16 @@ export function parseTrack(def: TrackDef): ParsedVoice[] {
     } else if (v.chords) {
       chordNames = v.chords;
       bars = v.chords.map((c) => {
-        const freqs = CHORDS[c];
-        if (!freqs) throw new Error(`unknown chord '${c}' in track ${def.id}`);
-        return [{ s: 0, kind: "note", freqs, token: c, len: 16, vel: 0.8, slide: 0 }];
+        const midis = CHORDS[c];
+        if (!midis) throw new Error(`unknown chord '${c}' in track ${defId}`);
+        return [{ s: 0, kind: "note", freqs: midis.map(midiToFreq), token: c, len: 16, vel: 0.8, slide: 0 }];
       });
     } else {
-      throw new Error(`track ${def.id}: voice ${out.length} has no pattern/chords/source`);
+      throw new Error(`track ${defId}: voice ${out.length} has no pattern/chords/source`);
     }
     if (barCount === -1) barCount = bars.length;
     else if (bars.length !== barCount) {
-      throw new Error(`track ${def.id}: voice '${v.style}' has ${bars.length} bars, expected ${barCount}`);
+      throw new Error(`track ${defId}: voice '${v.style}' has ${bars.length} bars, expected ${barCount}`);
     }
     out.push({
       style: v.style,
@@ -163,7 +168,27 @@ export function parseTrack(def: TrackDef): ParsedVoice[] {
       chordNames,
     });
   }
+  return out;
+}
+
+/** Validate + parse a whole track definition. */
+export function parseTrack(def: TrackDef): ParsedVoice[] {
+  const out = parseVoices(def.id, def.voices);
   if (out.length === 0) throw new Error(`track ${def.id}: no voices`);
+  return out;
+}
+
+/** The sample sets a track needs loaded; ["core"] unless it names its own. */
+export function trackSets(def: TrackDef): SetId[] {
+  return def.sets ?? ["core"];
+}
+
+/** Parse a track's one-bar `fill` or `pickup` section ([] when absent). */
+export function parseSection(def: TrackDef, which: "fill" | "pickup"): ParsedVoice[] {
+  const out = parseVoices(def.id, def[which] ?? []);
+  if (out.some((v) => v.barCount !== 1)) {
+    throw new Error(`track ${def.id}: ${which} must be one bar`);
+  }
   return out;
 }
 
@@ -184,7 +209,7 @@ export const TRACKS: Record<string, TrackDef> = {
     loop: true,
     voices: [
       {
-        style: "swingLead",
+        style: "s:trumpet",
         layer: "base",
         pattern: [
           "E5:2 G5:2 E5:2 C5:2 E5:2 D5:2 C5:2 G4:2",
@@ -197,9 +222,9 @@ export const TRACKS: Record<string, TrackDef> = {
           "F4:2 A4:2 C5:2 F5:2 D5:2 G4:2 B4:2 D5:2",
         ],
       },
-      { style: "pad", layer: "base", chords: ["C", "G", "Am", "F", "C", "G", "Am", "F"] },
+      { style: "s:piano", layer: "base", chords: ["C", "G", "Am", "F", "C", "G", "Am", "F"] },
       {
-        style: "bassSwing",
+        style: "s:bass",
         layer: "base",
         pattern: [
           "C2:8 G2:8",
@@ -213,7 +238,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "base",
         pattern: [
           "K:1 H:1 h:1 H:1 S:1 H:1 h:1 H:1 K:1 H:1 h:1 H:1 S:1 H:1 h:1 H:1",
@@ -227,7 +252,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "perc2",
         pattern: [
           "T:2 B:2 T:2 B:2 T:2 B:2 T:2 B:2",
@@ -241,8 +266,9 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "counterSoft",
+        style: "s:trombone",
         layer: "counter",
+        transpose: -12, // an octave down: the trombone's zones stop at 69
         pattern: [
           "C5:2 E5:2 C5:2 G4:2 C5:2 B4:2 G4:2 E4:2",
           "B4:2 D5:2 B4:2 G4:2 B4:2 A4:2 G4:2 F#4:2",
@@ -254,20 +280,21 @@ export const TRACKS: Record<string, TrackDef> = {
           "F4:2 A4:2 F4:2 C4:2 B4:2 D5:2 B4:2 G4:2",
         ],
       },
-      { style: "swingLead", layer: "bright", source: 0, transpose: 12, gain: 0.55 },
+      { style: "s:glock", layer: "bright", source: 0, transpose: 12, gain: 0.55 },
     ],
   },
 
   /* Bouncy carnival calliope. Swung skip-rhythm hook, call + answer, oom-pah bass. */
-  board: {
-    id: "board",
+  "board.fairground": {
+    id: "board.fairground",
     bpm: 132,
     swing: 0.62,
     loop: true,
     voices: [
       {
-        style: "calliope",
+        style: "s:glock",
         layer: "base",
+        transpose: 12,
         pattern: [
           "-:1 E5:3 G5:1 E5:3 G5:1 C6:3 G5:1 C6:3",
           "G5:1 C6:3 E6:1 C6:3 G5:3 E5:1 D5:3 -:1",
@@ -279,9 +306,9 @@ export const TRACKS: Record<string, TrackDef> = {
           "G5:5 B5:1 D6:3 B5:1 G5:3 D5:1 E5:1 G5:1",
         ],
       },
-      { style: "pad", layer: "base", chords: ["C", "C", "F", "G", "C", "Am", "F", "G"] },
+      { style: "s:piano", layer: "base", chords: ["C", "C", "F", "G", "C", "Am", "F", "G"] },
       {
-        style: "bassOom",
+        style: "s:bass",
         layer: "base",
         pattern: [
           "C2:4 {C3,E3,G3}:4 C2:4 {C3,E3,G3}:4",
@@ -295,7 +322,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "base",
         pattern: [
           "K:2 H:1 h:1 S:2 H:1 h:1 K:2 H:1 h:1 S:2 H:1 h:1",
@@ -309,7 +336,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "perc2",
         pattern: [
           "T:2 B:2 T:2 B:2 T:2 B:2 T:2 B:2",
@@ -323,8 +350,9 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "calliope",
+        style: "s:glock",
         layer: "counter",
+        transpose: 12,
         pattern: [
           "C5:6 G5:6 E5:4",
           "E5:6 C5:6 G5:4",
@@ -336,34 +364,36 @@ export const TRACKS: Record<string, TrackDef> = {
           "D5:6 G5:6 B5:4",
         ],
       },
-      { style: "calliope", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
+      // bright: a unison doubling; another octave would take F6 (and E6, lifted) past the glock's zones (112)
+      { style: "s:glock", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
     ],
   },
 
   /* High-energy hype. Driving 8ths, Am-F-C-G. */
-  minigame_a: {
-    id: "minigame_a",
+  "mg.action": {
+    id: "mg.action",
     bpm: 140,
     swing: 0.5,
     loop: true,
     voices: [
       {
-        style: "hypeLead",
+        style: "s:trumpet",
         layer: "base",
+        // bars 5-8 repeat bars 1-4 at their octave (they were an octave up, to G6; the trumpet's zones stop at 88)
         pattern: [
           "A4:1 A4:1 C5:1 A4:1 E5:2 A4:1 C5:1 A4:1 G4:1 A4:1 B4:1 C5:1 D5:1 E5:1 -:1",
           "F4:1 F4:1 A4:1 F4:1 C5:2 F4:1 A4:1 F4:1 E4:1 F4:1 G4:1 A4:1 B4:1 C5:1 D5:1",
           "C5:1 C5:1 E5:1 C5:1 G5:2 C5:1 E5:1 C5:1 B4:1 C5:1 D5:1 E5:1 F5:1 G5:1 -:1",
           "G4:1 G4:1 B4:1 G4:1 D5:2 G4:1 B4:1 G4:1 F#4:1 G4:1 A4:1 B4:1 C5:1 D5:1 -:1",
-          "A5:1 A5:1 C6:1 A5:1 E6:2 A5:1 C6:1 A5:1 G5:1 A5:1 B5:1 C6:1 D6:1 E6:1 -:1",
-          "F5:1 F5:1 A5:1 F5:1 C6:2 F5:1 A5:1 F5:1 E5:1 F5:1 G5:1 A5:1 B5:1 C6:1 D6:1",
-          "C6:1 C6:1 E6:1 C6:1 G6:2 E6:1 C6:1 G5:1 A5:1 G5:1 E5:1 G5:1 C6:1 E6:1 G6:1",
-          "G5:1 G5:1 B5:1 G5:1 D6:2 B5:1 G5:1 D5:1 E5:1 F#5:1 G5:1 A5:1 B5:1 D6:1 B5:1",
+          "A4:1 A4:1 C5:1 A4:1 E5:2 A4:1 C5:1 A4:1 G4:1 A4:1 B4:1 C5:1 D5:1 E5:1 -:1",
+          "F4:1 F4:1 A4:1 F4:1 C5:2 F4:1 A4:1 F4:1 E4:1 F4:1 G4:1 A4:1 B4:1 C5:1 D5:1",
+          "C5:1 C5:1 E5:1 C5:1 G5:2 E5:1 C5:1 G4:1 A4:1 G4:1 E4:1 G4:1 C5:1 E5:1 G5:1",
+          "G4:1 G4:1 B4:1 G4:1 D5:2 B4:1 G4:1 D4:1 E4:1 F#4:1 G4:1 A4:1 B4:1 D5:1 B4:1",
         ],
       },
-      { style: "pad", layer: "base", chords: ["Am", "F", "C", "G", "Am", "F", "C", "G"] },
+      { style: "s:piano", layer: "base", chords: ["Am", "F", "C", "G", "Am", "F", "C", "G"] },
       {
-        style: "bassDrive",
+        style: "s:bass",
         layer: "base",
         pattern: [
           "A2:2 A3:2 A2:2 A3:2 A2:2 A3:2 A2:2 A3:2",
@@ -377,7 +407,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "base",
         pattern: [
           "K:1 H:1 K:1 h:1 S:1 H:1 K:1 h:1 K:1 H:1 K:1 h:1 S:1 H:1 K:1 h:1",
@@ -391,7 +421,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "perc2",
         pattern: [
           "O:2 B:2 O:2 B:2 O:2 B:2 O:2 B:2",
@@ -405,7 +435,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "stab",
+        style: "s:trumpet",
         layer: "counter",
         pattern: [
           "-:2 {A4,C5,E5}:1 -:1 {A4,C5,E5}:1 -:1 {A4,C5,E5}:1 -:1 {A4,C5,E5}:1 -:1 {A4,C5,E5}:1 -:1 {A4,C5,E5}:1 -:1 {A4,C5,E5}:1 -:1",
@@ -418,20 +448,23 @@ export const TRACKS: Record<string, TrackDef> = {
           "-:2 {G4,B4,D5}:1 -:1 {G4,B4,D5}:1 -:1 {G4,B4,D5}:1 -:1 {G4,B4,D5}:1 -:1 {G4,B4,D5}:1 -:1 {G4,B4,D5}:1 -:1 {G4,B4,D5}:1 -:1",
         ],
       },
-      { style: "hypeLead", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
+      { style: "s:trombone", layer: "counter", source: 5, transpose: -12 }, // the stab's trombone half, an octave down to fit its zones
+      // bright: two octaves over the lead; at +12, bar 8's D4 falls below the glock's zones
+      { style: "s:glock", layer: "bright", source: 0, transpose: 24, gain: 0.5 },
     ],
   },
 
   /* Quirky comedic staccato. C-F-G-C, woodblocks, chromatic spice. */
-  minigame_b: {
-    id: "minigame_b",
+  "mg.puzzle": {
+    id: "mg.puzzle",
     bpm: 118,
     swing: 0.5,
     loop: true,
     voices: [
       {
-        style: "staccatoLead",
+        style: "s:trumpet",
         layer: "base",
+        transpose: -12, // an octave down: F6 is past the trumpet's zones (88)
         pattern: [
           "C5:1 -:1 E5:1 -:1 G5:1 -:1 C6:1 -:1 G5:1 F#5:1 G5:1 -:1 E5:1 -:1 C5:1 -:1",
           "E5:1 -:1 G5:1 -:1 C6:1 -:1 E6:1 -:1 D6:1 C#6:1 D6:1 C6:1 B5:1 -:1 G5:1 -:1",
@@ -443,9 +476,9 @@ export const TRACKS: Record<string, TrackDef> = {
           "C5:1 C#5:1 D5:1 D#5:1 E5:1 F5:1 F#5:1 G5:1 G#5:1 A5:1 A#5:1 B5:1 {C5,E5,G5}:4:0.95",
         ],
       },
-      { style: "pad", layer: "base", chords: ["C", "C", "F", "G", "C", "F", "G", "C"] },
+      { style: "s:piano", layer: "base", chords: ["C", "C", "F", "G", "C", "F", "G", "C"] },
       {
-        style: "bassBounce",
+        style: "s:bass",
         layer: "base",
         pattern: [
           "C3:2 C4:2 C3:2 C4:2 C3:2 C4:2 C3:2 C4:2",
@@ -459,7 +492,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "base",
         pattern: [
           "K:2 -:1 W:1 S:2 -:1 W:1 K:2 -:1 W:1 S:2 -:1 W:1",
@@ -473,7 +506,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "perc2",
         pattern: [
           "B:2 B:2 B:2 B:2 B:2 B:2 B:2 B:2",
@@ -487,7 +520,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "oompah",
+        style: "s:piano",
         layer: "counter",
         pattern: [
           "{C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1",
@@ -500,7 +533,7 @@ export const TRACKS: Record<string, TrackDef> = {
           "{C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1 {C4,E4,G4}:1 -:1",
         ],
       },
-      { style: "staccatoLead", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
+      { style: "s:glock", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
     ],
   },
 
@@ -675,8 +708,9 @@ export const TRACKS: Record<string, TrackDef> = {
     loop: true,
     voices: [
       {
-        style: "musicbox",
+        style: "s:glock",
         layer: "base",
+        transpose: 12,
         pattern: [
           "E5:1 E5:1 G5:1 C6:1 G5:1 E5:1 G5:1 E5:1 C5:1 E5:1 G5:1 E5:1 D5:1 C5:1 D5:1 E5:1",
           "F5:1 F5:1 A5:1 C6:1 A5:1 F5:1 A5:1 F5:1 C5:1 F5:1 A5:1 F5:1 E5:1 F5:1 G5:1 A5:1",
@@ -688,9 +722,9 @@ export const TRACKS: Record<string, TrackDef> = {
           "B5:1 D6:1 G6:1 D6:1 B5:1 G5:1 D5:1 B4:1 G4:1 B4:1 D5:1 G5:1 B5:1 D6:1 B5:1 G5:1",
         ],
       },
-      { style: "pad", layer: "base", chords: ["C", "F", "C", "G", "C", "F", "C", "G"] },
+      { style: "s:piano", layer: "base", chords: ["C", "F", "C", "G", "C", "F", "C", "G"] },
       {
-        style: "bassPizz",
+        style: "s:bass",
         layer: "base",
         pattern: [
           "C3:2 G2:2 C3:2 G2:2 C3:2 G2:2 C3:2 G2:2",
@@ -704,7 +738,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "base",
         pattern: [
           "K:1 H:1 h:1 H:1 S:1 H:1 h:1 H:1 K:1 H:1 h:1 H:1 S:1 H:1 h:1 H:1",
@@ -718,7 +752,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "perc2",
         pattern: [
           "T:2 B:2 T:2 B:2 T:2 B:2 T:2 B:2",
@@ -732,8 +766,9 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "musicbox",
+        style: "s:glock",
         layer: "counter",
+        transpose: 12,
         pattern: [
           "C5:4 E5:4 G5:4 E5:4",
           "F5:4 A5:4 C6:4 A5:4",
@@ -745,7 +780,8 @@ export const TRACKS: Record<string, TrackDef> = {
           "G5:4 B5:4 D6:4 G5:4",
         ],
       },
-      { style: "musicbox", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
+      // bright: a unison doubling; another octave would take the top G6 past the glock's zones (112)
+      { style: "s:glock", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
     ],
   },
 
@@ -757,8 +793,9 @@ export const TRACKS: Record<string, TrackDef> = {
     loop: true,
     voices: [
       {
-        style: "brass",
+        style: "s:trumpet",
         layer: "base",
+        transpose: -12, // an octave down: the fanfare climbs to D7, past the trumpet's zones (88)
         pattern: [
           "C5:1 -:1 C5:1 -:1 E5:1 -:1 G5:1 -:1 C6:4 -:4",
           "F5:1 -:1 F5:1 -:1 A5:1 -:1 C6:1 -:1 F6:4 -:4",
@@ -770,9 +807,9 @@ export const TRACKS: Record<string, TrackDef> = {
           "C6:2 G5:2 E5:2 G5:2 C6:4 {C6,E6,G6}:4",
         ],
       },
-      { style: "pad", layer: "base", chords: ["C", "F", "C", "G", "C", "F", "G", "C"] },
+      { style: "s:piano", layer: "base", chords: ["C", "F", "C", "G", "C", "F", "G", "C"] },
       {
-        style: "bassMarch",
+        style: "s:bass",
         layer: "base",
         pattern: [
           "C2:8 G2:8",
@@ -786,7 +823,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "base",
         pattern: [
           "C:1 K:1 -:1 S:1 C:1 K:1 -:1 S:1 C:1 K:1 -:1 S:1 C:1 K:1 -:1 S:1",
@@ -800,7 +837,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "perc2",
         pattern: [
           "O:2 B:2 O:2 B:2 O:2 B:2 O:2 B:2",
@@ -814,7 +851,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "brassStab",
+        style: "s:trumpet",
         layer: "counter",
         pattern: [
           "{C4,E4,G4}:4 -:4 {C4,E4,G4}:4 -:4",
@@ -827,7 +864,9 @@ export const TRACKS: Record<string, TrackDef> = {
           "-:8 {C5,E5,G5}:8",
         ],
       },
-      { style: "brass", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
+      { style: "s:trombone", layer: "counter", source: 5, transpose: -12 }, // the stab's trombone half, an octave down to fit its zones
+      // bright: two octaves over the trumpet, which plays an octave down
+      { style: "s:glock", layer: "bright", source: 0, transpose: 12, gain: 0.5 },
     ],
   },
 
@@ -839,17 +878,18 @@ export const TRACKS: Record<string, TrackDef> = {
     loop: false,
     voices: [
       {
-        style: "brass",
+        style: "s:trumpet",
         layer: "base",
+        transpose: -12, // an octave down: the arpeggios climb to D7, past the trumpet's zones (88)
         pattern: [
           "C5:1 E5:1 G5:1 C6:1 E6:1 G6:1 C7:1 -:1 C7:2 -:6",
           "F5:1 A5:1 C6:1 F6:1 A6:1 C7:1 -:2 C7:2 -:6",
           "G5:1 B5:1 D6:1 G6:1 B6:1 D7:1 {C6,E6,G6,C7}:2 {C5,E5,G5,C6}:8",
         ],
       },
-      { style: "pad", layer: "base", chords: ["C", "F", "C"] },
+      { style: "s:piano", layer: "base", chords: ["C", "F", "C"] },
       {
-        style: "bassMarch",
+        style: "s:bass",
         layer: "base",
         pattern: [
           "C2:4 C3:4 C2:4 G2:4",
@@ -858,7 +898,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "base",
         pattern: [
           "H:2 H:2 H:2 H:2 H:2 H:2 H:2 H:2",
@@ -867,7 +907,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "sparkle",
+        style: "s:glock",
         layer: "counter",
         pattern: [
           "C7:2 -:2 G6:2 -:2 E6:2 -:2 C7:2 -:2",
@@ -900,8 +940,9 @@ export const TRACKS: Record<string, TrackDef> = {
     loop: false,
     voices: [
       {
-        style: "brass",
+        style: "s:trumpet",
         layer: "base",
+        transpose: -12, // an octave down: G6 is past the trumpet's zones (88)
         pattern: [
           "C5:2 E5:2 G5:2 C6:2 E6:4 -:4",
           "D5:2 F#5:2 A5:2 D6:2 G6:4 -:4",
@@ -909,9 +950,9 @@ export const TRACKS: Record<string, TrackDef> = {
           "G5:2 B5:2 D6:2 G6:2 {C6,E6,G6}:8",
         ],
       },
-      { style: "pad", layer: "base", chords: ["C", "G", "F", "C"] },
+      { style: "s:piano", layer: "base", chords: ["C", "G", "F", "C"] },
       {
-        style: "bassMarch",
+        style: "s:bass",
         layer: "base",
         pattern: [
           "C2:8 G2:8",
@@ -921,7 +962,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "base",
         pattern: [
           "C:2 -:2 K:2 S:2 K:2 -:2 S:2 -:2",
@@ -931,7 +972,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "perc2",
         pattern: [
           "T:2 B:2 T:2 B:2 T:2 B:2 T:2 B:2",
@@ -941,7 +982,7 @@ export const TRACKS: Record<string, TrackDef> = {
         ],
       },
       {
-        style: "brassStab",
+        style: "s:trumpet",
         layer: "counter",
         pattern: [
           "{C4,E4,G4}:4 -:4 {C4,E4,G4}:4 -:4",
@@ -950,6 +991,7 @@ export const TRACKS: Record<string, TrackDef> = {
           "-:8 {C5,E5,G5}:8",
         ],
       },
+      { style: "s:trombone", layer: "counter", source: 5, transpose: -12 }, // the stab's trombone half, an octave down to fit its zones
     ],
   },
 
@@ -962,14 +1004,14 @@ export const TRACKS: Record<string, TrackDef> = {
     loop: true,
     voices: [
       {
-        style: "drums",
+        style: "s:kit.core",
         layer: "base",
         pattern: [
           "S:1:0.35 S:1:0.3 S:1:0.38 S:1:0.32 S:1:0.42 S:1:0.36 S:1:0.45 S:1:0.4 S:1:0.5 S:1:0.44 S:1:0.52 S:1:0.47 S:1:0.56 S:1:0.5 S:1:0.6 S:1:0.55",
           "S:1:0.62 S:1:0.57 S:1:0.66 S:1:0.6 S:1:0.7 S:1:0.64 S:1:0.74 S:1:0.68 S:1:0.78 S:1:0.72 S:1:0.82 S:1:0.76 S:1:0.88 S:1:0.8 S:1:0.95 S:1:0.9",
         ],
       },
-      { style: "drums", layer: "base", pattern: ["D:4:0.5 -:4 D:4:0.55 -:4", "D:4:0.6 -:4 D:4:0.7 D:2:0.75 D:2:0.85"] },
+      { style: "s:kit.core", layer: "base", pattern: ["D:4:0.5 -:4 D:4:0.55 -:4", "D:4:0.6 -:4 D:4:0.7 D:2:0.75 D:2:0.85"] },
     ],
   },
 
@@ -980,9 +1022,11 @@ export const TRACKS: Record<string, TrackDef> = {
     swing: 0.5,
     loop: false,
     voices: [
-      { style: "drums", layer: "base", pattern: ["C:8:1 K:4:1 -:4"] },
-      { style: "brassStab", layer: "base", gain: 1.6, pattern: ["{C5,E5,G5}:4 -:2 {C5,E5,G5,C6}:6 -:4"] },
-      { style: "bassSine", layer: "base", gain: 1.4, pattern: ["C2:8 -:8"] },
+      { style: "s:kit.core", layer: "base", pattern: ["C:8:1 K:4:1 -:4"] },
+      { style: "s:trumpet", layer: "base", gain: 1.6, pattern: ["{C5,E5,G5}:4 -:2 {C5,E5,G5,C6}:6 -:4"] },
+      // the stab's trombone half, two octaves down: one octave still leaves C6 at 72, past its zones (69)
+      { style: "s:trombone", layer: "base", gain: 1.6, source: 1, transpose: -24 },
+      { style: "s:bass", layer: "base", gain: 1.4, pattern: ["C2:8 -:8"] },
     ],
   },
 
@@ -993,15 +1037,15 @@ export const TRACKS: Record<string, TrackDef> = {
     swing: 0.5,
     loop: false,
     voices: [
-      { style: "trombone", layer: "base", pattern: ["D4:8:1:-2 C4:8:1:-2", "Bb3:8:1:-2 A3:8:1:-3"] },
-      { style: "trombone", layer: "base", transpose: -12, gain: 0.8, pattern: ["D3:8:0.9:-2 C3:8:0.9:-2", "Bb2:8:0.9:-2 A2:8:0.9:-3"] },
-      { style: "drums", layer: "base", pattern: ["-:16", "-:12 D:4"] },
+      { style: "s:trombone", layer: "base", pattern: ["D4:8:1:-2 C4:8:1:-2", "Bb3:8:1:-2 A3:8:1:-3"] },
+      { style: "s:trombone", layer: "base", transpose: -12, gain: 0.8, pattern: ["D3:8:0.9:-2 C3:8:0.9:-2", "Bb2:8:0.9:-2 A2:8:0.9:-3"] },
+      { style: "s:kit.core", layer: "base", pattern: ["-:16", "-:12 D:4"] },
     ],
   },
 };
 
 export const TRACK_ORDER = [
-  "title", "board", "minigame_a", "minigame_b", "happening", "grumpus",
+  "title", "board.fairground", "mg.action", "mg.puzzle", "happening", "grumpus",
   "shop", "results", "star_fanfare", "minigame_intro", "win", "lose",
   "drumroll", "drumroll_hit",
 ];
@@ -1011,4 +1055,9 @@ export function trackIds(): string[] {
 }
 
 /** Validate every track at module load (cheap; ~2k events total). */
-for (const id of trackIds()) parseTrack(TRACKS[id]);
+for (const id of trackIds()) {
+  const def = TRACKS[id];
+  parseTrack(def);
+  parseSection(def, "fill");
+  parseSection(def, "pickup");
+}

@@ -2,7 +2,8 @@
  * SUPER STAR PARTY — SFX registry. Every named sound, all synthesized.
  * One-shots, 0.05-0.8s (fanfares/reactions longer by design).
  *
- * play() opts: { volume: 0..2 multiplier, pitch: semitone offset }.
+ * play() opts: { volume: 0..2 multiplier, pitch: semitone offset,
+ * rate: frequency multiplier (2 = octave up) }. pitch and rate add up.
  * Route: 'sfx' sounds go through the sfx bus; 'crowd' sounds (cheers,
  * aahs, oohs) go through the crowd bus so crowdVolume controls them.
  */
@@ -13,6 +14,14 @@ import { tone, noise, arp, kaching } from "./synth";
 export interface SfxPlayOpts {
   volume?: number;
   pitch?: number; // semitones
+  rate?: number; // frequency multiplier: 0.5 = octave down, 2 = octave up
+}
+
+/** Total semitone offset for a play: pitch plus rate converted to semitones. */
+export function resolvePitch(opts?: SfxPlayOpts): number {
+  const pitch = opts?.pitch ?? 0;
+  const rate = opts?.rate;
+  return rate !== undefined && rate > 0 ? pitch + 12 * Math.log2(rate) : pitch;
 }
 
 export interface SfxDef {

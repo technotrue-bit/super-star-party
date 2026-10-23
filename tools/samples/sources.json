@@ -1,0 +1,63 @@
+[
+  {
+    "id": "vcsl",
+    "kind": "git",
+    "url": "https://github.com/sgossner/VCSL",
+    "commit": "c1ea7bcc3c7309650ab0da9d15c9cd1fbc4a4c7e",
+    "mappingRef": "sfz",
+    "mappingCommit": "dfcf4a4918771eee884b96ad4493de82ef84daf6",
+    "sparse": [
+      "Idiophones/Struck Idiophones/Glockenspiel.sfz",
+      "Idiophones/Struck Idiophones/Glockenspiel/",
+      "Idiophones/Struck Idiophones/Tambourine 1.sfz",
+      "Idiophones/Struck Idiophones/Tambourine 1/"
+    ],
+    "license": "CC0-1.0",
+    "licenseFileSha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+    "title": "Versilian Community Sample Library (VCSL)",
+    "author": "Versilian Studios LLC and contributors",
+    "creditLine": "Glockenspiel and tambourine"
+  },
+  {
+    "id": "vsco2ce",
+    "kind": "git",
+    "url": "https://github.com/sgossner/VSCO-2-CE",
+    "commit": "440300901dfe9275fd84e0b7763af1f8443ae62e",
+    "mappingRef": "SFZ",
+    "mappingCommit": "6dd651d55dde97fd4028699be9d4481f26917891",
+    "sparse": [
+      "TrumpetSus.sfz",
+      "TromboneSus.sfz",
+      "UprightPiano.sfz",
+      "ContrabassPizz.sfz",
+      "Brass/Trumpet/sus/",
+      "Brass/Tenor Trombone/sus/",
+      "Keys/Upright Piano/",
+      "Strings/Solo Contrabass/Pizz/"
+    ],
+    "license": "CC0-1.0",
+    "licenseFileSha256": "36ffd9dc085d529a7e60e1276d73ae5a030b020313e6c5408593a6ae2af39673",
+    "title": "VS Chamber Orchestra: Community Edition (VSCO-2 CE)",
+    "author": "Versilian Studios LLC (Sam Gossner) and Ivy Audio (Simon Dalzell)",
+    "creditLine": "Trumpet, trombone, upright piano and pizzicato double bass"
+  },
+  {
+    "id": "virtuosity",
+    "kind": "git",
+    "url": "https://github.com/sfzinstruments/virtuosity_drums",
+    "commit": "9f04cf9a734527edfbb0a4eee1f674e45bbf71bc",
+    "sparse": [
+      "Programs/mappings/mid/",
+      "Programs/mappings/perc/mid/",
+      "Programs/mappings/perc/oh/woodblock_high_map.sfz",
+      "Samples/mid/",
+      "Samples/perc/mid/",
+      "Samples/perc/oh/woodblock/"
+    ],
+    "license": "CC0-1.0",
+    "licenseFileSha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+    "title": "Virtuosity Drums",
+    "author": "Versilian Studios LLC (drummer Austin McMahon), with woodblock samples by Karoryfer Samples",
+    "creditLine": "Drum kit and percussion"
+  }
+]

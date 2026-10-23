@@ -83,7 +83,8 @@ async function clickText(re, label) {
   return clicked;
 }
 
-const b = await chromium.launch();
+// CHROMIUM_PATH points Playwright at a Chromium binary when its bundled browser is not installed (as in render-music.mjs).
+const b = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 page = await b.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
 page.on("console", (m) => { if (m.type() === "error") errors.push(m.text().slice(0, 160)); });
 page.on("pageerror", (e) => errors.push("PAGEERROR: " + String(e).slice(0, 160)));
@@ -259,9 +260,16 @@ const playedBoard = await page.evaluate(() => window.__SSP__?.state?.()?.match?.
 const wantBoard = process.env.SSP_BOARD === "downtown" ? "downtown" : process.env.SSP_BOARD === "cruise" ? "cruise-ship" : process.env.SSP_BOARD === "carnival" || !process.env.SSP_BOARD ? "fizzy-fairground" : null;
 const boardOk = wantBoard === null || playedBoard === wantBoard;
 console.log(`board played: ${playedBoard}${wantBoard ? ` (expected ${wantBoard})` : ""}`);
-const ok = errors.length === 0 && moved && reachedFinale && minigameClicks > 0 && howtoMisses.length === 0 && boardOk;
+// The music samples (this run has ?audio=1): the format must be Opus, the core set loaded, and no
+// instrument may have given up on its recorded sound. A file that is missing or does not decode
+// leaves its instrument on the synth stand-in, which sounds fine in a smoke run, so only this check
+// can catch it. sets.core must read "ready": an empty failed list alone also holds when nothing loaded.
+const samples = await page.evaluate(() => window.__SSP__?.state?.()?.audio?.samples ?? null);
+const samplesOk = samples !== null && samples.format === "opus" && samples.sets?.core === "ready" && samples.failed.length === 0;
+console.log(`music samples: format ${samples?.format ?? "n/a"} (expected opus) | core ${samples?.sets?.core ?? "n/a"} (expected ready) | failed: ${JSON.stringify(samples?.failed ?? "n/a")} (expected [])`);
+const ok = errors.length === 0 && moved && reachedFinale && minigameClicks > 0 && howtoMisses.length === 0 && boardOk && samplesOk;
 console.log(ok
-  ? "\nVERDICT: the game plays end to end - title -> select -> a human ROLL that moves the token -> a full match -> finale, with zero console errors."
+  ? "\nVERDICT: the game plays end to end - title -> select -> a human ROLL that moves the token -> a full match -> finale, with zero console errors and every music sample loaded."
   : "\nVERDICT: something in the flow needs attention (see above).");
 await b.close();
 process.exitCode = ok ? 0 : 1;

@@ -363,7 +363,7 @@ function fireCork(st: QuickDrawState, shooter: Duelist): void {
   st.root.add(cork);
   st.corks.push({ mesh: cork, from, to, t: 0, target });
   shooter.recoilT = 0.25;
-  st.ctx.playSfx("pop", { volume: 0.9, pitch: 0.8 });
+  st.ctx.playSfx("pop", { volume: 0.9, rate: 0.8 });
 }
 
 function scorePoint(st: QuickDrawState, winner: Duelist, reactSteps: number | null): void {
@@ -378,7 +378,7 @@ function scorePoint(st: QuickDrawState, winner: Duelist, reactSteps: number | nu
     // A false start: the rival's cork still flies, for the point.
     fireCork(st, winner);
     drawSign(st, "foul", `${st.ctx.players.find((p) => p.id === loser.id)?.name ?? ""} fired early`);
-    st.ctx.playSfx("boing", { pitch: 0.8 });
+    st.ctx.playSfx("boing", { rate: 0.8 });
   }
   st.ctx.characters[winner.id]?.anim.cheer();
   st.ctx.characters[loser.id]?.anim.sad();
@@ -420,7 +420,7 @@ function stepFixed(st: QuickDrawState): void {
     case "ready": {
       const decoyOn = st.decoyStep >= 0 && st.step >= st.decoyStep && st.step < st.decoyStep + secs(DECOY_SHOW);
       drawSign(st, decoyOn ? "wait" : "ready");
-      if (st.decoyStep >= 0 && st.step === st.decoyStep) st.ctx.playSfx("whistle", { volume: 0.5, pitch: 1.3 });
+      if (st.decoyStep >= 0 && st.step === st.decoyStep) st.ctx.playSfx("whistle", { volume: 0.5, rate: 1.3 });
       // False starts: the human's tap, or a CPU biting on the decoy.
       if (local && tap) {
         scorePoint(st, other(st, local), null);
@@ -435,7 +435,7 @@ function stepFixed(st: QuickDrawState): void {
       if (st.step >= st.fireStep) {
         st.phase = "fire";
         drawSign(st, "fire");
-        st.ctx.playSfx("whistle", { volume: 1, pitch: 1 });
+        st.ctx.playSfx("whistle", { volume: 1 });
         audio.music.intensity(0.9);
       }
       return;
@@ -528,7 +528,7 @@ function updateVisuals(st: QuickDrawState, dt: number, t: number): void {
         c.target.popT = 0;
         const color = st.ctx.players.find((p) => p.id === c.target.id)?.color ?? palette.candy;
         burst(st, c.to, color);
-        st.ctx.playSfx("pop", { volume: 1, pitch: 1.3 });
+        st.ctx.playSfx("pop", { volume: 1, rate: 1.3 });
         st.ctx.characters[c.target.id]?.anim.squash();
       }
     }
