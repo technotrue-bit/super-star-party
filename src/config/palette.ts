@@ -98,6 +98,9 @@ export const palette = {
   heroRattle: "#B6EE3A", // Rattle — chibi skeleton: lime scarf + glowing eyes
   pumpkinStem: "#4E8B3A", // Jack's stem + leaf
   bone: "#F6F0DE", // Rattle's bones (warm ivory, not paper white)
+  heroPops: "#8ED6F8", // Pops — popsicle: icy blue at the stick end
+  popCherry: "#F2475C", // Pops' cherry-red tip
+  popStick: "#C99355", // Pops' wooden stick
 
   // ---- misc ----
   white: "#FFFFFF",

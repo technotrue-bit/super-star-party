@@ -129,7 +129,9 @@ function renderOne(kind: CharacterKind): void {
     model.setExpression("normal");
     scene.add(model.group);
     model.group.updateMatrixWorld(true);
-    const head = model.parts.head ?? model.group;
+    // A hero can name the box to frame (Pops is all head, so his frame is
+    // the face and the ice round it); otherwise frame the head.
+    const head = model.parts.portrait ?? model.parts.head ?? model.group;
     const box = new THREE.Box3().setFromObject(head);
     const centre = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());

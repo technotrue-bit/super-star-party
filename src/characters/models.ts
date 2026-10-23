@@ -18,6 +18,7 @@ const HAND_COLORS: Record<string, string> = {
   jack: palette.pumpkinStem,
   wisp: palette.white,
   rattle: palette.bone,
+  pops: palette.popStick,
 };
 
 // Darken a palette color toward the ink outline color. Legs read as a deeper
@@ -788,6 +789,149 @@ export function buildModel(kind: CharacterKind): BuiltModel {
       parts.jaw = jaw;
       group.add(head);
       parts.head = head;
+      break;
+    }
+    case 'pops': {
+      // Popsicle, from Devin's drawing: a flat ice-pop bar with a rounded
+      // top, icy blue at the stick end through a white band to a cherry-red
+      // tip with a shine, on a wooden stick he hops on like a pogo stick. His
+      // face sits low in the blue (a big shiny eye, a wink, kissy lips and a
+      // purple heart), and now and then he blows a kiss: a heart floats off
+      // (anims.ts). No arms or legs. Everything hangs off one `bar` group
+      // centred on the ice, so a jump can flip him round his middle.
+      const W = 0.62; // outer width of the ice
+      const H = 1.1; // outer height of the ice
+      const BEVEL = 0.05;
+      const SLAB = 0.14; // flat depth between the bevels
+      const STICK = 0.3; // stick showing below the ice
+      const bar = new THREE.Group();
+      bar.name = 'bar';
+      bar.position.set(0, STICK + H / 2, 0);
+      group.add(bar);
+      parts.bar = bar;
+      const head = new THREE.Group();
+      bar.add(head);
+      parts.head = head;
+      parts.body = head;
+
+      // The ice: a rounded-top outline extruded and bevelled. The bevel
+      // grows the outline by BEVEL, so the shape is drawn that much inside.
+      const r = W / 2 - BEVEL;
+      const y0 = -H / 2 + BEVEL;
+      const y1 = H / 2 - BEVEL;
+      const corner = 0.07;
+      const outline2d = new THREE.Shape();
+      outline2d.moveTo(-r, y0 + corner);
+      outline2d.lineTo(-r, y1 - r);
+      outline2d.absarc(0, y1 - r, r, Math.PI, 0, true);
+      outline2d.lineTo(r, y0 + corner);
+      outline2d.quadraticCurveTo(r, y0, r - corner, y0);
+      outline2d.lineTo(-r + corner, y0);
+      outline2d.quadraticCurveTo(-r, y0, -r, y0 + corner);
+      const iceGeo = new THREE.ExtrudeGeometry(outline2d, {
+        depth: SLAB,
+        bevelEnabled: true,
+        bevelThickness: BEVEL,
+        bevelSize: BEVEL,
+        bevelSegments: 4,
+        curveSegments: 24,
+      });
+      iceGeo.translate(0, 0, -SLAB / 2);
+      // The flavour bands are painted by height in the shader (blue, a white
+      // band, cherry red, with soft blends), so they stay smooth across the
+      // big flat faces, where vertex colours would smear.
+      const iceMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: palette.white });
+      const bands = {
+        popBlue: { value: new THREE.Color(kind.color) },
+        popWhite: { value: new THREE.Color(palette.white) },
+        popRed: { value: new THREE.Color(palette.popCherry) },
+        popH: { value: H },
+      };
+      iceMat.onBeforeCompile = (shader): void => {
+        Object.assign(shader.uniforms, bands);
+        shader.vertexShader =
+          'varying float vPopY;\n' +
+          shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vPopY = position.y;');
+        shader.fragmentShader =
+          'varying float vPopY;\nuniform vec3 popBlue;\nuniform vec3 popWhite;\nuniform vec3 popRed;\nuniform float popH;\n' +
+          shader.fragmentShader.replace(
+            '#include <color_fragment>',
+            [
+              '#include <color_fragment>',
+              '  float popT = vPopY / popH + 0.5;',
+              '  vec3 popC = mix(popBlue, popWhite, smoothstep(0.34, 0.46, popT));',
+              '  popC = mix(popC, popRed, smoothstep(0.54, 0.66, popT));',
+              '  diffuseColor.rgb *= popC;',
+            ].join('\n'),
+          );
+      };
+      iceMat.customProgramCacheKey = (): string => 'pops-ice';
+      inkClone(addMesh(head, iceGeo, iceMat, [0, 0, 0]), head);
+      const front = SLAB / 2 + BEVEL;
+
+      // A crescent of shine inside the rounded tip, up on the left.
+      const shineMat = new THREE.MeshBasicMaterial({ color: palette.white, transparent: true, opacity: 0.9 });
+      const shineGeo = new THREE.TorusGeometry(0.17, 0.022, 6, 18, 1.3);
+      shineGeo.scale(1, 1, 0.3);
+      const shine = addMesh(head, shineGeo, shineMat, [0.0, y1 - r - 0.01, front + 0.004], new THREE.Euler(0, 0, Math.PI / 2 + 0.25));
+      shine.castShadow = false;
+
+      // The face: a card on the flat front, low in the blue.
+      {
+        const face = new THREE.Group();
+        face.position.set(0, -0.3, front + 0.006);
+        const card = new THREE.PlaneGeometry(0.5, 0.25);
+        const fm = addMesh(face, card, faceMat, [0, 0, 0]);
+        fm.castShadow = false;
+        fm.receiveShadow = false;
+        head.add(face);
+        parts.face = face;
+      }
+
+      // The stick: a flat wooden lolly stick with a rounded end, its tip on
+      // the ground and its top tucked up into the ice.
+      const stickMat = new THREE.MeshToonMaterial({ gradientMap: celGradient, color: palette.popStick });
+      const stickR = 0.075;
+      const stickLen = STICK + 0.06;
+      const stickGeo = new THREE.CapsuleGeometry(stickR, stickLen - stickR * 2, 4, 10);
+      stickGeo.scale(1, 1, 0.45);
+      inkClone(addMesh(bar, stickGeo, stickMat, [0, -H / 2 - STICK + stickLen / 2, 0]), bar);
+
+      // The blown kiss: a little purple heart, hidden until anims.ts sends
+      // one floating off his lips.
+      const heart = new THREE.Shape();
+      heart.moveTo(0, -0.06);
+      heart.bezierCurveTo(-0.085, -0.005, -0.075, 0.07, -0.03, 0.068);
+      heart.bezierCurveTo(-0.012, 0.068, -0.005, 0.05, 0, 0.038);
+      heart.bezierCurveTo(0.005, 0.05, 0.012, 0.068, 0.03, 0.068);
+      heart.bezierCurveTo(0.075, 0.07, 0.085, -0.005, 0, -0.06);
+      const heartGeo = new THREE.ExtrudeGeometry(heart, {
+        depth: 0.02,
+        bevelEnabled: true,
+        bevelThickness: 0.01,
+        bevelSize: 0.008,
+        bevelSegments: 2,
+        curveSegments: 10,
+      });
+      heartGeo.translate(0, 0, -0.01);
+      const kiss = new THREE.Group();
+      kiss.name = 'kiss';
+      kiss.position.set(0.02, -0.4, front + 0.04);
+      kiss.userData.base = kiss.position.clone();
+      const km = addMesh(kiss, heartGeo, new THREE.MeshToonMaterial({ gradientMap: celGradient, color: palette.berry }), [0, 0, 0]);
+      km.castShadow = false;
+      inkClone(km, kiss);
+      kiss.visible = false;
+      bar.add(kiss);
+      parts.kiss = kiss;
+
+      // What the face portrait frames: the face and the ice round it, not the
+      // whole bar (at 48px the face would be a speck). Never drawn.
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(W, 0.78, 0.1), shineMat);
+      frame.position.set(0, -0.17, 0);
+      frame.visible = false;
+      head.add(frame);
+      parts.portrait = frame;
       break;
     }
     default:

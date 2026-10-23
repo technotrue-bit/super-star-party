@@ -13,6 +13,11 @@ export interface FaceSpec {
    * color, a nose hole and a row of upper teeth instead of eyes and a smile.
    */
   skullGlow?: string;
+  /**
+   * Pops' own face, from Devin's drawing: one big shiny eye and a wink,
+   * kissy "3" lips and a little purple heart on the cheek (blowing a kiss).
+   */
+  popsicle?: boolean;
 }
 
 const FACE_WIDTH = 256;
@@ -130,6 +135,10 @@ export function makeFaceTexture(spec: FaceSpec, expr: Expression = 'normal'): TH
 
   if (spec.skullGlow) {
     drawSkullFace(ctx, spec, expr, spec.skullGlow);
+    return faceTexture(canvas);
+  }
+  if (spec.popsicle) {
+    drawPopsFace(ctx, spec, expr);
     return faceTexture(canvas);
   }
 
@@ -353,6 +362,134 @@ function drawSkullFace(ctx: CanvasRenderingContext2D, spec: FaceSpec, expr: Expr
   }
 }
 
+/**
+ * Pops (the popsicle), drawn from Devin's sketch: a big solid-black eye with
+ * a shine and a winking eye, puckered "3" lips and a purple heart under the
+ * wink, so Pops is always blowing you a kiss. No sclera and no blush: the
+ * heart is the cheek. The features sit lower on the card than the others'
+ * (the face lives in the blue half of the bar, near the stick).
+ */
+function drawPopsFace(ctx: CanvasRenderingContext2D, spec: FaceSpec, expr: Expression): void {
+  const r = 22 * spec.eyeSize;
+  const L: [number, number] = [76, 44];
+  const R: [number, number] = [178, 46];
+  const mouth: [number, number] = [130, 100];
+
+  // A solid ink eye with a big shine up and right and a small one down and left.
+  const eye = (x: number, y: number, k = 1, lookY = 0): void => {
+    ctx.fillStyle = palette.ink;
+    ctx.beginPath();
+    ctx.arc(x, y, r * k, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = palette.white;
+    ctx.beginPath();
+    ctx.arc(x + r * k * 0.32, y - r * k * 0.34 + lookY, r * k * 0.34, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x - r * k * 0.38, y + r * k * 0.36 + lookY, r * k * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+  };
+  // The wink: a happy ^ with a little lash flicking out at the outer corner.
+  const wink = (x: number, y: number): void => {
+    eyeArc(ctx, x, y, r * 0.85, true);
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(x + r * 0.78, y - 2);
+    ctx.lineTo(x + r * 1.12, y - 10);
+    ctx.stroke();
+  };
+  // Puckered lips: a little "3", like a kiss on its way.
+  const kissLips = (x: number, y: number): void => {
+    ctx.strokeStyle = palette.ink;
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(x, y - 7, 7, Math.PI * 1.1, Math.PI * 2.5);
+    ctx.arc(x, y + 7, 7, Math.PI * 1.5, Math.PI * 2.9);
+    ctx.stroke();
+  };
+  const heart = (x: number, y: number, s: number): void => {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(-0.25);
+    ctx.scale(s, s);
+    ctx.beginPath();
+    ctx.moveTo(0, 10);
+    ctx.bezierCurveTo(-14, 1, -12, -11, -5, -11);
+    ctx.bezierCurveTo(-2, -11, -1, -8, 0, -6);
+    ctx.bezierCurveTo(1, -8, 2, -11, 5, -11);
+    ctx.bezierCurveTo(12, -11, 14, 1, 0, 10);
+    ctx.closePath();
+    ctx.fillStyle = palette.berry;
+    ctx.fill();
+    ctx.strokeStyle = palette.ink;
+    ctx.lineWidth = 2.5 / s;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  switch (expr) {
+    case 'blink':
+      eyeArc(ctx, L[0], L[1] + 6, r * 0.85, false);
+      eyeArc(ctx, R[0], R[1] + 6, r * 0.85, false);
+      kissLips(mouth[0], mouth[1]);
+      heart(184, 84, 1);
+      break;
+    case 'happy':
+      // ^ ^ and a big open grin with a tongue; the heart swells.
+      eyeArc(ctx, L[0], L[1], r * 0.85, true);
+      eyeArc(ctx, R[0], R[1], r * 0.85, true);
+      ctx.fillStyle = palette.ink;
+      ctx.beginPath();
+      ctx.ellipse(128, 92, 24, 18, 0, 0, Math.PI);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = palette.candy;
+      ctx.beginPath();
+      ctx.ellipse(128, 102, 11, 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      heart(188, 82, 1.25);
+      break;
+    case 'sad': {
+      // Both eyes open and looking down, worried brows, a wobbly frown.
+      eye(L[0], L[1] + 2, 0.9, 4);
+      eye(R[0], R[1] + 2, 0.9, 4);
+      ctx.strokeStyle = palette.ink;
+      ctx.lineWidth = 6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(L[0] - r, L[1] - r - 4);
+      ctx.lineTo(L[0] + r * 0.6, L[1] - r - 13);
+      ctx.moveTo(R[0] + r, R[1] - r - 4);
+      ctx.lineTo(R[0] - r * 0.6, R[1] - r - 13);
+      ctx.stroke();
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.arc(128, 120, 14, Math.PI * 1.15, Math.PI * 1.85);
+      ctx.stroke();
+      heart(186, 86, 0.8);
+      break;
+    }
+    case 'surprised':
+      // Both eyes wide open and a little "o".
+      eye(L[0], L[1], 1.1);
+      eye(R[0], R[1], 1.1);
+      ctx.fillStyle = palette.ink;
+      ctx.beginPath();
+      ctx.ellipse(128, 100, 9, 12, 0, 0, Math.PI * 2);
+      ctx.fill();
+      heart(186, 84, 1);
+      break;
+    default:
+      eye(L[0], L[1]);
+      wink(R[0], R[1]);
+      kissLips(mouth[0], mouth[1]);
+      heart(184, 84, 1);
+      break;
+  }
+}
+
 export const faceSpecs: Record<string, FaceSpec> = {
   pip: { smile: 'grin', eyeSize: 1.1, smileY: 74 },
   bounce: { smile: 'open', eyeSize: 1.15 },
@@ -364,4 +501,5 @@ export const faceSpecs: Record<string, FaceSpec> = {
   jack: { smile: 'grin', eyeSize: 1.0, smileY: 72 },
   wisp: { smile: 'open', eyeSize: 1.25 },
   rattle: { smile: 'grin', eyeSize: 1.15, skullGlow: palette.heroRattle },
+  pops: { smile: 'grin', eyeSize: 1.0, popsicle: true },
 };
