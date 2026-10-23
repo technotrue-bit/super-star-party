@@ -370,9 +370,10 @@ function drawSkullFace(ctx: CanvasRenderingContext2D, spec: FaceSpec, expr: Expr
  * (the face lives in the blue half of the bar, near the stick).
  */
 function drawPopsFace(ctx: CanvasRenderingContext2D, spec: FaceSpec, expr: Expression): void {
-  const r = 22 * spec.eyeSize;
-  const L: [number, number] = [76, 44];
-  const R: [number, number] = [178, 46];
+  const k = spec.eyeSize;
+  const r = 22 * k;
+  const L: [number, number] = [76, 46];
+  const R: [number, number] = [178, 48];
   const mouth: [number, number] = [130, 100];
 
   // A solid ink eye with a big shine up and right and a small one down and left.
@@ -401,18 +402,18 @@ function drawPopsFace(ctx: CanvasRenderingContext2D, spec: FaceSpec, expr: Expre
   // Puckered lips: a little "3", like a kiss on its way.
   const kissLips = (x: number, y: number): void => {
     ctx.strokeStyle = palette.ink;
-    ctx.lineWidth = 6;
+    ctx.lineWidth = 6 * k;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.arc(x, y - 7, 7, Math.PI * 1.1, Math.PI * 2.5);
-    ctx.arc(x, y + 7, 7, Math.PI * 1.5, Math.PI * 2.9);
+    ctx.arc(x, y - 7 * k, 7 * k, Math.PI * 1.1, Math.PI * 2.5);
+    ctx.arc(x, y + 7 * k, 7 * k, Math.PI * 1.5, Math.PI * 2.9);
     ctx.stroke();
   };
   const heart = (x: number, y: number, s: number): void => {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(-0.25);
-    ctx.scale(s, s);
+    ctx.scale(s * k, s * k);
     ctx.beginPath();
     ctx.moveTo(0, 10);
     ctx.bezierCurveTo(-14, 1, -12, -11, -5, -11);
@@ -423,7 +424,7 @@ function drawPopsFace(ctx: CanvasRenderingContext2D, spec: FaceSpec, expr: Expre
     ctx.fillStyle = palette.berry;
     ctx.fill();
     ctx.strokeStyle = palette.ink;
-    ctx.lineWidth = 2.5 / s;
+    ctx.lineWidth = 2.5 / (s * k);
     ctx.lineJoin = 'round';
     ctx.stroke();
     ctx.restore();
@@ -501,5 +502,5 @@ export const faceSpecs: Record<string, FaceSpec> = {
   jack: { smile: 'grin', eyeSize: 1.0, smileY: 72 },
   wisp: { smile: 'open', eyeSize: 1.25 },
   rattle: { smile: 'grin', eyeSize: 1.15, skullGlow: palette.heroRattle },
-  pops: { smile: 'grin', eyeSize: 1.0, popsicle: true },
+  pops: { smile: 'grin', eyeSize: 1.2, popsicle: true },
 };

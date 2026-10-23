@@ -879,8 +879,8 @@ export function buildModel(kind: CharacterKind): BuiltModel {
       // The face: a card on the flat front, low in the blue.
       {
         const face = new THREE.Group();
-        face.position.set(0, -0.3, front + 0.006);
-        const card = new THREE.PlaneGeometry(0.5, 0.25);
+        face.position.set(0, -0.28, front + 0.006);
+        const card = new THREE.PlaneGeometry(0.6, 0.3);
         const fm = addMesh(face, card, faceMat, [0, 0, 0]);
         fm.castShadow = false;
         fm.receiveShadow = false;
@@ -895,7 +895,9 @@ export function buildModel(kind: CharacterKind): BuiltModel {
       const stickLen = STICK + 0.06;
       const stickGeo = new THREE.CapsuleGeometry(stickR, stickLen - stickR * 2, 4, 10);
       stickGeo.scale(1, 1, 0.45);
-      inkClone(addMesh(bar, stickGeo, stickMat, [0, -H / 2 - STICK + stickLen / 2, 0]), bar);
+      // It rides in the head with the ice, so a droop or a look-around never
+      // swings the ice off it.
+      inkClone(addMesh(head, stickGeo, stickMat, [0, -H / 2 - STICK + stickLen / 2, 0]), head);
 
       // The blown kiss: a little purple heart, hidden until anims.ts sends
       // one floating off his lips.
@@ -916,7 +918,7 @@ export function buildModel(kind: CharacterKind): BuiltModel {
       heartGeo.translate(0, 0, -0.01);
       const kiss = new THREE.Group();
       kiss.name = 'kiss';
-      kiss.position.set(0.02, -0.4, front + 0.04);
+      kiss.position.set(0.02, -0.39, front + 0.04);
       kiss.userData.base = kiss.position.clone();
       const km = addMesh(kiss, heartGeo, new THREE.MeshToonMaterial({ gradientMap: celGradient, color: palette.berry }), [0, 0, 0]);
       km.castShadow = false;
@@ -927,8 +929,8 @@ export function buildModel(kind: CharacterKind): BuiltModel {
 
       // What the face portrait frames: the face and the ice round it, not the
       // whole bar (at 48px the face would be a speck). Never drawn.
-      const frame = new THREE.Mesh(new THREE.BoxGeometry(W, 0.78, 0.1), shineMat);
-      frame.position.set(0, -0.17, 0);
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(W, 0.6, 0.1), shineMat);
+      frame.position.set(0, -0.2, 0);
       frame.visible = false;
       head.add(frame);
       parts.portrait = frame;

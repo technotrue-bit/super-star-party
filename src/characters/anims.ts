@@ -619,7 +619,7 @@ export function createAnimController(
     if (kind.key === 'rumble') pose.parts.tail[0] = 0.5; // tail drags
     if (kind.key === 'wisp') pose.y = -0.12; // sinks low
     if (kind.key === 'rattle') pose.parts.jaw[0] = 0.38; // jaw hangs open
-    if (kind.key === 'pops') pose.parts.bar[2] = 0.2; // slumps over, melting
+    if (kind.key === 'pops') pose.rz += 0.16; // slumps over on his stick, melting
   };
 
   const squash = (): void => {
