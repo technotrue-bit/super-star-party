@@ -33,6 +33,7 @@ import {
 import { briefState, hashSnapshot } from "./hash";
 import type { BoardChoice, MatchSetup, OfficialMinigame, PartyMessage, SeatSlot } from "./messages";
 import { onlineMatch, setOnlineMatch } from "./mode";
+import { analyticsBoardName, trackEvent } from "../analytics";
 import {
   configuredPartyUrl,
   openPartyRelay,
@@ -295,6 +296,7 @@ export function createRoom(): string {
       kind: roster[index]?.key ?? "pip",
     })),
   };
+  trackEvent("friends_room_created", { board: analyticsBoardName(room.board ?? DEFAULT_BOARD) });
   notify();
   return code;
 }
@@ -592,11 +594,16 @@ function onJoin(msg: Extract<PartyMessage, { type: "join" }>): void {
 
 function onLobby(msg: Extract<PartyMessage, { type: "lobby" }>): void {
   if (!room || isHost()) return;
+  const wasSeated = room.seats.some((seat) => seat.peerId === peerId());
   clearJoinTimer();
   room.hostId = msg.hostId;
   room.seats = msg.seats.map((seat) => ({ ...seat }));
   room.board = msg.board ?? DEFAULT_BOARD;
   lobbyError = null;
+  if (!wasSeated && room.seats.some((seat) => seat.peerId === peerId())) {
+    const playersInRoom = room.seats.filter((seat) => seat.peerId !== null).length;
+    trackEvent("friends_room_joined", { players_in_room: playersInRoom });
+  }
   notify();
 }
 

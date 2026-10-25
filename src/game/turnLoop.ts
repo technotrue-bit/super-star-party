@@ -79,6 +79,7 @@ import { getMinigameDescription, showMinigamePreview, skipNextMinigamePreScreen 
 import { screens } from "../screens/screenManager";
 import { consumeTrap, resolveTrap, trapAt, payCircusToll, growTrees, ageCircuses, placeTrap } from "./traps";
 import { onlineMatch, partyAssist, setCpuPlayout } from "../net/mode";
+import { markMatchStarted } from "../analytics";
 import { playerLabel, isYou, labelPossessive, labelDoes } from "../ui/labels";
 import {
   checkpoint,
@@ -2981,6 +2982,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
    */
   const dealStartCoins = (): void => {
     match.startCoinsDealt = true;
+    markMatchStarted({
+      board: match.boardId,
+      mode: onlineMatch() ? "friends" : "solo",
+      players: match.players.length,
+    });
     const amount = settings.startCoins;
     for (const p of match.players) {
       p.coins += amount;

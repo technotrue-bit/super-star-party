@@ -38,6 +38,7 @@ import { mulberry32, type RNG } from "../core/rng";
 import { characterColor } from "../characters/roster";
 import { screens } from "./screenManager";
 import { onlineMatch, setOnlineMatch } from "../net/mode";
+import { markMatchFinished } from "../analytics";
 import { dropOut } from "../net/session";
 import { createCharacter, type Character } from "../characters/characterFactory";
 import { box, makeSkyTexture } from "../minigames/framing";
@@ -375,6 +376,11 @@ class FinaleScreen implements Screen {
     // already. Reaching the finale any other way (debug goto) decides them
     // here, once.
     this._results = finalResults() ?? decideFinalResults();
+    markMatchFinished({
+      board: match.boardId,
+      mode: onlineMatch() ? "friends" : "solo",
+      turns: match.totalTurns,
+    });
 
     // world state we change
     this._fov0 = camera.fov;

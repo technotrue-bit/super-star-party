@@ -34,6 +34,7 @@ import { setSelectBoundsReader, type SelectBounds, type SelectRect } from "../co
 import { isFreeplay } from "../game/freeplay";
 import { setPartySetup } from "../game/partySetup";
 import { chooseRival, defaultRivals, reconcileRivals } from "./rivals";
+import { trackEvent } from "../analytics";
 
 const SLOT_COUNT = roster.length;
 /** CPU seats after the hero. */
@@ -799,6 +800,7 @@ const characterSelectImpl: SelectScreenState & Screen = {
   _confirmStart() {
     const selIdx = this._selected ?? 0;
     const sel = roster[selIdx];
+    trackEvent("hero_picked", { hero: sel.key });
     const rivals = reconcileRivals(this._rivals ?? [], selIdx, null, RIVALS, SLOT_COUNT);
     rememberedRivals = rivals;
     const others: CharacterKind[] = rivals.map((i) => roster[i]);
