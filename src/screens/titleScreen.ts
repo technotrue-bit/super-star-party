@@ -132,6 +132,25 @@ function injectTitleStyles(): void {
                   0 0 22px rgba(255,210,63,.65) !important;
     }
     .ssp-title-btn:hover { transform: scale(1.05) !important; }
+    /* Non-profit / no-affiliation notice under the menu. */
+    .ssp-title-notice {
+      margin-top: clamp(14px, 3vh, 26px);
+      max-width: min(440px, 88vw);
+      text-align: center;
+      font-size: 12px; line-height: 1.35; font-weight: 600;
+      color: rgba(255,246,229,0.92);
+      text-shadow: 1px 1px 0 ${palette.ink};
+      background: rgba(43,29,78,0.62);
+      border-radius: 12px;
+      padding: 6px 12px;
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+    .ssp-title-notice strong {
+      display: block;
+      font-size: 13px; font-weight: 700; letter-spacing: 1px;
+      color: ${palette.sun};
+    }
     /* Short screens: tighter logo + menu. Landscape phones: logo left, menu right. */
     @media (max-height: 600px) {
       .ssp-title-logo { margin-bottom: 10px; }
@@ -144,6 +163,13 @@ function injectTitleStyles(): void {
       .ssp-title-logo { margin: 0; font-size: clamp(30px, 6vw, 52px); max-width: 46vw; }
       .ssp-title-menu { margin-top: 0; gap: 8px; }
       .ssp-title-btn { width: min(260px, 40vw); }
+      .ssp-title-notice {
+        position: absolute; margin: 0;
+        left: 50%; transform: translateX(-50%);
+        bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+        max-width: 62vw; font-size: 10.5px;
+      }
+      .ssp-title-notice strong { display: inline; font-size: 11px; margin-right: 6px; }
     }
     .ssp-title-settings-overlay {
       position: fixed; inset: 0; z-index: 200;
@@ -407,6 +433,21 @@ const titleImpl: TitleState & Screen = {
     this._buttons = [playBtn, friendsBtn, howBtn, setBtn];
     for (const b of this._buttons) menu.appendChild(b.el);
     stage.appendChild(menu);
+
+    // Non-profit notice: this is a free fan game; nobody makes money from it.
+    const notice = document.createElement("div");
+    notice.className = "ssp-title-notice";
+    notice.setAttribute("role", "note");
+    const noticeHead = document.createElement("strong");
+    noticeHead.textContent = "NON-PROFIT FAN PROJECT";
+    notice.appendChild(noticeHead);
+    notice.appendChild(
+      document.createTextNode(
+        "Free to play, no ads, no real-money purchases. No money is made from this game. " +
+          "Not affiliated with, endorsed by or sponsored by Nintendo."
+      )
+    );
+    stage.appendChild(notice);
 
     // Which build this is, so a playtester can tell a fresh deploy from a cached one.
     const build = document.createElement("div");
