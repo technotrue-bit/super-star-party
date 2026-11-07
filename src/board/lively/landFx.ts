@@ -3,6 +3,7 @@
  *
  * Listens to the bus only: `player:move` dips the disk a player pushes off
  * from (and the one they arrive on), `player:land` squashes the final disk
+ * (a disk is its space group, or one instance of a theme's tile mesh)
  * with an elastic spring, flashes a ring in the disk's rim colour, throws a
  * burst from a pooled instanced particle mesh (coins on blue, puffs on red,
  * sparkles on green/star), and plays `land.blue|red|green`.
@@ -31,6 +32,12 @@ export interface LandFxHost {
   spacePos(i: number): THREE.Vector3;
   /** Rim colour for a space type (the disk's DISK_RIM entry). */
   rimColor(type: string): string;
+  /**
+   * Optional instanced path: the spaces are instances of one mesh (a theme's
+   * tiles). Pose space i's instance (y offset, y squash, xz stretch; (0, 1, 1)
+   * at rest) instead of moving spaceGroup(i), which is then left alone.
+   */
+  dipInstance?(i: number, y: number, sy: number, sxz: number): void;
 }
 
 export interface LandFx {
@@ -240,7 +247,6 @@ export function createLandFx(host: LandFxHost): LandFx {
           if (arriveIn[i] < 0) dip(i, L.hopDip * 0.7);
         }
         if (!dirty[i]) continue;
-        const g = host.spaceGroup(i);
         let y = 0;
         let sy = 1;
         let sxz = 1;
@@ -267,8 +273,13 @@ export function createLandFx(host: LandFxHost): LandFx {
             busy = true;
           }
         }
-        g.position.y = posY[i] + y;
-        g.scale.set(sxz, sy, sxz);
+        if (host.dipInstance) {
+          host.dipInstance(i, y, sy, sxz);
+        } else {
+          const g = host.spaceGroup(i);
+          g.position.y = posY[i] + y;
+          g.scale.set(sxz, sy, sxz);
+        }
         if (!busy) dirty[i] = 0;
       }
 
@@ -344,6 +355,10 @@ export function createLandFx(host: LandFxHost): LandFx {
       offMove();
       offLand();
       for (let i = 0; i < n; i++) {
+        if (host.dipInstance) {
+          if (dirty[i]) host.dipInstance(i, 0, 1, 1);
+          continue;
+        }
         const g = host.spaceGroup(i);
         g.position.y = posY[i];
         g.scale.set(1, 1, 1);
