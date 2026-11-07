@@ -1401,11 +1401,18 @@ const boardScreenImpl: BoardScreenState & Screen = {
       cam.position.copy(pos);
       cam.lookAt(lk);
     }
+    // Probe aid (never set by the game): window.__SSP_CAM = { pos: [x, y, z], look: [x, y, z] }
+    // holds the board camera on a pose, so screenshots can frame any spot of a board.
+    const probeCam = (window as unknown as { __SSP_CAM?: { pos: number[]; look: number[] } }).__SSP_CAM;
+    if (cam && probeCam) {
+      cam.position.set(probeCam.pos[0], probeCam.pos[1], probeCam.pos[2]);
+      cam.lookAt(probeCam.look[0], probeCam.look[1], probeCam.look[2]);
+    }
     // Far views (the cruise ship's overview and flyover sit 100+ units out):
     // with the close-up 0.1 near plane a 24-bit depth buffer can't tell the
     // lanes from the space disks a few hundredths above them, so the path
     // bleeds through the disks. Nothing is within a fifth of that distance.
-    const lookAt = introPose ? introPose.look : this._outLook;
+    const lookAt = probeCam ? new THREE.Vector3(probeCam.look[0], probeCam.look[1], probeCam.look[2]) : introPose ? introPose.look : this._outLook;
     if (cam && lookAt) {
       const d = cam.position.distanceTo(lookAt);
       const near = d > FAR_VIEW ? d * 0.2 : 0.1;

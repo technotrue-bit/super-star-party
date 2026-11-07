@@ -265,7 +265,17 @@ export interface RampLayer {
   w: number;
 }
 
-export type TerrainLayer = DeckLayer | RampLayer;
+/**
+ * A flat floor in any outline (the cruise ship's sunken bow): a closed
+ * polygon of (x, z) points at height `h`.
+ */
+export interface PolyLayer {
+  kind: "poly";
+  pts: ReadonlyArray<readonly [number, number]>;
+  h: number;
+}
+
+export type TerrainLayer = DeckLayer | RampLayer | PolyLayer;
 
 /** Board ground shape. Absent: flat ground at y = 0. */
 export interface TerrainDef {
@@ -279,6 +289,17 @@ export interface TerrainDef {
 
 /** Height of `layer` at (x, z), or null when the point is outside it. */
 export function layerHeight(layer: TerrainLayer, x: number, z: number): number | null {
+  if (layer.kind === "poly") {
+    // Even-odd point in polygon.
+    let inside = false;
+    const p = layer.pts;
+    for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+      const [xi, zi] = p[i];
+      const [xj, zj] = p[j];
+      if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+    }
+    return inside ? layer.h : null;
+  }
   if (layer.kind === "deck") {
     const ix = Math.max(0, Math.abs(x - layer.x) - (layer.hx - layer.r));
     const iz = Math.max(0, Math.abs(z - layer.z) - (layer.hz - layer.r));

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { groundHeight, hopsBetween } from "../boardData";
 import { boardDef, resolveBoardRule, parseBoardRule } from "../registry";
-import { CRUISE_H, cruiseShip } from "./cruiseData";
+import { CRUISE_H, CRUISE_SPLIT, cruiseShip } from "./cruiseData";
 
 const d = cruiseShip;
 const n = d.spaces.length;
@@ -100,10 +100,23 @@ describe("The Cruise Ship board", () => {
   it("sits every space on its deck and spaces neighbours a hop apart", () => {
     const lido = new Set(d.loops[1]);
     const pool = new Set(d.branches?.find((b) => b.label === "Pool Bridge")?.path ?? []);
-    const ballroom = new Set(d.branches?.find((b) => b.label === "Grand Ballroom")?.path ?? []);
+    const lane = (label: string): number[] => d.branches?.find((b) => b.label === label)?.path ?? [];
+    const ballroom = lane("Grand Ballroom");
+    const walk = lane("Captain's Walk");
+    // Split levels: one step (half a level) from the Promenade at each end, the room floor between.
+    const levels = new Map<number, number>();
+    const dip = (path: number[], floor: number): void =>
+      path.forEach((i, k) => {
+        if (k === 0 || k === path.length - 1) return;
+        levels.set(i, k === 1 || k === path.length - 2 ? Math.sign(floor) * CRUISE_H.step : floor);
+      });
+    dip(ballroom, CRUISE_H.ballroom);
+    dip(walk, CRUISE_H.lounge);
+    dip([14, 15, 16, 17, 18, 19, 20, 21, 22, 23], CRUISE_H.mooring);
+    expect(new Map(CRUISE_SPLIT)).toEqual(levels);
     for (const s of d.spaces) {
       const h = groundHeight(d, s.x, s.y);
-      const want = lido.has(s.index) || pool.has(s.index) ? CRUISE_H.lido : ballroom.has(s.index) && Math.abs(s.x) < 8 ? CRUISE_H.ballroom : 0;
+      const want = lido.has(s.index) || pool.has(s.index) ? CRUISE_H.lido : levels.get(s.index) ?? 0;
       expect(h, `${s.index} ${s.name}`).toBeCloseTo(want, 5);
     }
     for (const [i, row] of d.next.entries()) {
@@ -115,6 +128,32 @@ describe("The Cruise Ship board", () => {
         // A stairway hop crosses its flight; every other hop is one space apart.
         expect(len, `${a.name} -> ${b.name}`).toBeGreaterThan(2.3);
         expect(len, `${a.name} -> ${b.name}`).toBeLessThan(climb ? 6 : 3.4);
+      }
+    }
+  });
+
+  it("sits every disk flat, out to its rim, and steps at most half a level per hop", () => {
+    // The stairway feet brush the first tread of their flight (pre-split-level layout).
+    const stairs = new Set(d.branches?.filter((b) => b.label.endsWith("Stairs")).flatMap((b) => b.path));
+    for (const s of d.spaces) {
+      const h = groundHeight(d, s.x, s.y);
+      let worst = 0;
+      for (const r of [0.35, 0.7, 1.0, 1.27]) {
+        for (let a = 0; a < 24; a++) {
+          const t = (a / 24) * Math.PI * 2;
+          worst = Math.max(worst, Math.abs(groundHeight(d, s.x + Math.cos(t) * r, s.y + Math.sin(t) * r) - h));
+        }
+      }
+      expect(worst, `${s.index} ${s.name}`).toBeLessThanOrEqual(stairs.has(s.index) ? 0.15 : 1e-9);
+    }
+    for (const [i, row] of d.next.entries()) {
+      for (const j of row) {
+        const a = d.spaces[i];
+        const b = d.spaces[j];
+        const dh = Math.abs(groundHeight(d, a.x, a.y) - groundHeight(d, b.x, b.y));
+        // A stairway hop climbs the whole flight; every other hop is at most one step.
+        if (dh > 1) expect(stairs.has(i) || stairs.has(j), `${a.name} -> ${b.name}`).toBe(true);
+        else expect(dh, `${a.name} -> ${b.name}`).toBeLessThanOrEqual(CRUISE_H.step + 1e-9);
       }
     }
   });
