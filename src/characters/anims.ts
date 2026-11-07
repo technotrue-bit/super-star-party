@@ -20,7 +20,7 @@ export interface AnimController {
 }
 
 const TAU = Math.PI * 2;
-const PART_KEYS = ['ears', 'antenna', 'trunk', 'tail', 'star', 'head', 'jaw', 'armL', 'armR', 'legL', 'legR'] as const;
+const PART_KEYS = ['ears', 'antenna', 'trunk', 'tail', 'star', 'bar', 'head', 'jaw', 'armL', 'armR', 'legL', 'legR'] as const;
 type PartKey = (typeof PART_KEYS)[number];
 /** Floppy bits that trail the body on a spring (secondary motion). */
 const SPRING_KEYS = ['ears', 'antenna', 'trunk', 'tail'] as const;
@@ -207,6 +207,11 @@ export function createAnimController(
   let lift = floater?.always ? 1 : 0; // 0 = resting on the ground, 1 = fully afloat
   const trail = parts.trail;
   let trailOn = 0; // 0 = hidden, 1 = the mini pumpkins are fully out
+  // Pops' blown kiss: a heart that floats off his lips. kissP is how far
+  // along its flight it is this frame (0..1), or < 0 for no kiss.
+  const kiss = parts.kiss;
+  const kissBase = kiss?.userData.base as THREE.Vector3 | undefined;
+  let kissP = -1;
 
   // Pip's sparkle trail. The sparkles hang off the placement root (the
   // rig's parent) but keep a world position, so they stay where they were
@@ -353,6 +358,14 @@ export function createAnimController(
         pose.parts.head[1] = smoothstep(e) * TAU;
         pose.parts.jaw[0] = Math.abs(Math.sin(e * TAU * 3)) * 0.3;
         break;
+      case 'pops': {
+        // A little shimmy, then he blows you a kiss.
+        const w = Math.sin(Math.PI * e);
+        pose.parts.bar[2] = Math.sin(e * TAU * 2) * 0.12 * w;
+        pose.y += w * 0.04;
+        kissP = e;
+        break;
+      }
       default:
         break;
     }
@@ -469,6 +482,8 @@ export function createAnimController(
     leg('legR', -WALK_TUCK * air - 0.15);
     // Rattle's jaw clacks open at the top of every hop.
     if (kind.key === 'rattle') pose.parts.jaw[0] = air * 0.32;
+    // Pops pogos on his stick, the ice wobbling side to side.
+    if (kind.key === 'pops') pose.parts.bar[2] = Math.sin(p * TAU) * 0.1;
   };
 
   const jump = (): void => {
@@ -493,6 +508,7 @@ export function createAnimController(
       if (kind.key === 'jack') pose.parts.head[1] = p * TAU; // pumpkin spin
       if (kind.key === 'wisp') pose.rz = Math.sin(p * TAU) * 0.5; // loop-de-sway
       if (kind.key === 'rumble') pose.parts.tail[0] = -0.6; // tail up
+      if (kind.key === 'pops') pose.parts.bar[2] = -smoothstep(p) * TAU; // flips round his middle
       if (kind.key === 'rattle') {
         // His skull pops clean off, spins once, and lands back on his neck.
         headPop = Math.sin(Math.PI * p) * 0.6;
@@ -576,6 +592,11 @@ export function createAnimController(
         pose.parts.jaw[0] = 0.08 + (0.5 + 0.5 * Math.sin(t * 30)) * 0.32;
         pose.parts.head[2] = Math.sin(t * 9) * 0.16;
         break;
+      case 'pops':
+        // Sways and blows kiss after kiss.
+        pose.parts.bar[2] = Math.sin(t * 7) * 0.12;
+        kissP = (t % 0.9) / 0.9;
+        break;
       default:
         break;
     }
@@ -598,6 +619,7 @@ export function createAnimController(
     if (kind.key === 'rumble') pose.parts.tail[0] = 0.5; // tail drags
     if (kind.key === 'wisp') pose.y = -0.12; // sinks low
     if (kind.key === 'rattle') pose.parts.jaw[0] = 0.38; // jaw hangs open
+    if (kind.key === 'pops') pose.rz += 0.16; // slumps over on his stick, melting
   };
 
   const squash = (): void => {
@@ -647,6 +669,7 @@ export function createAnimController(
     resetPose(pose);
     walkExpr = null;
     headPop = 0;
+    kissP = -1;
     fidgetExpr = null;
     switch (currentName) {
       case 'idle':
@@ -762,6 +785,20 @@ export function createAnimController(
     if (roll) shown.y = Math.max(shown.y, rollLift(roll, shown.parts.star[2]));
     applyPose(shown);
     if (kind.key === 'rattle' && parts.head) parts.head.position.y = headBaseY + headPop;
+    if (kiss && kissBase) {
+      // The kiss pops out of his lips, drifts up and away, and shrinks off.
+      kiss.visible = kissP >= 0 && kissP < 1;
+      if (kiss.visible) {
+        const grow = kissP < 0.2 ? kissP / 0.2 : 1 - ((kissP - 0.2) / 0.8) * 0.7;
+        kiss.position.set(
+          kissBase.x + kissP * 0.22 + Math.sin(kissP * TAU * 1.5) * 0.03,
+          kissBase.y + kissP * 0.75,
+          kissBase.z + kissP * 0.25,
+        );
+        kiss.scale.setScalar(Math.max(0.001, grow * 1.3));
+        kiss.rotation.z = Math.sin(kissP * TAU * 2) * 0.3;
+      }
+    }
   };
 
   const setFacing = (angle: number): void => {

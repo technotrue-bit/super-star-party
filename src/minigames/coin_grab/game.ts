@@ -777,7 +777,7 @@ function updateFlyers(state: RoundState, dt: number): void {
       spawnBurst(state, lx, 0.3, lz, [palette.sunDeep, palette.cream], 5, 2.0, 0.4, 5, 0.05, state.prng);
       if (state.popT <= 0) {
         state.popT = POP_GAP;
-        state.ctx.playSfx("pop", { volume: 0.5, pitch: 1.1 });
+        state.ctx.playSfx("pop", { volume: 0.5, rate: 1.1 });
       }
     }
   }
@@ -792,7 +792,7 @@ function updateFlyers(state: RoundState, dt: number): void {
 function collectPile(state: RoundState, b: Body, pile: Pile): void {
   const ctx = state.ctx;
   b.coins += pile.coins;
-  ctx.playSfx("coin.gain", { volume: 0.8, pitch: 0.85 + pile.coins * 0.17 });
+  ctx.playSfx("coin.gain", { volume: 0.8, rate: 0.85 + pile.coins * 0.17 });
   // GRAB MOMENT: tight burst of larger gold shards + "+1" pop.
   // Presentation rng only — the gameplay sequence is untouched.
   spawnBurst(
@@ -864,8 +864,8 @@ function knockCoin(state: RoundState, victim: Body, bumper: Body): void {
     vz: Math.sin(ang) * sp,
   });
   state.shakeT = Math.min(0.16, state.shakeT + 0.1);
-  ctx.playSfx("boing", { volume: 0.7, pitch: 0.8 });
-  ctx.playSfx("coin.lose", { volume: 0.35, pitch: 0.75 });
+  ctx.playSfx("boing", { volume: 0.7, rate: 0.8 });
+  ctx.playSfx("coin.lose", { volume: 0.35, rate: 0.75 });
   ctx.characters[victim.id]?.anim.squash();
   victim.animHoldT = Math.max(victim.animHoldT, 0.2);
 }
@@ -875,7 +875,7 @@ function bumpJuice(state: RoundState, b: Body): void {
   state.ctx.characters[b.id]?.anim.squash();
   if (state.boingT <= 0) {
     state.boingT = BOING_GAP;
-    state.ctx.playSfx("boing", { volume: 0.6, pitch: 0.9 + (b.id % 4) * 0.07 });
+    state.ctx.playSfx("boing", { volume: 0.6, rate: 0.9 + (b.id % 4) * 0.07 });
   }
 }
 
@@ -1419,7 +1419,7 @@ function stepFixed(state: RoundState, dt: number): void {
           state.human.dashCd = DASH_COOLDOWN;
           b.animHoldT = Math.max(b.animHoldT, 0.4);
           ctx.characters[b.id]?.anim.jump();
-          ctx.playSfx("hop", { volume: 0.45, pitch: 1.1 });
+          ctx.playSfx("hop", { volume: 0.45, rate: 1.1 });
         }
       }
       if (analog) {

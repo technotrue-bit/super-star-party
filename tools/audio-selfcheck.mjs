@@ -41,8 +41,16 @@ try {
   bad(`could not import instruments.ts: ${e.message}`);
 }
 
+let SAMPLED = null;
+try {
+  SAMPLED = (await import(tsUrl("samples/instruments.gen.ts"))).SAMPLED;
+  ok(`imported src/audio/samples/instruments.gen.ts (sampled styles: ${Object.keys(SAMPLED).map((n) => `s:${n}`).join(", ")})`);
+} catch (e) {
+  bad(`could not import instruments.gen.ts: ${e.message}`);
+}
+
 const REQUIRED_TRACKS = [
-  "title", "board", "minigame_a", "minigame_b", "happening", "grumpus",
+  "title", "board.fairground", "mg.action", "mg.puzzle", "happening", "grumpus",
   "shop", "results", "star_fanfare", "minigame_intro", "win", "lose",
 ];
 
@@ -88,12 +96,11 @@ if (T) {
       }
     }
 
-    // voice styles exist
-    if (VOICES) {
+    // voice styles exist: a synth voice, the synth drums, or `s:<name>` naming a sampled instrument
+    if (VOICES && SAMPLED) {
       for (const v of parsed) {
-        if (v.style !== "drums" && !VOICES[v.style]) {
-          bad(`${id}: unknown instrument style '${v.style}'`);
-        }
+        const known = v.style.startsWith("s:") ? Boolean(SAMPLED[v.style.slice(2)]) : v.style === "drums" || Boolean(VOICES[v.style]);
+        if (!known) bad(`${id}: unknown instrument style '${v.style}'`);
       }
     }
   }

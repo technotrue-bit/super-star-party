@@ -75,6 +75,9 @@ jobs:
       - name: Minigame camera lock
         run: node tools/probe-camera-lock.mjs
 
+      - name: Pick a Hero shows every hero (phone, slow chunk)
+        run: node tools/probe-hero-preview.mjs
+
       - name: Match opening (line-up, board tour, order blocks, starting coins)
         run: node tools/probe-opening.mjs
 

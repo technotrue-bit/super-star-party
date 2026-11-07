@@ -498,7 +498,7 @@ function startJump(r: Runner): void {
   }
   if (next && nd >= PERFECT_MIN && nd <= PERFECT_MAX) r.perfectFor = next;
   animTo(r, "jump");
-  S.ctx?.playSfx("jump", { pitch: 1.05 });
+  S.ctx?.playSfx("jump", { rate: 1.05 });
 }
 
 function pressJump(pid: number): void {
@@ -751,7 +751,7 @@ function collide(r: Runner): void {
       r.boostT = BOOST_TIME;
       if (!r.cpu) {
         S.ctx?.announce("PERFECT!", { durationMs: 600, sound: null });
-        S.ctx?.playSfx("coin.gain", { volume: 0.6, pitch: 1.4 });
+        S.ctx?.playSfx("coin.gain", { volume: 0.6, rate: 1.4 });
       }
       burstAt(o.x, LANE_Z[o.lane], [palette.sun, palette.white], 5, 0.7);
     }
@@ -762,8 +762,8 @@ function collide(r: Runner): void {
         r.flailT = FLAIL_TIME;
         animTo(r, "sad");
         burstAt(o.x, LANE_Z[o.lane], BURST_COLORS, 7, 1);
-        S.ctx?.playSfx("whoosh", { pitch: 0.7, volume: 0.8 });
-        S.ctx?.playSfx("pop", { pitch: 0.5, volume: 0.5 });
+        S.ctx?.playSfx("whoosh", { rate: 0.7, volume: 0.8 });
+        S.ctx?.playSfx("pop", { rate: 0.5, volume: 0.5 });
         const nm = S.ctx?.players[r.id]?.name ?? "?";
         S.ctx?.announce(`${nm} slipped!`, { durationMs: 900, sound: null });
       }
@@ -777,7 +777,7 @@ function collide(r: Runner): void {
       r.landT = 0;
       animTo(r, "sad");
       burstAt(o.x, LANE_Z[o.lane], CRUMB_COLORS, 6, 0.85); // crumb burst — cause reads
-      S.ctx?.playSfx("pop", { pitch: 0.75 });
+      S.ctx?.playSfx("pop", { rate: 0.75 });
       S.ctx?.playSfx("crowd.aah", { volume: 0.6 });
     }
   }
@@ -860,7 +860,7 @@ function stepRace(): void {
         r.jumpT = 0;
         r.landT = 0.3;
         animTo(r, "squash");
-        ctx.playSfx("land", { pitch: 0.9 });
+        ctx.playSfx("land", { rate: 0.9 });
       }
     } else if (r.stunT <= 0) {
       if (r.buffer > 0) {

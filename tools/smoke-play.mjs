@@ -1,8 +1,9 @@
 /**
  * smoke-play.mjs — "does the game work?" answered by playing it.
  *
- * Drives the real UI the way a player does: title -> PLAY -> character select ->
- * START! -> ROLL! -> then lets a full match autoplay to the finale. Reports what
+ * Drives the real UI the way a player does: title -> PLAY -> PARTY -> character
+ * select -> NEXT -> board menu -> NEXT -> line-up -> PLAY! -> ROLL! -> then lets
+ * a full match autoplay to the finale. Reports what
  * actually happened (screens reached, phases, minigames, errors) rather than
  * trusting any prior claim.
  *
@@ -82,7 +83,8 @@ async function clickText(re, label) {
   return clicked;
 }
 
-const b = await chromium.launch();
+// CHROMIUM_PATH points Playwright at a Chromium binary when its bundled browser is not installed (as in render-music.mjs).
+const b = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 page = await b.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
 page.on("console", (m) => { if (m.type() === "error") errors.push(m.text().slice(0, 160)); });
 page.on("pageerror", (e) => errors.push("PAGEERROR: " + String(e).slice(0, 160)));
@@ -98,16 +100,27 @@ console.log("   screen:", st.screen, "| canvas:", await page.evaluate(() => {
 }), "| effects:", await page.evaluate(() => window.__SSP__?.effectsQuality?.() ?? window.__SSP__?.state?.()?.effectsQuality ?? "n/a"));
 await page.screenshot({ path: `${OUT}/01-title.png` });
 
-console.log("2. PLAY ->");
+console.log("2. PLAY -> PARTY ->");
 await clickText(/play/i, "PLAY");
+await page.waitForTimeout(1800);
+console.log("   screen:", (await state()).screen);
+await clickText(/PARTY/, "PARTY");
 await page.waitForTimeout(1800);
 st = await state();
 console.log("   screen:", st.screen);
 await page.screenshot({ path: `${OUT}/02-selected.png` });
 
-console.log("3. START! ->");
-await clickText(/start/i, "START");
-await page.waitForTimeout(2200);
+console.log("3. NEXT -> board menu -> NEXT -> line-up -> PLAY! ->");
+await clickText(/next/i, "NEXT (hero)");
+await page.waitForTimeout(1800);
+console.log("   screen:", (await state()).screen);
+await clickText(/next/i, "NEXT (board)");
+await page.waitForTimeout(1800);
+console.log("   screen:", (await state()).screen);
+await clickText(/^play!$/i, "PLAY!");
+// The heroes hop into the screen one by one, then the board loads.
+await page.waitForFunction(() => window.__SSP__?.state?.().screen === "board", null, { timeout: 30000 }).catch(() => {});
+await page.waitForTimeout(1200);
 st = await state();
 console.log("   screen:", st.screen, "| phase:", st.phase, "| coins:", JSON.stringify(st.coins));
 await page.screenshot({ path: `${OUT}/03-board.png` });
@@ -247,9 +260,16 @@ const playedBoard = await page.evaluate(() => window.__SSP__?.state?.()?.match?.
 const wantBoard = process.env.SSP_BOARD === "downtown" ? "downtown" : process.env.SSP_BOARD === "cruise" ? "cruise-ship" : process.env.SSP_BOARD === "carnival" || !process.env.SSP_BOARD ? "fizzy-fairground" : null;
 const boardOk = wantBoard === null || playedBoard === wantBoard;
 console.log(`board played: ${playedBoard}${wantBoard ? ` (expected ${wantBoard})` : ""}`);
-const ok = errors.length === 0 && moved && reachedFinale && minigameClicks > 0 && howtoMisses.length === 0 && boardOk;
+// The music samples (this run has ?audio=1): the format must be Opus, the core set loaded, and no
+// instrument may have given up on its recorded sound. A file that is missing or does not decode
+// leaves its instrument on the synth stand-in, which sounds fine in a smoke run, so only this check
+// can catch it. sets.core must read "ready": an empty failed list alone also holds when nothing loaded.
+const samples = await page.evaluate(() => window.__SSP__?.state?.()?.audio?.samples ?? null);
+const samplesOk = samples !== null && samples.format === "opus" && samples.sets?.core === "ready" && samples.failed.length === 0;
+console.log(`music samples: format ${samples?.format ?? "n/a"} (expected opus) | core ${samples?.sets?.core ?? "n/a"} (expected ready) | failed: ${JSON.stringify(samples?.failed ?? "n/a")} (expected [])`);
+const ok = errors.length === 0 && moved && reachedFinale && minigameClicks > 0 && howtoMisses.length === 0 && boardOk && samplesOk;
 console.log(ok
-  ? "\nVERDICT: the game plays end to end - title -> select -> a human ROLL that moves the token -> a full match -> finale, with zero console errors."
+  ? "\nVERDICT: the game plays end to end - title -> select -> a human ROLL that moves the token -> a full match -> finale, with zero console errors and every music sample loaded."
   : "\nVERDICT: something in the flow needs attention (see above).");
 await b.close();
 process.exitCode = ok ? 0 : 1;

@@ -423,7 +423,7 @@ function stepFixed(st: PushOfWarState): void {
     st.soloMeter = 0;
     st.surgeFlashT = SURGE_FLASH_DURATION; /* full-screen white flash on ignition */
     st.ctx.announce("POWER SURGE!", { durationMs: 1100, sound: "whoosh" });
-    ctx.playSfx("whoosh", { volume: 0.6, pitch: 1.4 }); /* deeper swell than a pop */
+    ctx.playSfx("whoosh", { volume: 0.6, pitch: 1 }); /* deeper swell than a pop */
     ctx.playSfx("pop", { volume: 0.45, pitch: 2 });
     ctx.playSfx("crowd.cheer", { volume: 0.5 });       /* surge = crowd electric */
     st.audioLog.push({ step: st.stepIndex, t: +t.toFixed(3), event: "surge-start", value: 1 });
@@ -1074,7 +1074,7 @@ const pushOfWar: Minigame = {
       if (st.stepIndex - st.lastHumanTapStep < HUMAN_MIN_TAP_STEPS) return;
       st.lastHumanTapStep = st.stepIndex;
       st.humanTaps++;
-      ctx.playSfx("pop", { volume: 0.32, pitch: 1.5 });
+      ctx.playSfx("pop", { volume: 0.32, pitch: 2 });
     };
     ctx.input.pointer = (_x, _y, down) => {
       if (down) queuePush();

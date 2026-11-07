@@ -434,7 +434,7 @@ function stepFixed(state: RoundState, dt: number): void {
           state.human.dashCd = DASH_COOLDOWN;
           b.animHoldT = Math.max(b.animHoldT, 0.45);
           ctx.characters[b.id]?.anim.jump();
-          ctx.playSfx("jump", { volume: 0.45, pitch: 1.15 });
+          ctx.playSfx("jump", { volume: 0.45, rate: 1.15 });
         }
       }
       if (analog) {
@@ -638,7 +638,7 @@ function stepFixed(state: RoundState, dt: number): void {
   }
   if (closestMargin < 0.5 && danger > 0.5 && state.boingT <= 0) {
     state.boingT = 0.4;
-    ctx.playSfx("boing", { volume: 0.3, pitch: 0.6 });
+    ctx.playSfx("boing", { volume: 0.3, rate: 0.6 });
   }
 
   if (!state.ringClosedAnnounced && t >= 10) {
@@ -683,7 +683,7 @@ function bumpJuice(state: RoundState, b: Body, hard: boolean): void {
   state.ctx.characters[b.id]?.anim.squash();
   if (state.boingT <= 0) {
     state.boingT = BOING_GAP;
-    state.ctx.playSfx("boing", { volume: 0.7, pitch: 0.9 + (b.id % 4) * 0.07 });
+    state.ctx.playSfx("boing", { volume: 0.7, rate: 0.9 + (b.id % 4) * 0.07 });
   }
   if (hard) state.shakeT = Math.min(0.14, state.shakeT + 0.1);
 }
@@ -743,7 +743,7 @@ function eliminate(state: RoundState, b: Body): void {
   state.ctx.hud.tag(b.id, "OUT");
   state.elimRingR.push(+ringRadiusAt(state.ctx.time).toFixed(4));
   state.ctx.characters[b.id]?.anim.sad();
-  state.ctx.playSfx("pop", { volume: 0.85, pitch: 0.85 + b.id * 0.06 });
+  state.ctx.playSfx("pop", { volume: 0.85, rate: 0.85 + b.id * 0.06 });
   if (state.aliveCount >= 2) {
     const p = state.ctx.players[b.id];
     state.ctx.announce(`${p.name} is OUT!`, { durationMs: 1100, sound: "crowd.aah" });

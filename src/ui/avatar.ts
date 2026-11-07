@@ -20,6 +20,7 @@ const KIND_COLORS: Record<string, string> = {
   jack: palette.heroJack,
   wisp: palette.heroWisp,
   rattle: palette.heroRattle,
+  pops: palette.heroPops,
 };
 
 const FALLBACKS = [

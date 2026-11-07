@@ -82,6 +82,7 @@ import { getMinigameDescription, showMinigamePreview, skipNextMinigamePreScreen 
 import { screens } from "../screens/screenManager";
 import { consumeTrap, resolveTrap, trapAt, payCircusToll, growTrees, ageCircuses, placeTrap } from "./traps";
 import { onlineMatch, partyAssist, setCpuPlayout } from "../net/mode";
+import { markMatchStarted } from "../analytics";
 import { playerLabel, isYou, labelPossessive, labelDoes } from "../ui/labels";
 import {
   checkpoint,
@@ -992,8 +993,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     ch.setFacing(Math.atan2(b.x - a.x, b.z - a.z));
     // Floaters drift rather than hop: a lighter, higher step. Pip's cartwheel
     // swishes round once per space.
-    if (ch.kind.key === "pip") audio.sfx.play("whoosh", { volume: 0.28, pitch: 1.25 });
-    else if (isFloater(ch.kind.key)) audio.sfx.play("hop", { volume: 0.3, pitch: 1.35 });
+    if (ch.kind.key === "pip") audio.sfx.play("whoosh", { volume: 0.28, rate: 1.25 });
+    else if (isFloater(ch.kind.key)) audio.sfx.play("hop", { volume: 0.3, rate: 1.35 });
     else audio.sfx.play("hop", { volume: 0.7 });
     bus.emit("player:move", { player: pid, from: S.hopFrom, to: S.hopTo });
     const sc = activeBoard().shortcut;
@@ -1272,7 +1273,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     };
     placeBlock(S.blockRun);
     audio.sfx.play("happening.magic");
-    audio.sfx.play("pop", { pitch: 1.4 });
+    audio.sfx.play("pop", { rate: 1.4 });
     hud.showBanner("HIDDEN BLOCK!", { durationMs: 1300 });
     ceremony.focusCamera(charPos(pid), 0.35);
     chars[pid]?.anim.squash();
@@ -1294,7 +1295,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     run.prop.bump();
     run.prop.popCoin();
     run.lastHitT = run.t;
-    audio.sfx.play("coin.gain", { volume: 0.7, pitch: 1 + Math.min(run.shown, 20) * 0.03 });
+    audio.sfx.play("coin.gain", { volume: 0.7, rate: 1 + Math.min(run.shown, 20) * 0.03 });
     if (run.mash) run.mash.count.textContent = `×${run.hits}`;
   };
 
@@ -1426,7 +1427,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       case "hit":
         if (run.t >= 0.32) {
           run.prop.bump();
-          audio.sfx.play("boing", { pitch: 1.2 });
+          audio.sfx.play("boing", { rate: 1.2 });
           blockSparkle(run, palette.sun, 14);
           if (run.kind === "dice") {
             run.prop.setLook("dice");
@@ -2585,7 +2586,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       // Character reaction based on the outcome's emotional valence.
       if (outcome.coinsDelta > 0) {
         chars[pid]?.anim.cheer();
-        audio.sfx.play("crowd.ohh", { volume: 0.4 });
+        audio.sfx.play("crowd.ooh", { volume: 0.4 });
       } else if (outcome.coinsDelta < 0) {
         chars[pid]?.anim.sad();
       } else {
@@ -2980,6 +2981,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
    */
   const dealStartCoins = (): void => {
     match.startCoinsDealt = true;
+    markMatchStarted({
+      board: match.boardId,
+      mode: onlineMatch() ? "friends" : "solo",
+      players: match.players.length,
+    });
     const amount = settings.startCoins;
     for (const p of match.players) {
       p.coins += amount;

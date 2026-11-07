@@ -392,8 +392,12 @@ export interface MinigameContext {
   time: number;
   /** Big center banner (defaults silent, ~1.8s). */
   announce(text: string, opts?: { durationMs?: number; sound?: string | null }): void;
-  /** One-shot sound effect (names: coin.gain, pop, boing, whoosh, ...). */
-  playSfx(name: string, opts?: { volume?: number; pitch?: number }): void;
+  /**
+   * One-shot sound effect (names: coin.gain, pop, boing, whoosh, ...).
+   * `pitch` is in semitones (12 = octave up); `rate` is a frequency
+   * multiplier (2 = octave up, 0.8 = a little lower). They add up.
+   */
+  playSfx(name: string, opts?: { volume?: number; pitch?: number; rate?: number }): void;
   /**
    * Call ONCE when the minigame ends: player ids, best first.
    * `coinWinners` is every player who earned the coin pot (a winning team).

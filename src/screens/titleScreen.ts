@@ -3,8 +3,9 @@
  *
  * A living front door: the full Fizzy Fairground board scene seen from above
  * while the camera slowly orbits it (board/titleOrbit.ts), a chunky animated
- * "SUPER STAR PARTY" wordmark with sparkles, and a three-button menu
- * (PLAY / HOW TO PLAY / SETTINGS) with full keyboard + touch nav, MP7-style
+ * "SUPER STAR PARTY" wordmark with sparkles, and a button menu
+ * (PLAY / WITH FRIENDS / HOW TO PLAY / SETTINGS; PLAY opens the PARTY or
+ * MINIGAMES menu) with full keyboard + touch nav, MP7-style
  * hover/press bounce, live audio, persisted settings and a polished scale
  * wipe on exit.
  *
@@ -131,6 +132,25 @@ function injectTitleStyles(): void {
                   0 0 22px rgba(255,210,63,.65) !important;
     }
     .ssp-title-btn:hover { transform: scale(1.05) !important; }
+    /* Non-profit / no-affiliation notice under the menu. */
+    .ssp-title-notice {
+      margin-top: clamp(14px, 3vh, 26px);
+      max-width: min(440px, 88vw);
+      text-align: center;
+      font-size: 12px; line-height: 1.35; font-weight: 600;
+      color: rgba(255,246,229,0.92);
+      text-shadow: 1px 1px 0 ${palette.ink};
+      background: rgba(43,29,78,0.62);
+      border-radius: 12px;
+      padding: 6px 12px;
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+    .ssp-title-notice strong {
+      display: block;
+      font-size: 13px; font-weight: 700; letter-spacing: 1px;
+      color: ${palette.sun};
+    }
     /* Short screens: tighter logo + menu. Landscape phones: logo left, menu right. */
     @media (max-height: 600px) {
       .ssp-title-logo { margin-bottom: 10px; }
@@ -143,6 +163,13 @@ function injectTitleStyles(): void {
       .ssp-title-logo { margin: 0; font-size: clamp(30px, 6vw, 52px); max-width: 46vw; }
       .ssp-title-menu { margin-top: 0; gap: 8px; }
       .ssp-title-btn { width: min(260px, 40vw); }
+      .ssp-title-notice {
+        position: absolute; margin: 0;
+        left: 50%; transform: translateX(-50%);
+        bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+        max-width: 62vw; font-size: 10.5px;
+      }
+      .ssp-title-notice strong { display: inline; font-size: 11px; margin-right: 6px; }
     }
     .ssp-title-settings-overlay {
       position: fixed; inset: 0; z-index: 200;
@@ -238,6 +265,27 @@ function injectTitleStyles(): void {
       background: ${palette.cream};
       box-shadow: 0 -8px 0 ${palette.cream};
     }
+    /* Credits: the text scrolls inside the panel, so CLOSE never leaves the screen. */
+    .ssp-title-settings--credits {
+      box-sizing: border-box; /* max-height counts the padding, so a short landscape phone still fits it */
+      width: min(520px, 92vw);
+      overflow: hidden;
+    }
+    .ssp-title-credits__text {
+      flex: 1 1 auto;
+      min-height: 0;
+      margin: 0;
+      padding: 10px 12px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+      background: ${palette.white};
+      border: 3px solid ${palette.ink};
+      border-radius: 14px;
+      font: 500 13px/1.45 'Fredoka', 'Comic Sans MS', sans-serif;
+      color: ${palette.ink};
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -273,9 +321,9 @@ interface TitleState {
   _placeCamera: () => void;
   _goPlay: () => void;
   _goHowTo: () => void;
-  _goMinigames: () => void;
   _openSettings: () => void;
   _showSettingsPanel: () => void;
+  _showCreditsPanel: (returnTo: HTMLElement) => void;
   _sliderRow: (label: string, initial: number, apply: (v: number) => void) => HTMLDivElement;
 }
 
@@ -347,20 +395,9 @@ const titleImpl: TitleState & Screen = {
       size: "lg",
       onClick: () => this._goPlay(),
       sound: "pop",
-      ariaLabel: "Play — start the game",
+      ariaLabel: "Play — pick party or minigames",
     });
     playBtn.el.classList.add("ssp-title-btn");
-
-    const gamesBtn = ui.button({
-      label: "MINIGAMES",
-      kind: "primary",
-      size: "lg",
-      onClick: () => this._goMinigames(),
-      sound: "pop",
-      ariaLabel: "Minigames — just play the minigames",
-    });
-    gamesBtn.el.classList.add("ssp-title-btn");
-    gamesBtn.el.dataset.sspMenu = "minigames";
 
     const friendsBtn = ui.button({
       label: "WITH FRIENDS",
@@ -393,9 +430,24 @@ const titleImpl: TitleState & Screen = {
     });
     setBtn.el.classList.add("ssp-title-btn");
 
-    this._buttons = [playBtn, gamesBtn, friendsBtn, howBtn, setBtn];
+    this._buttons = [playBtn, friendsBtn, howBtn, setBtn];
     for (const b of this._buttons) menu.appendChild(b.el);
     stage.appendChild(menu);
+
+    // Non-profit notice: this is a free fan game; nobody makes money from it.
+    const notice = document.createElement("div");
+    notice.className = "ssp-title-notice";
+    notice.setAttribute("role", "note");
+    const noticeHead = document.createElement("strong");
+    noticeHead.textContent = "NON-PROFIT FAN PROJECT";
+    notice.appendChild(noticeHead);
+    notice.appendChild(
+      document.createTextNode(
+        "Free to play, no ads, no real-money purchases. No money is made from this game. " +
+          "Not affiliated with, endorsed by or sponsored by Nintendo."
+      )
+    );
+    stage.appendChild(notice);
 
     // Which build this is, so a playtester can tell a fresh deploy from a cached one.
     const build = document.createElement("div");
@@ -498,21 +550,11 @@ const titleImpl: TitleState & Screen = {
   },
 
   /* ---- actions ---- */
+  /** PLAY opens the mode menu: PARTY or MINIGAMES. */
   _goPlay() {
     setFreeplay(false);
-    audio.sfx.play("fanfare.win");
-    ui.confettiBurst(window.innerWidth / 2, window.innerHeight * 0.4, {
-      sound: null,
-      count: 80,
-    });
-    screens.goto("select");
-  },
-
-  /** Minigame free play: pick a hero, then a minigame. */
-  _goMinigames() {
-    setFreeplay(true);
     audio.sfx.play("pop");
-    screens.goto("select");
+    screens.goto("mode");
   },
 
   _goHowTo() {
@@ -593,6 +635,17 @@ const titleImpl: TitleState & Screen = {
 
     panel.appendChild(mountPackPicker().el);
 
+    // Credits
+    const creditsBtn = ui.button({
+      label: "CREDITS",
+      kind: "ghost",
+      sound: "ui.click",
+      onClick: () => this._showCreditsPanel(creditsBtn.el),
+    });
+    creditsBtn.el.style.alignSelf = "center";
+    creditsBtn.el.style.width = "160px";
+    panel.appendChild(creditsBtn.el);
+
     // Close button
     const closeBtn = ui.button({
       label: "CLOSE",
@@ -617,6 +670,68 @@ const titleImpl: TitleState & Screen = {
         this._settingsOpen = false;
         overlay.remove();
       }
+    });
+  },
+
+  /**
+   * The music sample credits (public/music/CREDITS.txt) over the settings panel. Focus moves to the
+   * credits text, so a second Enter or Space cannot open another panel, and back to `returnTo` (the
+   * CREDITS button) on close.
+   */
+  _showCreditsPanel(returnTo: HTMLElement) {
+    // Same class as the settings overlay: exit() sweeps it with the rest.
+    const overlay = document.createElement("div");
+    overlay.className = "ssp-title-settings-overlay";
+
+    const panel = document.createElement("div");
+    panel.className = "ssp-title-settings ssp-title-settings--credits";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "ssp-title-settings__title";
+    titleEl.textContent = "CREDITS";
+    panel.appendChild(titleEl);
+
+    const text = document.createElement("pre");
+    text.className = "ssp-title-credits__text";
+    text.tabIndex = 0; // keyboard users can scroll it
+    text.setAttribute("role", "region"); // a labelled landmark: aria-label is not allowed on a bare <pre>
+    text.setAttribute("aria-label", "Music credits");
+    text.textContent = "Loading the credits…";
+    panel.appendChild(text);
+    fetch(`${import.meta.env.BASE_URL}music/CREDITS.txt`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.text();
+      })
+      .then((body) => {
+        text.textContent = body.trim();
+      })
+      .catch(() => {
+        text.textContent = "The credits could not be loaded. Check your connection and try again.";
+      });
+
+    const close = () => {
+      overlay.remove();
+      returnTo.focus();
+    };
+    const closeBtn = ui.button({
+      label: "CLOSE",
+      kind: "gold",
+      size: "md",
+      sound: "ui.back",
+      onClick: close,
+    });
+    closeBtn.el.classList.add("ssp-title-settings__close");
+    closeBtn.el.style.width = "160px";
+    panel.appendChild(closeBtn.el);
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    text.focus();
+
+    // Click scrim to close (the settings panel stays open underneath)
+    overlay.addEventListener("pointerdown", (e) => {
+      if (e.target === overlay) close();
     });
   },
 

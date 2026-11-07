@@ -64,17 +64,19 @@ if (!String(afterReload.packs).includes("midway") || String(afterReload.packs).i
 }
 
 console.log("2. character select layout");
-await page.getByRole("button", { name: /^play/i }).click();
+await page.getByRole("button", { name: /^play —/i }).click();
+await page.waitForFunction(() => window.__SSP__.state().screen === "mode");
+await page.locator('[data-ssp-mode="party"]').click();
 await page.waitForFunction(() => window.__SSP__.state().screen === "select");
 await page.waitForSelector("[data-ssp-pack-picker]");
-const startBox = await page.getByRole("button", { name: /start/i }).boundingBox();
+const startBox = await page.getByRole("button", { name: /^next:/i }).boundingBox();
 console.log("   START box", JSON.stringify(startBox));
 await page.screenshot({ path: `${OUT}/02-select-390.png` });
 if (!startBox || startBox.y + startBox.height > 844 || startBox.y < 0) fail("START is off the 390x844 screen");
 
 await page.setViewportSize({ width: 430, height: 932 });
 await page.waitForTimeout(300);
-const startWide = await page.getByRole("button", { name: /start/i }).boundingBox();
+const startWide = await page.getByRole("button", { name: /^next:/i }).boundingBox();
 await page.screenshot({ path: `${OUT}/03-select-430.png` });
 console.log("   START wide", JSON.stringify(startWide));
 if (!startWide || startWide.y + startWide.height > 932) fail("START is off the 430x932 screen");
@@ -148,9 +150,15 @@ await page.evaluate(() => {
   window.__SSP__.setMinigameCoinMultiplier(4);
   window.__SSP__.setHumanPack("midway");
 });
-await page.getByRole("button", { name: /^play/i }).click();
+await page.getByRole("button", { name: /^play —/i }).click();
+await page.waitForFunction(() => window.__SSP__.state().screen === "mode");
+await page.locator('[data-ssp-mode="party"]').click();
 await page.waitForFunction(() => window.__SSP__.state().screen === "select");
-await page.getByRole("button", { name: /start/i }).click();
+await page.getByRole("button", { name: /^next:/i }).click();
+await page.waitForFunction(() => window.__SSP__.state().screen === "boards");
+await page.getByRole("button", { name: /^next:/i }).click();
+await page.waitForFunction(() => window.__SSP__.state().screen === "lineup");
+await page.getByRole("button", { name: /^play: jump/i }).click();
 await page.waitForFunction(() => window.__SSP__.state().screen === "board", null, { timeout: 15000 });
 await page.evaluate(() => window.__SSP__.autoplay(true));
 let preview = null;

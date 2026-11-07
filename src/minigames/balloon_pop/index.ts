@@ -642,9 +642,10 @@ function popBalloon(st: State, pid: number, b: Balloon, byHuman: boolean): void 
   else P.pops += 1;
 
   // pop sfx: pitch drops with size (bigger = lower), louder for the human
-  const pitch = 1.5 - 0.8 * frac;
-  st.ctx.playSfx(b.kind === "bomb" ? "boing" : "pop", { volume: byHuman ? 0.9 : 0.5, pitch: b.kind === "bomb" ? -3 : pitch });
-  if (b.kind === "gold") st.ctx.playSfx("coin.gain", { volume: 0.9, pitch: 1.35 });
+  const volume = byHuman ? 0.9 : 0.5;
+  if (b.kind === "bomb") st.ctx.playSfx("boing", { volume, pitch: -3 });
+  else st.ctx.playSfx("pop", { volume, rate: 1.5 - 0.8 * frac });
+  if (b.kind === "gold") st.ctx.playSfx("coin.gain", { volume: 0.9, rate: 1.35 });
 
   // juice: shards in balloon color + white, pop ring (the camera never moves)
   const pos: [number, number, number] = [b.x, b.y, BALLOON_Z];

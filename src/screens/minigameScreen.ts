@@ -951,7 +951,7 @@ function teachTap(self: MgScreenState): void {
   self._touch?.pulse();
   spawnBurst(self);
   if (phase === "practice") {
-    if (mg.tapSfx) self._ctx?.playSfx(mg.tapSfx, { volume: 0.45, pitch: 1.12 });
+    if (mg.tapSfx) self._ctx?.playSfx(mg.tapSfx, { volume: 0.45, rate: 1.12 });
     const ch = localSeat(self).char;
     const cam = world.camera;
     if (ch && cam) {
@@ -1196,7 +1196,11 @@ const minigameScreenImpl: MgScreenState & Screen = {
       screens.goto(homeScreen());
       return;
     }
-    if (isContactMinigame(entry.id)) void loadRapier();
+    if (isContactMinigame(entry.id)) {
+      void loadRapier().catch(() => {
+        /* loadRapier already warned; the minigame keeps its own collision */
+      });
+    }
 
     this._active = true;
     mgProbeState.id = entry.id;

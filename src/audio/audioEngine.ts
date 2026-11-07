@@ -5,15 +5,25 @@
  *   audio.ready                      Promise (resolved)
  *   audio.unlock()                   create/resume context (first gesture)
  *   audio.master.gain                0..1 master volume
+ *   audio.music.volume               [added] 0..1 music bus volume
+ *   audio.sfx.volume                 [added] 0..1 sfx bus volume
  *   audio.music.play(track, opts?)   start a looping track
  *   audio.music.stop(fade?)          fade out current track
  *   audio.music.track()              name of current track / 'silence'
+ *   audio.music.theme()              [added] the theme it resolved to / 'silence'
  *   audio.music.intensity(level)     0..1 dynamic layers
- *   audio.music.tracks()             [added] registered track ids
+ *   audio.music.lift(on)             [added] final-turns lift (board themes)
+ *   audio.music.setBoard(id)         [added] board for "board"; loads its sample set
+ *   audio.music.tracks()             [added] registered track ids + aliases
  *   audio.sfx.play(name, opts?)      one-shot sound effect
  *   audio.sfx.stopAll()              cut all active one-shots
  *   audio.levels()                   {rms, peak} live analyser
- *   audio.renderTrack(track, seconds) -> Promise<Blob> offline WAV render
+ *   audio.debug()                    [added] theme, lift, tempo, samples, bars
+ *   audio.renderTrack(track, seconds, opts?) -> Promise<Blob> offline WAV render
+ *
+ * "board", "minigame_a" and "minigame_b" are aliases: the music director
+ * resolves them to a theme by board and minigame genre. Notes play through
+ * the sampler, which uses a synth stand-in for any sample not loaded yet.
  *
  * Bus topology:
  *   music voices -> layer gains -> trackGain -> musicGain -> musicComp -> master
@@ -28,11 +38,21 @@
 
 import { bus } from "../core/events";
 import { settings } from "../config/settings";
-import { TRACKS, trackIds } from "./music/tracks";
+import { TRACKS, trackIds, trackSets } from "./music/tracks";
+import type { TrackDef } from "./music/tracks";
 import { Sequencer, scheduleTrackInto } from "./music/sequencer";
+import { Director, boardSet, playableId, resolveTheme } from "./music/director";
+import type { SequencerControl } from "./music/director";
+import type { NotePlayer } from "./music/player";
+import { createSamplerPlayer } from "./samples/sampler";
+import { SampleLoader } from "./samples/loader";
+import type { Format, SetStatus } from "./samples/loader";
+import { SAMPLED } from "./samples/instruments.gen";
+import { PROBE_AAC, PROBE_OPUS } from "./samples/probeClips";
+import type { InstrumentZones, SetId } from "./samples/types";
 import { startCrowdMurmur, wireCrowdReactions } from "./music/crowd";
 import type { CrowdHandle } from "./music/crowd";
-import { SFX } from "./sfx/sounds";
+import { SFX, resolvePitch } from "./sfx/sounds";
 import type { SfxPlayOpts } from "./sfx/sounds";
 import type { StopFn } from "./sfx/synth";
 
@@ -54,15 +74,49 @@ let sequencer: Sequencer | null = null;
 let trackGain: GainNode | null = null;
 let currentTrack = "";
 let currentIntensity = 0.5;
+/** The main track's theme and tempo, for theme() and the director's lift; null when nothing plays. */
+let nowPlaying: SequencerControl | null = null;
 
 let stingerSeq: Sequencer | null = null;
 let stingerTrackGain: GainNode | null = null;
 
+/** `music` (a minigame's rhythm anchor) is accepted and ignored until the anchor is wired. */
+interface PlayOpts {
+  intensity?: number;
+  genre?: string;
+  music?: { bpm: number; beat0: number };
+}
+
 interface PendingPlay {
   track: string;
-  opts?: { intensity?: number };
+  opts?: PlayOpts;
 }
 let pendingTrack: PendingPlay | null = null;
+
+const director = new Director(() => nowPlaying);
+
+/* Samples. No loader exists under ?audio=0, so nothing is ever fetched. */
+let loader: SampleLoader | null = null;
+let formatStarted = false;
+/** Every set asked for (tracks, board). Asked before the format is known, a set loads once it is. */
+const wantedSets = new Set<SetId>();
+let boardSetId: SetId | null = null;
+let standInNotes = 0;
+/** Zone tables for the sampler's synchronous reads: {} (every note on its stand-in) until the module arrives. */
+let zoneTable: Record<string, InstrumentZones> = {};
+
+/** The generated zone tables, loaded on first use (kept out of the main bundle). */
+function loadZones(): Promise<Record<string, InstrumentZones>> {
+  return import("./samples/zones.gen").then((m) => (zoneTable = m.ZONES));
+}
+
+/** Plays every live note: samples where loaded, synth stand-ins everywhere else. */
+const livePlayer: NotePlayer = createSamplerPlayer({
+  table: SAMPLED,
+  zones: () => zoneTable,
+  buffer: (inst, zone) => loader?.buffer(inst, zone) ?? null,
+  onStandIn: () => void standInNotes++,
+});
 
 let crowd: CrowdHandle | null = null;
 let reactionsWired = false;
@@ -71,12 +125,44 @@ let visibilityWired = false;
 const lastPlay = new Map<string, number>();
 const activeStops: Array<{ stop: StopFn; until: number }> = [];
 
-try {
-  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("audio") === "0") {
-    disabled = true;
+// Bus volumes live here, not on the nodes, so they can be set before the
+// first gesture builds the graph. Saved slider values load at startup so
+// every entry point (not only the title screen) gets them.
+const LS_MUSIC = "ssp.musicVolume";
+const LS_SFX = "ssp.sfxVolume";
+
+function clampVolume(v: number, fallback: number): number {
+  return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : fallback;
+}
+
+function savedVolume(key: string, fallback: number): number {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw === null ? fallback : clampVolume(parseFloat(raw), fallback);
+  } catch {
+    return fallback; // no storage (node, private mode)
   }
-} catch {
-  /* URL parsing must never break the game */
+}
+
+let musicVolume = savedVolume(LS_MUSIC, settings.musicVolume);
+let sfxVolume = savedVolume(LS_SFX, settings.sfxVolume);
+
+/** A URL query flag, or null outside a browser. */
+function urlParam(name: string): string | null {
+  try {
+    return typeof window !== "undefined" ? new URLSearchParams(window.location.search).get(name) : null;
+  } catch {
+    return null; // URL parsing must never break the game
+  }
+}
+
+if (urlParam("audio") === "0") disabled = true;
+
+/** `?samples=0` keeps every note on its synth stand-in; `?audiofmt=aac` skips the Opus probe. */
+function forcedFormat(): "aac" | "synth" | undefined {
+  if (urlParam("samples") === "0") return "synth";
+  if (urlParam("audiofmt") === "aac") return "aac";
+  return undefined;
 }
 
 /** audio.ready — resolves immediately (stub-compatible). */
@@ -137,7 +223,7 @@ function buildGraph(c: AudioContext): void {
   //   trackGain (board track) -> duckGain -> musicGain -> musicComp -> master
   //   stingerGain (stinger track) -> musicGain (bypasses duck — plays at full level)
   musicGain = c.createGain();
-  musicGain.gain.value = settings.musicVolume;
+  musicGain.gain.value = musicVolume;
   const musicComp = makeCompressor(c, -18, 2.5, 2.5, 0.01, 0.22);
   musicGain.connect(musicComp);
   musicComp.connect(master);
@@ -155,7 +241,7 @@ function buildGraph(c: AudioContext): void {
 
   // sfx bus
   sfxGain = c.createGain();
-  sfxGain.gain.value = settings.sfxVolume;
+  sfxGain.gain.value = sfxVolume;
   const sfxComp = makeCompressor(c, -14, 3, 2, 0.004, 0.12);
   sfxGain.connect(sfxComp);
   sfxComp.connect(master);
@@ -219,20 +305,87 @@ function ensureContext(): AudioContext | null {
     disabled = true;
     return null;
   }
+  loader = createLoader();
   return ctx;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Samples                                                            */
+/* ------------------------------------------------------------------ */
+
+function createLoader(): SampleLoader {
+  return new SampleLoader({
+    fetchBytes: async (url) => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.arrayBuffer();
+    },
+    decode: (c, bytes) => c.decodeAudioData(bytes),
+    zones: loadZones,
+    table: SAMPLED,
+    baseUrl: import.meta.env.BASE_URL,
+    warn: (msg) => console.warn(msg),
+  });
+}
+
+function base64Bytes(b64: string): ArrayBuffer {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+/** Fresh copies of the embedded probe clips (decoding detaches a buffer). */
+function probeClips(): { opus: ArrayBuffer; aac: ArrayBuffer } {
+  return { opus: base64Bytes(PROBE_OPUS), aac: base64Bytes(PROBE_AAC) };
+}
+
+/** The sample sets a track needs. */
+function setsOf(def: TrackDef): SetId[] {
+  return trackSets(def);
+}
+
+/** Load a set now, or once the format is known. Never awaited: music starts on stand-ins. */
+function requestSet(set: SetId): void {
+  if (disabled) return;
+  wantedSets.add(set);
+  if (loader && ctx) void loader.load(set, ctx);
+}
+
+/** First unlock: pick the format, then load core and every set asked for so far. */
+function startSamples(c: AudioContext): void {
+  const l = loader;
+  if (!l || formatStarted) return;
+  formatStarted = true;
+  wantedSets.add("core");
+  void Promise.resolve()
+    .then(() => l.chooseFormat(c, probeClips(), forcedFormat()))
+    .then(() => {
+      void l.load("core", c);
+      for (const set of wantedSets) void l.load(set, c);
+    })
+    .catch((err: unknown) => console.warn(`[audio] sample format check failed; music stays on synth voices: ${String(err)}`));
 }
 
 /* ------------------------------------------------------------------ */
 /*  Music                                                              */
 /* ------------------------------------------------------------------ */
 
-function startTrack(track: string, opts?: { intensity?: number }): void {
+/** What plays for a request: the theme it resolves to and the track that plays it, or null for an unknown id. */
+function resolveTrack(track: string, by: { board?: string; genre?: string }): { theme: string; id: string; def: TrackDef } | null {
+  const theme = resolveTheme(track, by);
+  const id = playableId(theme, TRACKS);
+  return id ? { theme, id, def: TRACKS[id] } : null;
+}
+
+function startTrack(track: string, opts?: PlayOpts): void {
   if (!ctx) return;
-  const def = TRACKS[track];
-  if (!def) {
+  const resolved = resolveTrack(track, { board: director.board, genre: opts?.genre });
+  if (!resolved) {
     console.warn(`[audio] unknown track '${track}'`);
     return;
   }
+  const { theme, def } = resolved;
   // quick-fade whatever is playing
   if (sequencer) {
     sequencer.stop(0.12);
@@ -242,12 +395,15 @@ function startTrack(track: string, opts?: { intensity?: number }): void {
   trackGain = ctx.createGain();
   trackGain.gain.value = 0.3; // headroom trim: mix targets ~-14 LUFS feel
   trackGain.connect(duckGain!);
-  const seq = new Sequencer(ctx, trackGain, def);
+  for (const set of setsOf(def)) requestSet(set);
+  // Constructed and started in one go: the sequencer fixes its start time when it is made.
+  const seq = new Sequencer(ctx, trackGain, def, { ...director.startOptions(theme, def.bpm), player: livePlayer });
   seq.onEnded = () => {
     if (sequencer !== seq) return; // a newer track replaced us
     sequencer = null;
     trackGain = null;
     currentTrack = "";
+    nowPlaying = null;
     bus.emit("audio:track", { track, playing: false });
   };
   if (opts?.intensity !== undefined) currentIntensity = Math.min(1, Math.max(0, opts.intensity));
@@ -255,6 +411,7 @@ function startTrack(track: string, opts?: { intensity?: number }): void {
   seq.start();
   sequencer = seq;
   currentTrack = track;
+  nowPlaying = { theme, baseBpm: def.bpm, queueChange: (c) => seq.queueChange(c) };
   bus.emit("audio:track", { track, playing: true });
 }
 
@@ -278,7 +435,7 @@ function playSfx(name: string, opts?: SfxPlayOpts, internal = false): void {
   const t = ctx.currentTime + 0.01;
   const out = def.route === "crowd" ? crowdGain! : sfxGain!;
   const vol = opts?.volume ?? 1;
-  const pitch = opts?.pitch ?? 0;
+  const pitch = resolvePitch(opts);
   const stop = def.build(ctx, out, t, { vol, pitch });
   activeStops.push({ stop, until: t + 6 });
   if (!internal) bus.emit("audio:sfx", { name });
@@ -336,11 +493,31 @@ function encodeWav(buffer: AudioBuffer): Blob {
 /*  Public API                                                         */
 /* ------------------------------------------------------------------ */
 
+export interface AudioDebug {
+  /** The playing theme, or "silence". */
+  theme: string;
+  /** Whether the final-turns lift is on (board themes play it). */
+  lift: boolean;
+  /** Tempo and transpose of the main track as scheduled; 0 when nothing plays. */
+  bpm: number;
+  transpose: number;
+  samples: { format: Format; sets: Record<string, SetStatus>; failed: string[]; standInNotes: number };
+  /** The rhythm anchor; always null until it is wired. */
+  anchor: null;
+  /** AudioContext time now, and the times of the main track's last 8 scheduled bar lines. */
+  bars: { audioNow: number; bars: number[] };
+}
+
+function themeNow(): string {
+  return nowPlaying?.theme ?? "silence";
+}
+
 /** Call from the first pointer/key gesture. Safe to call repeatedly. */
 export function unlock(): void {
   const c = ensureContext();
   if (!c) return;
   if (c.state === "suspended") void c.resume().catch(() => {});
+  startSamples(c);
   if (pendingTrack) {
     const p = pendingTrack;
     pendingTrack = null;
@@ -362,9 +539,19 @@ export const audio = {
   },
 
   music: {
-    play(track: string, opts?: { intensity?: number }): void {
+    /** [added] Music bus volume 0..1 (applies now, or when audio starts). */
+    get volume(): number {
+      return musicVolume;
+    },
+    set volume(v: number) {
+      musicVolume = clampVolume(v, musicVolume);
+      if (musicGain) musicGain.gain.value = musicVolume;
+    },
+
+    /** Start a track; "board" and "minigame_*" resolve by board and `genre`. */
+    play(track: string, opts?: PlayOpts): void {
       console.log(`[AUDIO_PLAY] ${track} t=${performance.now().toFixed(1)}`);
-      if (!TRACKS[track]) {
+      if (!resolveTrack(track, { board: director.board, genre: opts?.genre })) {
         console.warn(`[audio] unknown track '${track}'`);
         return;
       }
@@ -384,10 +571,12 @@ export const audio = {
      * This is the ONLY path that plays non-looping ceremony tracks — it
      * routes to stingerGain (parallel to duckGain) so the board music ducks
      * while the stinger plays at full level, then restores both.
+     * Resolves through the director like play(); a stinger is never lifted.
      */
     stinger(track: string, opts?: { duckTo?: number; duckAttack?: number; duckRelease?: number }): () => void {
       console.log(`[AUDIO_STINGER] ${track} t=${performance.now().toFixed(1)}`);
-      if (!TRACKS[track]) {
+      const resolved = resolveTrack(track, { board: director.board });
+      if (!resolved) {
         console.warn(`[audio] unknown stinger '${track}'`);
         return () => {};
       }
@@ -418,8 +607,9 @@ export const audio = {
       stingerTrackGain = c.createGain();
       stingerTrackGain.gain.value = 0.5;
       stingerTrackGain.connect(stingerGain!);
-      const def = TRACKS[track];
-      const seq = new Sequencer(c, stingerTrackGain, def);
+      const def = resolved.def;
+      for (const set of setsOf(def)) requestSet(set);
+      const seq = new Sequencer(c, stingerTrackGain, def, { player: livePlayer });
       seq.start();
       stingerSeq = seq;
 
@@ -498,12 +688,19 @@ export const audio = {
       sequencer = null;
       trackGain = null;
       currentTrack = "";
+      nowPlaying = null;
       bus.emit("audio:track", { track: stopped, playing: false });
     },
 
+    /** The requested track id ("board", not the theme it resolved to). */
     track(): string {
       if (disabled) return "silence";
       return currentTrack || "silence";
+    },
+
+    /** The theme the current track resolved to ("board.fairground" for "board"). */
+    theme(): string {
+      return themeNow();
     },
 
     intensity(level: number): void {
@@ -511,13 +708,41 @@ export const audio = {
       sequencer?.setIntensity(currentIntensity);
     },
 
-    /** [added] list of registered track ids. */
+    /** Final-turns lift. Idempotent; board themes only (a playing one changes at its next bar line). */
+    lift(on: boolean): void {
+      if (disabled) return;
+      director.lift(on);
+    },
+
+    /** The board "board" resolves for. Loads its sample set and frees the previous board's. */
+    setBoard(id: string): void {
+      if (disabled) return;
+      director.setBoard(id);
+      const next = boardSet(id);
+      if (boardSetId && boardSetId !== next) {
+        wantedSets.delete(boardSetId);
+        loader?.free(boardSetId);
+      }
+      boardSetId = next;
+      if (next) requestSet(next);
+    },
+
+    /** [added] list of registered track ids, plus the aliases the director resolves. */
     tracks(): string[] {
-      return trackIds();
+      return [...trackIds(), "board", "minigame_a", "minigame_b"];
     },
   },
 
   sfx: {
+    /** [added] SFX bus volume 0..1 (applies now, or when audio starts). */
+    get volume(): number {
+      return sfxVolume;
+    },
+    set volume(v: number) {
+      sfxVolume = clampVolume(v, sfxVolume);
+      if (sfxGain) sfxGain.gain.value = sfxVolume;
+    },
+
     play(name: string, opts?: SfxPlayOpts): void {
       console.log(`[AUDIO_SFX] ${name} t=${performance.now().toFixed(1)}`);
       pruneStops();
@@ -552,15 +777,35 @@ export const audio = {
     return { rms: Math.sqrt(sum / data.length), peak };
   },
 
+  /** Music state for the debug API. Every field is always there; under ?audio=0 each holds its default. */
+  debug(): AudioDebug {
+    const sets: Record<string, SetStatus> = {};
+    if (loader) for (const set of wantedSets) sets[set] = loader.status(set);
+    return {
+      theme: themeNow(),
+      lift: director.lifted,
+      bpm: sequencer?.clock.bpm ?? 0,
+      transpose: sequencer?.clock.transpose ?? 0,
+      samples: { format: loader?.format ?? "off", sets, failed: loader?.failed() ?? [], standInNotes },
+      anchor: null,
+      bars: { audioNow: ctx?.currentTime ?? 0, bars: sequencer?.clock.barTimes() ?? [] },
+    };
+  },
+
   /**
    * Offline render of a track to a 16-bit PCM WAV blob.
    * Full arrangement (all intensity layers) through the music bus at
    * settings.musicVolume, mastered by the same comp/limiter chain.
-   * Works even when the live context is disabled (tool use).
+   * Resolves through the director with `opts.board` and `opts.genre` (never
+   * the live game's), loads the track's sample sets into the offline context
+   * first, and plays a board theme lifted only with `opts.lift`.
+   * Works even when the live context is disabled (tool use): it makes its
+   * own loader, choosing the format by probing the offline context.
    */
-  async renderTrack(track: string, seconds = 20): Promise<Blob> {
-    const def = TRACKS[track];
-    if (!def) throw new Error(`renderTrack: unknown track '${track}'`);
+  async renderTrack(track: string, seconds = 20, opts: { lift?: boolean; board?: string; genre?: string } = {}): Promise<Blob> {
+    const resolved = resolveTrack(track, { board: opts.board, genre: opts.genre });
+    if (!resolved) throw new Error(`renderTrack: unknown track '${track}'`);
+    const { theme, id, def } = resolved;
     const dur = Math.max(1, Math.min(120, seconds));
     const sr = 44100;
     const OC =
@@ -586,7 +831,19 @@ export const audio = {
     limiter.connect(clipper);
     clipper.connect(c.destination);
 
-    scheduleTrackInto(c, track, trackOut, dur);
+    const renderLoader = createLoader();
+    await renderLoader.chooseFormat(c, probeClips(), forcedFormat());
+    await Promise.all(setsOf(def).map((set) => renderLoader.load(set, c)));
+    const player = createSamplerPlayer({
+      table: SAMPLED,
+      zones: () => zoneTable,
+      buffer: (inst, zone) => renderLoader.buffer(inst, zone),
+      onStandIn: () => {}, // standInNotes counts live notes only
+    });
+    const renderDirector = new Director(() => null);
+    renderDirector.lift(opts.lift ?? false);
+    const start = renderDirector.startOptions(theme, def.bpm);
+    scheduleTrackInto(c, id, trackOut, dur, { ...start, player });
     const rendered = await c.startRendering();
     return encodeWav(rendered);
   },

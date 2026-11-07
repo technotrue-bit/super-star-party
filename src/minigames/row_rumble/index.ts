@@ -192,8 +192,8 @@ function applyPress(st: State, seat: Seat, side: Side, t: number, sum: { v: numb
   if (seat === st.human) {
     st.hud.press(r);
     note(st, `P${seat.id} ${r.kind} ${side} g=${Number.isFinite(r.gap) ? r.gap.toFixed(2) : "-"} ${r.grade ?? ""}`.trim());
-    if (r.kind === "stroke") st.ctx.playSfx("whoosh", { volume: 0.45, pitch: 0.9 + Math.min(0.3, seat.pad.streak * 0.03) });
-    else if (r.kind === "same") st.ctx.playSfx("boing", { volume: 0.35, pitch: 0.8 });
+    if (r.kind === "stroke") st.ctx.playSfx("whoosh", { volume: 0.45, rate: 0.9 + Math.min(0.3, seat.pad.streak * 0.03) });
+    else if (r.kind === "same") st.ctx.playSfx("boing", { volume: 0.35, rate: 0.8 });
   }
   return r;
 }
@@ -233,7 +233,7 @@ function stepFixed(st: State): void {
       note(st, `C${team.idx} bump ${bump.kind} s=${bump.s.toFixed(1)}`);
       st.fx.crash(bump.x, riverY(bump.s) + 0.1, -bump.s, bump.dir);
       st.fx.ring(bump.x, riverY(bump.s) + 0.08, -bump.s, 1.3, palette.white);
-      if (team.seats.some((s) => s === st.human)) st.ctx.playSfx("land", { volume: 0.7, pitch: 0.7 });
+      if (team.seats.some((s) => s === st.human)) st.ctx.playSfx("land", { volume: 0.7, rate: 0.7 });
       for (const s of team.seats) s.char?.anim.squash();
     }
     if (c.finishT === null && c.s >= COURSE_LEN) c.finishT = t;

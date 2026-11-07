@@ -22,7 +22,7 @@ import { storedCpuLevel } from "../config/cpuLevel";
 import { roster } from "../characters/roster";
 import { match, snapshot, startMatch } from "../core/game";
 import { ui } from "../ui/kit";
-import { assignPlayerPacks, blankPlayedByPack, readPersistedRules } from "../minigames/packRules";
+import { assignPlayerPacks, blankPlayedByPack, clampTurns, readPersistedRules, readTurnsRule, setTurnsRule } from "../minigames/packRules";
 import {
   BOARDS,
   boardIds,
@@ -36,6 +36,7 @@ import {
 import { briefState, hashSnapshot } from "./hash";
 import type { BoardChoice, MatchSetup, OfficialMinigame, PartyMessage, SeatSlot } from "./messages";
 import { onlineMatch, setOnlineMatch } from "./mode";
+import { analyticsBoardName, trackEvent } from "../analytics";
 import {
   configuredPartyUrl,
   openPartyRelay,
@@ -334,7 +335,7 @@ export function createRoom(): string {
     code,
     hostId: id,
     started: false,
-    turns: urlTurns() ?? 10,
+    turns: urlTurns() ?? readTurnsRule(),
     board: hostBoardRule(),
     seats: [0, 1, 2, 3].map((index) => ({
       index,
@@ -343,6 +344,7 @@ export function createRoom(): string {
       kind: roster[index]?.key ?? "pip",
     })),
   };
+  trackEvent("friends_room_created", { board: analyticsBoardName(room.board ?? DEFAULT_BOARD) });
   notify();
   return code;
 }
@@ -384,7 +386,7 @@ export function cycleSeatKind(index: number): void {
 
 export function setPlannedTurns(turns: number): void {
   if (!room || !isHost() || room.started) return;
-  room.turns = turns;
+  room.turns = setTurnsRule(turns);
   notify();
 }
 
@@ -475,9 +477,7 @@ export function closeParty(): void {
 function urlTurns(): number | undefined {
   const n = urlNumber("turns");
   if (n === undefined) return undefined;
-  const turns = Math.floor(n);
-  if (turns < 1 || turns > 10) return undefined;
-  return turns;
+  return clampTurns(n) ?? undefined;
 }
 
 function buildSetup(): MatchSetup {
@@ -668,6 +668,7 @@ function onJoin(msg: Extract<PartyMessage, { type: "join" }>): void {
 
 function onLobby(msg: Extract<PartyMessage, { type: "lobby" }>): void {
   if (!room || isHost()) return;
+  const wasSeated = room.seats.some((seat) => seat.peerId === peerId());
   clearJoinTimer();
   room.hostId = msg.hostId;
   room.seats = msg.seats.map((seat) => ({ ...seat }));
@@ -678,6 +679,10 @@ function onLobby(msg: Extract<PartyMessage, { type: "lobby" }>): void {
   boardStale =
     (Array.isArray(msg.need) && !canPlay(myBoardTags(), msg.need)) || (msg.stale ?? []).includes(peerId());
   lobbyError = null;
+  if (!wasSeated && room.seats.some((seat) => seat.peerId === peerId())) {
+    const playersInRoom = room.seats.filter((seat) => seat.peerId !== null).length;
+    trackEvent("friends_room_joined", { players_in_room: playersInRoom });
+  }
   notify();
 }
 

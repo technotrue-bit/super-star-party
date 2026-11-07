@@ -325,9 +325,10 @@ export function mountPackPicker(opts?: { card?: boolean }): PackPickerHandle {
  * Character select's single "Match settings" card. Minigame mix is the
  * human's pack (single-select, one-line blurb each); the rotation is a
  * small chip note under it; coin bonus is the host multiplier. Keeps the
- * same data-ssp-* hooks as mountPackPicker() for the probes.
+ * same data-ssp-* hooks as mountPackPicker() for the probes. `board: false`
+ * leaves the board row out (character select: the board menu picks it).
  */
-export function mountMatchSettings(): PackPickerHandle {
+export function mountMatchSettings(opts?: { board?: boolean }): PackPickerHandle {
   injectPackStyles();
   const root = document.createElement("div");
   root.className = "ssp-ms";
@@ -426,7 +427,7 @@ export function mountMatchSettings(): PackPickerHandle {
     const [c1, c2, c3] = settings.minigamePlaceCoins;
     note.textContent = `1st ${c1} · 2nd ${c2} · 3rd ${c3} coins × bonus`;
 
-    const boards = mountBoardPicker({ compact: true });
+    const boards = opts?.board === false ? null : mountBoardPicker({ compact: true });
     // CPU rivals: saved for the next match. A match in progress keeps its level,
     // so an online room's computer players never change mid-game.
     const cpuRow = document.createElement("div");
@@ -457,7 +458,7 @@ export function mountMatchSettings(): PackPickerHandle {
     }
     cpuRow.appendChild(cpuBlurb);
 
-    root.append(title, boards.el, mixLabel, tiles, rot, coins, cpuRow, note);
+    root.append(title, ...(boards ? [boards.el] : []), mixLabel, tiles, rot, coins, cpuRow, note);
   };
 
   paint();
