@@ -42,6 +42,12 @@ export interface OpeningDeps {
   overview: { pos: THREE.Vector3; look: THREE.Vector3 };
   /** Where the camera is right now (the flyover's last pose). */
   from: { pos: THREE.Vector3; look: THREE.Vector3 };
+  /**
+   * The party camera's framing of player `pid` standing at the start. The
+   * opening ends there for the first player, so the turn loop picks the
+   * camera up without flying out to the overview and back in.
+   */
+  follow?: (pid: number) => { pos: THREE.Vector3; look: THREE.Vector3 };
   scene: THREE.Scene;
   banner(text: string, opts?: { durationMs?: number }): unknown;
   project(pos: THREE.Vector3): { x: number; y: number } | null;
@@ -142,9 +148,27 @@ export function createOpening(d: OpeningDeps): Opening {
   });
   const headY = d.chars.map((ch) => new THREE.Box3().setFromObject(ch.group).max.y - ch.group.position.y);
 
-  // ---- camera: eases toward a target pose ------------------------------------------
+  // ---- camera: glides toward a target pose ------------------------------------------
+  // A critically damped spring (position and look on the same clock): every
+  // move starts gently, never overshoots, and settles at rest.
   const camPos = d.from.pos.clone();
   const camLook = d.from.look.clone();
+  const camVel = new THREE.Vector3();
+  const lookVel = new THREE.Vector3();
+  const CAM_GLIDE = 0.55;
+  const glide = (cur: THREE.Vector3, target: THREE.Vector3, vel: THREE.Vector3, dt: number): void => {
+    // Long moves take a little longer, so a far hop is a glide, not a whip.
+    const st = Math.min(1.2, Math.max(CAM_GLIDE, cur.distanceTo(target) * 0.012 + 0.3));
+    const omega = 2 / st;
+    const x = omega * dt;
+    const k = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+    for (const a of ["x", "y", "z"] as const) {
+      const change = cur[a] - target[a];
+      const temp = (vel[a] + omega * change) * dt;
+      vel[a] = (vel[a] - omega * temp) * k;
+      cur[a] = target[a] + (change + temp) * k;
+    }
+  };
   const tgtPos = linePos.clone();
   const tgtLook = lineLook.clone();
   const out = { pos: new THREE.Vector3(), look: new THREE.Vector3() };
@@ -484,9 +508,8 @@ export function createOpening(d: OpeningDeps): Opening {
         fitLinePose();
         if (wasLine) tgtPos.copy(linePos);
       }
-      const k = 1 - Math.exp(-dt * 3.2);
-      camPos.lerp(tgtPos, k);
-      camLook.lerp(tgtLook, k);
+      glide(camPos, tgtPos, camVel, dt);
+      glide(camLook, tgtLook, lookVel, dt);
 
       switch (phase) {
         case "lineup":
@@ -542,7 +565,11 @@ export function createOpening(d: OpeningDeps): Opening {
           if (phaseT > 2.9) {
             for (const c of chips) c.style.transform = "translate(-50%,-100%) scale(0)";
             beginWalk(home);
-            aimAt(d.overview.pos, d.overview.look);
+            // Straight to the first player's framing (where the party camera
+            // will be), not out to the overview and back in again.
+            const pose = d.follow?.(rank[0]);
+            if (pose) aimAt(pose.pos, pose.look);
+            else aimAt(d.overview.pos, d.overview.look);
             setPhase("return");
           }
           break;

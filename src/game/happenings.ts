@@ -20,6 +20,7 @@ import { audio } from "../audio/audioEngine";
 import { ahead } from "../board/boardData";
 import { activeBoard } from "../board/registry";
 import { npcName, placeWord } from "../board/boardText";
+import { CRUISE_INDEX } from "../board/boards/cruiseData";
 import { addCoins, movePrizeBalloon } from "./economy";
 
 /** What the turn loop needs to apply after a happening resolves. */
@@ -111,16 +112,49 @@ const GREEN_EVENTS: readonly string[] = [
   "balloon_breeze",
 ];
 
+/**
+ * The Cruise Ship's green pool: five sea happenings of its own in place of the
+ * carnival's coin shower, popcorn tax, gale, banana peel and express pass.
+ */
+const CRUISE_GREEN_EVENTS: readonly string[] = [
+  "dolphin_ride",
+  "message_bottle",
+  "cannonball",
+  "overboard",
+  "captains_toast",
+  "spot_swap",
+  "star_magnet",
+  "lucky_penny",
+  "star_dance",
+  "balloon_breeze",
+];
+
+/** Green pool for the active board. */
+function greenPool(): readonly string[] {
+  return activeBoard().theme === "cruise" ? CRUISE_GREEN_EVENTS : GREEN_EVENTS;
+}
+
+/** Lifeboat spaces a player overboard can be fished out onto (by name, Cruise Ship). */
+const LIFEBOAT_NAMES = ["Lifeboat One", "Rope Ladder", "Lifeboat Two", "Lifeboat Ladder"] as const;
+/** Pool Bridge spaces count as the Lido Deck for a cannonball splash. */
+const POOL_BRIDGE_NAMES = ["Footbridge", "Cannonball Drop", "Mid-Pool", "Diving Board"] as const;
+
+function onLidoDeck(space: number): boolean {
+  if (CRUISE_INDEX.lido.includes(space)) return true;
+  return POOL_BRIDGE_NAMES.some((n) => CRUISE_INDEX.byName(n) === space);
+}
+
 /** Pick the next green event: rng.pick among ids not yet used this match. */
 function pickGreenEvent(): string {
-  const used = match.events.filter((e) => GREEN_EVENTS.includes(e));
+  const all = greenPool();
+  const used = match.events.filter((e) => all.includes(e));
   let pool: string[];
-  if (used.length >= GREEN_EVENTS.length) {
+  if (used.length >= all.length) {
     // All used: reshuffle (clear only green ids, keep flag sentinels).
-    match.events = match.events.filter((e) => !GREEN_EVENTS.includes(e));
-    pool = [...GREEN_EVENTS];
+    match.events = match.events.filter((e) => !all.includes(e));
+    pool = [...all];
   } else {
-    pool = GREEN_EVENTS.filter((id) => !used.includes(id));
+    pool = all.filter((id) => !used.includes(id));
   }
   const id = rng.pick(pool);
   match.events.push(id);
@@ -294,6 +328,97 @@ export function resolveGreen(playerId: number, spaceIndex: number): HappeningOut
         message: `A gust pops the Grand Prize Balloon off ${fromName} and it reinflates at ${toName}!`,
         coinsDelta: 0,
         banner: "BALLOON BREEZE!",
+      };
+    }
+    /* ---------------- Cruise Ship sea happenings ---------------- */
+    case "dolphin_ride": {
+      const dist = rng.int(4, 7);
+      audio.sfx.play("happening.magic");
+      audio.sfx.play("whoosh");
+      audio.sfx.play("crowd.aah");
+      emitHappening(playerId, eventId, "Dolphin Ride!");
+      return {
+        label: "Dolphin Ride!",
+        message: `A friendly dolphin leaps aboard and carries you ${dist} spaces ahead!`,
+        coinsDelta: 0,
+        moveTo: ahead(activeBoard(), s, dist),
+        banner: "DOLPHIN RIDE!",
+      };
+    }
+    case "message_bottle": {
+      const amount = rng.pick([3, 5, 8, 12]);
+      addCoins(playerId, amount);
+      audio.sfx.play("pop");
+      audio.sfx.play("coin.gain", { pitch: 7 });
+      audio.sfx.play("happening.magic");
+      emitHappening(playerId, eventId, "Message in a Bottle!");
+      return {
+        label: "Message in a Bottle!",
+        message: `A bottle bobs up with a treasure map inside... X marks ${amount} coins!`,
+        coinsDelta: amount,
+        banner: "MESSAGE IN A BOTTLE!",
+      };
+    }
+    case "cannonball": {
+      // Splash everyone on the Lido Deck (and the Pool Bridge): 3 coins each, into your pocket.
+      const soaked = activeOthers(playerId).filter((p) => onLidoDeck(p.space));
+      let total = 0;
+      for (const p of soaked) {
+        const take = Math.min(3, p.coins);
+        if (take <= 0) continue;
+        addCoins(p.id, -take);
+        total += take;
+      }
+      if (total > 0) addCoins(playerId, total);
+      audio.sfx.play("happening.magic");
+      audio.sfx.play("boing");
+      audio.sfx.play(total > 0 ? "crowd.aah" : "crowd.ooh");
+      emitHappening(playerId, eventId, "Cannonball!");
+      const names = soaked.map((p) => p.name).join(", ");
+      return {
+        label: "Cannonball!",
+        message:
+          total > 0
+            ? `SPLASH! A cannonball into the pool soaks ${names}: they drop ${total} coins and you scoop them up!`
+            : "SPLASH! A huge cannonball into the pool... but nobody was on the Lido Deck to soak.",
+        coinsDelta: total,
+        banner: "CANNONBALL!",
+      };
+    }
+    case "overboard": {
+      const spots = LIFEBOAT_NAMES.map((n) => CRUISE_INDEX.byName(n)).filter((i) => i >= 0 && i !== s);
+      if (spots.length === 0) {
+        emitHappening(playerId, eventId, "Man Overboard!");
+        return { label: "Man Overboard!", message: "You wobble at the rail... and catch yourself. Phew!", coinsDelta: 0, banner: "MAN OVERBOARD!" };
+      }
+      const to = rng.pick(spots);
+      const lost = Math.min(2, player.coins);
+      if (lost > 0) addCoins(playerId, -lost);
+      audio.sfx.play("happening.magic");
+      audio.sfx.play("boing");
+      audio.sfx.play("whoosh");
+      emitHappening(playerId, eventId, "Man Overboard!");
+      const name = activeBoard().spaces[to]?.name ?? "a lifeboat";
+      return {
+        label: "Man Overboard!",
+        message: `A big wave knocks you over the rail! A lifeboat fishes you out at ${name}${lost > 0 ? `, but ${lost} coins sank` : ""}.`,
+        coinsDelta: -lost,
+        moveTo: to,
+        banner: "MAN OVERBOARD!",
+      };
+    }
+    case "captains_toast": {
+      addCoins(playerId, 5);
+      for (const p of activeOthers(playerId)) addCoins(p.id, 1);
+      audio.sfx.play("happening.magic");
+      audio.sfx.play("coin.gain", { pitch: 5 });
+      audio.sfx.play("crowd.cheer");
+      emitHappening(playerId, eventId, "Captain's Toast!");
+      return {
+        label: "Captain's Toast!",
+        message: "The Captain raises a glass in your honour! +5 coins for you and 1 for everyone else.",
+        coinsDelta: 5,
+        banner: "CAPTAIN'S TOAST!",
       };
     }
     default: {

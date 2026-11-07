@@ -23,12 +23,17 @@ function injectStyle(): void {
 body:has(.ssp-last5) .ssp-prize-hint { font-size:12px; padding-top:3px; padding-bottom:3px; }
 body:has(.ssp-last5) .ssp-prize-hint__text { display:block; white-space:nowrap; text-overflow:ellipsis; }
 body:has(.ssp-shop) .ssp-prize-hint { visibility:hidden !important; }
+.ssp-prize-hint__note { flex:none; padding:1px 7px; border-radius:999px; background:${palette.cream}; color:${palette.ink};
+  font-size:11px; white-space:nowrap; }
+.ssp-prize-hint__note[hidden] { display:none; }
 `;
   document.head.appendChild(s);
 }
 
 export interface PrizeHint {
   update(dist: number | null): void;
+  /** A small badge after the text (the Cruise Ship's Sea Report); null hides it. */
+  setNote(note: string | null): void;
   text(): string | null;
   rect(): DOMRect | null;
   destroy(): void;
@@ -50,7 +55,10 @@ export function createPrizeHint(): PrizeHint {
   icon.textContent = "\u{1F388}";
   const label = document.createElement("span");
   label.className = "ssp-prize-hint__text";
-  el.append(icon, label);
+  const note = document.createElement("span");
+  note.className = "ssp-prize-hint__note";
+  note.hidden = true;
+  el.append(icon, label, note);
   document.body.appendChild(el);
   let shown: string | null = null;
 
@@ -61,6 +69,10 @@ export function createPrizeHint(): PrizeHint {
       shown = next;
       el.hidden = next === null;
       if (next !== null) label.textContent = next;
+    },
+    setNote(text) {
+      note.hidden = text === null;
+      note.textContent = text ?? "";
     },
     text() {
       return shown;

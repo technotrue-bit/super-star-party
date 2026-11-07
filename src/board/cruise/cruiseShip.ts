@@ -7,6 +7,13 @@
  * sponsons, deck chairs, the forecastle mast and the stern flag. Around it:
  * a scrolling sea, a wake and bow foam, a sky dome and a few far islands.
  *
+ * Under way: the sea, wake, foam and everything afloat sit on one "sea rig"
+ * that rolls and heaves against the ship, so the ship reads as riding the
+ * swell. Islands, buoys and sailboats drift past aft, whitecaps stream by,
+ * gulls circle the funnels. The Sea Report (board:sea) sets the mood: a
+ * tailwind speeds the ship up, choppy seas roll it hard, treasure waters
+ * turn the whitecaps gold.
+ *
  * Deck geometry comes from boards/cruiseData.ts (the same numbers the space
  * layout and terrain layers use), so every disk sits on its deck. Static
  * parts are merged into a few vertex-coloured meshes. Animation runs from the
@@ -22,6 +29,40 @@ import type { Prop } from "../boardScenery";
 import { rippleTexture, buildSkyDome } from "../boardIsland";
 import { CRUISE_H, CRUISE_SHIP, type RoundRect } from "../boards/cruiseData";
 import { fxMulberry32 } from "../lively/fxRng";
+import { bus, type SSPEventMap } from "../../core/events";
+
+type SeaMoodKind = SSPEventMap["board:sea"]["kind"];
+
+/** Cruising speed: how fast the sea runs aft beneath the ship (world units / s). */
+const SHIP_SPEED = 2.6;
+/** One tile of the sea ripple texture, in world units (SEA_RADIUS * 2 / repeat). */
+const SEA_TILE = 12;
+
+interface SeaMood {
+  /** Ship speed multiplier. */
+  speed: number;
+  /** Roll / heave multiplier. */
+  roll: number;
+  /** Whitecap size and strength. */
+  cap: number;
+  /** Gold tint on the whitecaps (0..1). */
+  gold: number;
+}
+
+const SEA_MOODS: Record<SeaMoodKind, SeaMood> = {
+  calm: { speed: 1, roll: 0.6, cap: 0.75, gold: 0 },
+  tailwind: { speed: 1.8, roll: 1, cap: 1.25, gold: 0 },
+  choppy: { speed: 1.1, roll: 2.6, cap: 1.7, gold: 0 },
+  treasure: { speed: 1, roll: 0.9, cap: 1.05, gold: 1 },
+  dinner: { speed: 0.85, roll: 0.7, cap: 0.9, gold: 0.35 },
+};
+
+/** v wrapped into [-r, r). */
+const wrapRange = (v: number, r: number): number => ((((v + r) % (2 * r)) + 2 * r) % (2 * r)) - r;
+const smooth = (a: number, b: number, v: number): number => {
+  const u = Math.min(1, Math.max(0, (v - a) / (b - a)));
+  return u * u * (3 - 2 * u);
+};
 
 /** Sea level under the ship (world y). */
 export const CRUISE_SEA_Y = -3.4;
@@ -358,6 +399,10 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
     new THREE.MeshToonMaterial({ color: palette.white, gradientMap: kit.grad, ...opts });
   const solid = new Parts();
   const lidoH = CRUISE_H.lido;
+  // Everything afloat rides this group; it rolls and heaves against the ship.
+  const seaRig = new THREE.Group();
+  seaRig.name = "cruise:sea-rig";
+  root.add(seaRig);
 
   // ---- sea, sky, far islands ------------------------------------------------------------
   const rip = rippleTexture();
@@ -368,7 +413,7 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
   const sea = new THREE.Mesh(seaGeo, toon({ map: rip }));
   sea.position.set(0, CRUISE_SEA_Y, 0);
   sea.name = "cruise:sea";
-  root.add(sea);
+  seaRig.add(sea);
 
   const sky = buildSkyDome();
   sky.mesh.scale.setScalar(SKY_RADIUS / 300);
@@ -379,9 +424,12 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
   };
   root.add(sky.mesh);
 
+  // Tropical islets on the horizon: sand, a green cap, palms; one lighthouse.
+  // Each drifts aft as the ship steams on, sinks below the horizon at the far
+  // end and comes back up ahead of the bow.
+  const islets: { mesh: THREE.Mesh; x: number; z0: number; s: number }[] = [];
   {
-    // Tropical islets on the horizon: sand, a green cap, palms; one lighthouse.
-    const isl = new Parts();
+    const isletMat = toon({ vertexColors: true });
     const spots: [number, number, number][] = [
       [-2.4, 150, 1.4],
       [-1.1, 190, 1.0],
@@ -391,9 +439,8 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
       [-0.4, 230, 2.2],
     ];
     spots.forEach(([a, d, s], k) => {
-      const x = Math.cos(a) * d;
-      const z = Math.sin(a) * d;
-      const at = (dx: number, dy: number, dz: number) => new THREE.Matrix4().makeTranslation(x + dx * s, CRUISE_SEA_Y + dy * s, z + dz * s);
+      const isl = new Parts();
+      const at = (dx: number, dy: number, dz: number) => new THREE.Matrix4().makeTranslation(dx * s, dy * s, dz * s);
       const sc = (m: THREE.Matrix4) => m.multiply(new THREE.Matrix4().makeScale(s, s, s));
       isl.add(new THREE.CylinderGeometry(3.6, 4.4, 1.0, 14), palette.sand, sc(at(0, 0.2, 0)));
       isl.add(new THREE.CylinderGeometry(2.4, 3.2, 0.6, 12), palette.grassA, sc(at(0.4, 0.9, -0.3)));
@@ -406,8 +453,11 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
         isl.add(new THREE.CylinderGeometry(0.55, 0.55, 0.6, 10), palette.spaceRed, sc(at(-1.4, 4.4, -0.6)));
         isl.add(new THREE.ConeGeometry(0.7, 0.8, 10), palette.spaceRed, sc(at(-1.4, 6.4, -0.6)));
       }
+      const mesh = isl.build(isletMat, "cruise:islet", false);
+      mesh.position.set(Math.cos(a) * d, CRUISE_SEA_Y, Math.sin(a) * d);
+      seaRig.add(mesh);
+      islets.push({ mesh, x: Math.cos(a) * d, z0: Math.sin(a) * d, s });
     });
-    root.add(isl.build(toon({ vertexColors: true }), "cruise:islets", false));
   }
 
   // ---- hull -------------------------------------------------------------------------------
@@ -1046,7 +1096,7 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
       pa.needsUpdate = true;
     };
     place(0);
-    root.add(mesh);
+    seaRig.add(mesh);
     props.push({ root: mesh, update: (t) => place(t) });
   }
   // Wake: two foam trails fanning out behind the stern, scrolling away.
@@ -1096,14 +1146,14 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
       w.rotation.y = -side * 0.22;
       w.renderOrder = 2;
       w.name = "cruise:wake";
-      root.add(w);
+      seaRig.add(w);
       wakes.push(w);
     }
     const churn = new THREE.Mesh(geo, wakeMat);
     churn.position.set(0, CRUISE_SEA_Y + 0.035, S.hull.sternTip - 1);
     churn.scale.set(1.1, 1, 0.55);
     churn.renderOrder = 2;
-    root.add(churn);
+    seaRig.add(churn);
     props.push({ root: churn, update: (t) => wakeTex.offset.set(0, -t * 0.35) });
   }
   // Funnel smoke: soft puffs that rise and drift aft, then fade (one instanced mesh).
@@ -1156,7 +1206,7 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
     for (const d of pod) {
       const m = new THREE.Mesh(proto.geometry, proto.material);
       m.name = "cruise:dolphin";
-      root.add(m);
+      seaRig.add(m);
       props.push({
         root: m,
         update: (t) => {
@@ -1174,6 +1224,239 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
       });
     }
   }
+
+  // ---- under way: whitecaps, buoys, sailboats, gulls ----------------------------------
+  // Whitecaps: short foam streaks that stream aft past the ship and fade in and out.
+  const CAPS = 170;
+  const CAP_X = 100;
+  const CAP_Z = 120;
+  const capMat = new THREE.MeshBasicMaterial({ color: palette.white, transparent: true, opacity: 0.6, depthWrite: false });
+  const capGeo = new THREE.CircleGeometry(1, 10);
+  capGeo.rotateX(-Math.PI / 2);
+  const caps = new THREE.InstancedMesh(capGeo, capMat, CAPS);
+  caps.name = "cruise:whitecaps";
+  caps.frustumCulled = false;
+  caps.renderOrder = 1;
+  const capSeeds = Array.from({ length: CAPS }, () => {
+    const side = fx() < 0.5 ? -1 : 1;
+    return {
+      x: side * (21 + fx() * (CAP_X - 21)),
+      z: (fx() * 2 - 1) * CAP_Z,
+      len: 0.55 + fx() * 1.0,
+      wid: 0.12 + fx() * 0.18,
+      ph: fx(),
+      rate: 0.18 + fx() * 0.2,
+    };
+  });
+  seaRig.add(caps);
+
+  // Channel buoys: red and white, bobbing, with a blinking lamp.
+  const buoys: { g: THREE.Group; lamp: THREE.Mesh; x: number; z0: number; ph: number }[] = [];
+  {
+    const bp = new Parts();
+    bp.post(0.9, 0.9, 0, -0.6, 0.2, 0, palette.spaceRed, 12);
+    bp.post(0.75, 0.55, 0, 0.2, 1.1, 0, palette.white, 12);
+    bp.post(0.55, 0.35, 0, 1.1, 1.9, 0, palette.spaceRed, 12);
+    bp.post(0.06, 0.06, 0, 1.9, 2.6, 0, palette.metal, 6);
+    const proto = bp.build(toon({ vertexColors: true }), "cruise:buoy", false);
+    const lampGeo = new THREE.SphereGeometry(0.22, 10, 8);
+    const spots = [
+      { x: 34, z0: -60, ph: 0 },
+      { x: -40, z0: 10, ph: 0.4 },
+      { x: 48, z0: 95, ph: 0.7 },
+      { x: -55, z0: -140, ph: 0.2 },
+    ];
+    for (const b of spots) {
+      const g = new THREE.Group();
+      g.name = "cruise:buoy";
+      g.add(new THREE.Mesh(proto.geometry, proto.material));
+      const lamp = new THREE.Mesh(lampGeo, new THREE.MeshBasicMaterial({ color: palette.sun }));
+      lamp.position.y = 2.75;
+      g.add(lamp);
+      seaRig.add(g);
+      buoys.push({ g, lamp, x: b.x, z0: b.z0, ph: b.ph });
+    }
+  }
+
+  // Sailboats: two little yachts heading the same way, slower, so the liner overtakes them.
+  const boats: { g: THREE.Group; x: number; z0: number; ph: number; rel: number }[] = [];
+  {
+    const hullGeo = new THREE.CylinderGeometry(0.9, 0.5, 6, 10, 1);
+    hullGeo.rotateX(Math.PI / 2);
+    hullGeo.scale(1, 0.55, 1);
+    const sp = new Parts();
+    sp.add(hullGeo, palette.white, new THREE.Matrix4().makeTranslation(0, 0.2, 0));
+    sp.box(1.5, 0.12, 4.6, 0, 0.55, 0.2, palette.teak);
+    sp.post(0.07, 0.07, 0, 0.5, 7.2, -0.5, palette.metal, 6);
+    const hullMesh = sp.build(toon({ vertexColors: true }), "cruise:sailboat", false);
+    const sailShape = new THREE.Shape();
+    sailShape.moveTo(0, 0);
+    sailShape.lineTo(0, 6.2);
+    sailShape.lineTo(3.4, 0);
+    sailShape.closePath();
+    const mainGeo = new THREE.ShapeGeometry(sailShape);
+    mainGeo.rotateY(Math.PI / 2); // in the boat's centre plane, trailing aft
+    const jibShape = new THREE.Shape();
+    jibShape.moveTo(0, 0);
+    jibShape.lineTo(0, 5.2);
+    jibShape.lineTo(-2.4, 0);
+    jibShape.closePath();
+    const jibGeo = new THREE.ShapeGeometry(jibShape);
+    jibGeo.rotateY(Math.PI / 2);
+    const sailMats = [palette.white, palette.sun].map((c) => toon({ color: c, side: THREE.DoubleSide }));
+    const spots = [
+      { x: -62, z0: -90, ph: 0.1, rel: 0.45, sail: 0 },
+      { x: 78, z0: 60, ph: 0.6, rel: 0.6, sail: 1 },
+    ];
+    for (const b of spots) {
+      const g = new THREE.Group();
+      g.name = "cruise:sailboat";
+      g.add(new THREE.Mesh(hullMesh.geometry, hullMesh.material));
+      const main = new THREE.Mesh(mainGeo, sailMats[b.sail]);
+      main.position.set(0, 0.9, -0.4);
+      main.rotation.y = 0.25;
+      const jib = new THREE.Mesh(jibGeo, sailMats[1 - b.sail]);
+      jib.position.set(0, 0.9, -0.7);
+      jib.rotation.y = -0.15;
+      g.add(main, jib);
+      g.scale.setScalar(1.3);
+      seaRig.add(g);
+      boats.push({ g, x: b.x, z0: b.z0, ph: b.ph, rel: b.rel });
+    }
+  }
+
+  // Gulls: a few circling over the funnels and the Lido, wings flapping (Gus's friends).
+  const gulls: { g: THREE.Group; wl: THREE.Object3D; wr: THREE.Object3D; cx: number; cz: number; r: number; h: number; w: number; ph: number }[] = [];
+  {
+    const gp = new Parts();
+    const body = new THREE.SphereGeometry(1, 10, 8);
+    body.scale(0.2, 0.18, 0.55);
+    gp.add(body, palette.white);
+    gp.add(new THREE.SphereGeometry(0.15, 8, 6), palette.white, new THREE.Matrix4().makeTranslation(0, 0.1, -0.5));
+    const beak = new THREE.ConeGeometry(0.06, 0.22, 5);
+    beak.rotateX(-Math.PI / 2);
+    gp.add(beak, palette.sunDeep, new THREE.Matrix4().makeTranslation(0, 0.08, -0.72));
+    const tail = new THREE.ConeGeometry(0.16, 0.35, 4);
+    tail.rotateX(Math.PI / 2);
+    gp.add(tail, palette.metal, new THREE.Matrix4().makeTranslation(0, 0.02, 0.6));
+    const bodyMesh = gp.build(toon({ vertexColors: true }), "cruise:gull", false);
+    const wp = new Parts();
+    wp.box(0.8, 0.04, 0.34, 0.42, 0, 0, palette.white);
+    wp.box(0.32, 0.045, 0.3, 0.98, 0, 0.02, palette.inkSoft);
+    const wingMesh = wp.build(toon({ vertexColors: true }), "cruise:gull-wing", false);
+    // Kept over the middle of the ship (|x| < 11), clear of the rails where
+    // the low line-up and tour cameras stand.
+    const flock = [
+      { cx: 0, cz: 14, r: 8, h: 12.5, w: 0.42 },
+      { cx: 0, cz: 10, r: 10.5, h: 14.5, w: -0.33 },
+      { cx: 0, cz: -4, r: 9, h: 13, w: 0.27 },
+      { cx: 0, cz: -10, r: 10.5, h: 15, w: -0.22 },
+      { cx: 0, cz: -24, r: 7, h: 11, w: 0.36 },
+      { cx: 0, cz: 24, r: 6, h: 11, w: -0.48 },
+    ];
+    for (const f of flock) {
+      const g = new THREE.Group();
+      g.name = "cruise:gull";
+      const b = new THREE.Mesh(bodyMesh.geometry, bodyMesh.material);
+      b.castShadow = true;
+      const wr = new THREE.Mesh(wingMesh.geometry, wingMesh.material);
+      const wl = new THREE.Mesh(wingMesh.geometry, wingMesh.material);
+      wl.scale.x = -1;
+      wr.position.set(0.12, 0.06, -0.05);
+      wl.position.set(-0.12, 0.06, -0.05);
+      g.add(b, wr, wl);
+      g.scale.setScalar(1.35);
+      root.add(g);
+      gulls.push({ g, wl, wr, ...f, ph: fx() * Math.PI * 2 });
+    }
+  }
+
+  // The Sea Report sets the mood; the values ease toward it.
+  const mood: SeaMood = { ...SEA_MOODS.calm };
+  let moodTarget: SeaMood = SEA_MOODS.calm;
+  const offSea = bus.on("board:sea", ({ kind }) => {
+    moodTarget = SEA_MOODS[kind] ?? SEA_MOODS.calm;
+  });
+  /** Distance sailed (world units): drives the sea scroll and everything drifting past. */
+  let sailed = 0;
+  let lastT = 0;
+  const capColor = new THREE.Color();
+  const white = new THREE.Color(palette.white);
+  const gold = new THREE.Color(palette.sun);
+  const capDummy = new THREE.Object3D();
+  const sailOn = (t: number, dtIn: number): void => {
+    const dt = Math.min(0.1, Math.max(0, Number.isFinite(dtIn) ? dtIn : t - lastT));
+    lastT = t;
+    const k = 1 - Math.exp(-dt * 0.8);
+    mood.speed += (moodTarget.speed - mood.speed) * k;
+    mood.roll += (moodTarget.roll - mood.roll) * k;
+    mood.cap += (moodTarget.cap - mood.cap) * k;
+    mood.gold += (moodTarget.gold - mood.gold) * k;
+    sailed += SHIP_SPEED * mood.speed * dt;
+
+    // Swell: the world rolls and heaves against the ship.
+    const R = mood.roll;
+    seaRig.rotation.z = 0.0105 * R * Math.sin(t * 0.84) + 0.003 * R * Math.sin(t * 2.1 + 0.6);
+    seaRig.rotation.x = 0.0055 * R * Math.sin(t * 0.63 + 1.2);
+    seaRig.position.y = 0.13 * R * Math.sin(t * 1.17 + 0.4);
+
+    // The sea runs aft (+z) beneath the ship: v grows toward the bow, so the offset grows.
+    rip.offset.set(t * 0.004, sailed / SEA_TILE);
+
+    for (const isl of islets) {
+      const z = wrapRange(isl.z0 + sailed * 0.9, 260);
+      isl.mesh.position.set(isl.x, CRUISE_SEA_Y - smooth(195, 255, Math.abs(z)) * 14 * isl.s, z);
+    }
+
+    capColor.copy(white).lerp(gold, mood.gold * 0.85);
+    capMat.color.copy(capColor);
+    capMat.opacity = Math.min(0.95, 0.5 + 0.22 * mood.cap);
+    for (let i = 0; i < CAPS; i++) {
+      const c = capSeeds[i];
+      const z = wrapRange(c.z + sailed, CAP_Z);
+      const u = (t * c.rate + c.ph) % 1;
+      const life = Math.sin(u * Math.PI);
+      const edge = 1 - smooth(CAP_Z - 25, CAP_Z, Math.abs(z));
+      const sz = Math.max(0.001, life * edge * mood.cap);
+      capDummy.position.set(c.x, CRUISE_SEA_Y + 0.05, z);
+      capDummy.scale.set(c.wid * sz * 2, 1, c.len * sz * (1 + 0.15 * mood.speed));
+      capDummy.updateMatrix();
+      caps.setMatrixAt(i, capDummy.matrix);
+    }
+    caps.instanceMatrix.needsUpdate = true;
+
+    for (const b of buoys) {
+      const z = wrapRange(b.z0 + sailed, 180);
+      const fade = 1 - smooth(150, 180, Math.abs(z));
+      b.g.position.set(b.x, CRUISE_SEA_Y + 0.15 * Math.sin(t * 1.6 + b.ph * 6) * (0.6 + 0.5 * R), z);
+      b.g.rotation.set(0.12 * Math.sin(t * 1.3 + b.ph * 5) * R, 0, 0.1 * Math.sin(t * 1.1 + b.ph * 3) * R);
+      b.g.scale.setScalar(Math.max(0.001, fade));
+      b.lamp.visible = (t + b.ph * 2) % 2 < 0.45;
+    }
+
+    for (const b of boats) {
+      const z = wrapRange(b.z0 + sailed * b.rel, 200);
+      const fade = 1 - smooth(165, 200, Math.abs(z));
+      b.g.position.set(b.x, CRUISE_SEA_Y + 0.2 * Math.sin(t * 1.25 + b.ph * 6), z);
+      b.g.rotation.set(0.05 * Math.sin(t * 0.9 + b.ph * 4) * R, 0, (b.x > 0 ? -1 : 1) * (0.12 + 0.04 * Math.sin(t * 0.7 + b.ph)) * (0.7 + 0.3 * mood.speed));
+      b.g.scale.setScalar(1.3 * Math.max(0.001, fade));
+    }
+
+    for (const gl of gulls) {
+      const a = gl.ph + t * gl.w;
+      const x = gl.cx + Math.cos(a) * gl.r;
+      const z = gl.cz + Math.sin(a) * gl.r;
+      gl.g.position.set(x, gl.h + 0.6 * Math.sin(t * 0.9 + gl.ph), z);
+      // Face along the circle (the model looks down -z), banked into the turn.
+      const dir = Math.sign(gl.w);
+      gl.g.rotation.set(0, Math.atan2(Math.sin(a) * dir, -Math.cos(a) * dir), dir * 0.32, "YXZ");
+      // Flap in bursts, then glide.
+      const glide = Math.sin(t * 0.5 + gl.ph) > 0.2;
+      const flap = glide ? 0.12 + 0.05 * Math.sin(t * 2 + gl.ph) : 0.55 * Math.sin(t * 11 + gl.ph);
+      gl.wr.rotation.z = flap;
+      gl.wl.rotation.z = -flap;
+    }
+  };
 
   // ---- signal-flag lines and the crowd's forecastle bleachers ---------------------------
   const strands: Array<[THREE.Vector3, THREE.Vector3]> = [
@@ -1195,12 +1478,13 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
     setSky(top: number, horizon: number) {
       sky.set(top, horizon);
     },
-    update(t: number) {
-      // The ship steams north: the sea runs aft beneath it.
-      rip.offset.set(t * 0.004, -t * 0.03);
+    update(t: number, dt: number) {
+      // The ship steams north: the sea, and everything afloat, runs aft beneath it.
+      sailOn(t, dt);
       poolRip.offset.set(t * 0.02, t * 0.015);
     },
     dispose() {
+      offSea();
       for (const tex of textures) tex.dispose();
     },
   };

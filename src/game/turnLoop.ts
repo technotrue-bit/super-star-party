@@ -40,6 +40,7 @@ import type { PopupHandle } from "../ui/popup";
 import { addCoins, awardMinigameResult, tryBuyStars, sensibleStarCount, movePrizeBalloon, grantStamp, popMinigameBalloon, carnivalSqueeze, minigameCoinAward } from "./economy";
 import { decideFinalResults } from "./finalResults";
 import { resolveGreen, resolveGrumpus, consumeFreeStar, consumeDoubleBlue } from "./happenings";
+import { currentSea, seaReport, seaReportActive, seaMoveBonus, seaBlueMultiplier, seaRedMultiplier, dinnerKey, DINNER_COINS } from "./seaReport";
 import {
   ITEM_DEFS,
   buyItem,
@@ -431,6 +432,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   /* ---------------- helpers ---------------- */
 
+  /** Hold after a finished turn (settings.turnEndDelay; shorter under autoplay). */
+  const turnEndDelay = (): number => (isAutoplay() ? settings.autoplayTurnEndDelay : settings.turnEndDelay);
+  /** Input lock on the "YOUR TURN!" banner (settings.turnStartLock; shorter under autoplay). */
+  const turnStartLock = (): number => (isAutoplay() ? settings.autoplayTurnStartLock : settings.turnStartLock);
+
   const pause = (seconds: number, fn: () => void): void => {
     S.pauseT = seconds;
     S.pauseFn = fn;
@@ -694,6 +700,44 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     );
   };
 
+  /**
+   * The Cruise Ship's Sea Report. Every turn start re-tells the scene the
+   * round's condition (the scene is rebuilt after each minigame); the first
+   * player of the round also gets the Captain's toast. The Captain's Dinner
+   * pays once per round, guarded by a match.events sentinel so a rebuilt
+   * loop never serves it twice.
+   */
+  let seaToldTurn = 0;
+  const announceSea = (pid: number): ReturnType<typeof seaReport> | null => {
+    if (!seaReportActive()) return null;
+    const kind = currentSea();
+    bus.emit("board:sea", { kind, turn: match.turn });
+    if (pid !== match.turnOrder[0] || seaToldTurn === match.turn) return null;
+    seaToldTurn = match.turn;
+    const rep = seaReport(kind);
+    if (kind === "dinner" && !match.events.includes(dinnerKey(match.turn))) {
+      match.events.push(dinnerKey(match.turn));
+      for (const p of match.players) {
+        if (p.active) addCoins(p.id, DINNER_COINS);
+      }
+      for (const ch of chars) ch?.anim.cheer();
+      audio.sfx.play("coin.gain");
+      audio.sfx.play("crowd.cheer");
+    } else if (kind === "choppy") {
+      audio.sfx.play("boing");
+      ceremony.shakeScreen(5, 0.5);
+    } else if (kind === "calm") {
+      audio.sfx.play("pop");
+    } else {
+      audio.sfx.play("happening.magic");
+      audio.sfx.play("whoosh");
+    }
+    // Not a happening:event: the board screen would swallow the turn banner after it.
+    ui.toast(rep.toast, { durationMs: 2800 });
+    refreshHud();
+    return rep;
+  };
+
   const beginTurn = (): void => {
     checkpoint("turn");
     S.phase = "announce";
@@ -705,12 +749,13 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       player.itemFx.skipTurn = false;
       bus.emit("turn:start", { turn: match.turn, player: pid });
       announceGate(pid);
+      announceSea(pid);
       hud.showBanner(`${labelDoes(pid, "LOSE", "LOSES")} A TURN!`, { durationMs: 1400 });
       ui.toast("The Grumpus Coat ate their turn!", { durationMs: 1800 });
       chars[pid]?.anim.sad();
       audio.sfx.play("sad");
       refreshHud();
-      pause(1.1, nextTurn);
+      pause(turnEndDelay(), nextTurn);
       return;
     }
     bus.emit("turn:start", { turn: match.turn, player: pid });
@@ -720,9 +765,22 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     refreshHud();
     hud.showBanner(`TURN ${match.turn}`, { durationMs: 900 });
     announceGate(pid);
+    const playerBanner = (): void => {
+      // "YOUR TURN!" (or whoever's) holds the screen: nothing can be pressed
+      // until the lock runs out and the die arms.
+      const lock = turnStartLock();
+      hud.showBanner(`${labelPossessive(pid)} TURN!`, { durationMs: Math.round(lock * 1000) + 250 });
+      pause(lock, () => offerFizzyPity(pid, beginDice));
+    };
+    // The Captain's call (Cruise Ship) gets its own beat before the player's banner.
+    const sea = announceSea(pid);
     pause(0.95, () => {
-      hud.showBanner(`${labelPossessive(pid)} TURN!`, { durationMs: 1150 });
-      pause(0.75, () => offerFizzyPity(pid, beginDice));
+      if (!sea) {
+        playerBanner();
+        return;
+      }
+      hud.showBanner(sea.banner, { durationMs: 1500 });
+      pause(1.6, playerBanner);
     });
   };
 
@@ -1174,7 +1232,8 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const landRemainder = (pid: number, type: string, pos: THREE.Vector3): void => {
     switch (type) {
       case "blue": {
-        let gained = settings.blueCoin;
+        // Cruise Ship treasure waters pay the blue twice over.
+        let gained = settings.blueCoin * seaBlueMultiplier();
         addCoins(pid, gained);
         if (consumeDoubleBlue(pid)) {
           addCoins(pid, gained);
@@ -1194,7 +1253,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         break;
       }
       case "red": {
-        addCoins(pid, -settings.redCoin);
+        // Cruise Ship choppy seas: red takes double.
+        const lost = settings.redCoin * seaRedMultiplier();
+        addCoins(pid, -lost);
         // Real sting: camera punch toward the victim, screen shake, red flash,
         // punchy banner, ouch sfx, and a comedic trombone-fall stinger on the
         // lose track (MP7-style: losing coins hard is a comedy beat).
@@ -1204,7 +1265,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
         ceremony.focusCamera(rp, 0.25);
         ceremony.shakeScreen(7, 0.35);
         ceremony.flashOverlay("rgba(255,90,60,0.30)");
-        hud.showBanner(`-${settings.redCoin}!`, { durationMs: 1500 });
+        hud.showBanner(`-${lost}!`, { durationMs: 1500 });
         chars[pid]?.anim.sad();
         audio.sfx.play("coin.lose", { volume: 0.9 });
         audio.music.stinger("lose", { duckTo: 0.316, duckAttack: 0.04, duckRelease: 0.6 });
@@ -1510,7 +1571,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   const finishEffect = (): void => {
     refreshHud();
-    pause(0.9, nextTurn);
+    pause(turnEndDelay(), nextTurn);
   };
 
   /**
@@ -1531,7 +1592,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const finishTurn = (): void => {
     S.phase = "space-effect";
     match.phase = "space-effect";
-    pause(0.9, nextTurn);
+    pause(turnEndDelay(), nextTurn);
   };
 
   const nextTurn = (): void => {
@@ -1609,14 +1670,17 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     // was already chosen; this only blocks a second roll.
     S.rolling = true;
     const adj = consumeRollAdjust(pid);
-    const total = movementTotal(raw, adj.bonus, adj.penalty);
-    if (adj.bonus !== 0 || adj.penalty !== 0) {
+    // Cruise Ship tailwind: +1 space on every roll this round.
+    const sea = seaMoveBonus();
+    const total = movementTotal(raw, adj.bonus + sea, adj.penalty);
+    if (adj.bonus !== 0 || adj.penalty !== 0 || sea !== 0) {
       const bits = [`rolled ${raw}`];
       if (adj.bonus) bits.push(`+${adj.bonus}`);
+      if (sea) bits.push(`+${sea} tailwind`);
       if (adj.penalty) bits.push(`−${adj.penalty}`);
       ui.toast(`${bits.join(" ")} → move ${total}`, { durationMs: 1600 });
     }
-    pause(adj.bonus || adj.penalty ? 0.7 : 1.0, () => {
+    pause(adj.bonus || adj.penalty || sea ? 0.7 : 1.0, () => {
       S.rolling = false;
       if (!(window as any).__SSP_HOLD_DIE) {
         dice.hide();

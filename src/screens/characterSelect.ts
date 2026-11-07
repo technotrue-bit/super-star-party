@@ -26,6 +26,7 @@ import { audio } from "../audio/audioEngine";
 import { ui } from "../ui/kit";
 import { roster, MATCH_SEATS, type CharacterKind } from "../characters/roster";
 import { createCharacter, type Character } from "../characters/characterFactory";
+import { isFloater, floatHeight } from "../characters/anims";
 import type { Screen } from "./screenManager";
 import { screens } from "./screenManager";
 import { onViewportChange, viewportSize } from "../ui/viewport";
@@ -379,6 +380,9 @@ const characterSelectImpl: SelectScreenState & Screen = {
       rest.min.z -= pad;
       rest.max.z += pad;
       rest.max.y += size.y * 0.06;
+      // Floaters (Wisp, Jack) hover above their feet and bob in idle; the box above
+      // is measured before any pose runs, so add the hover plus the bob on top.
+      if (isFloater(charKind.key)) rest.max.y += floatHeight(charKind.key) + 0.08;
       this._chars!.push(ch);
       this._holders!.push(holder);
       this._restBox!.push(rest);

@@ -30,6 +30,11 @@ const CI = process.argv.includes("--ci");
 const SHOTS = CI ? null : process.env.SSP_SHOTS || null;
 if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 const LOAD = 45000;
+// Scenario waits are wall clock, but the game only moves when a frame is drawn. On a
+// busy CI runner (twelve WebGL pages at once) a carnival page can drop below one
+// frame a second, and a human turn needs ~10 frames from turn:start to an armed
+// ROLL. These budgets cover that; a healthy run never waits them out.
+const WAIT = 240000;
 const t0 = Date.now();
 const errors = [];
 let fails = 0;
@@ -138,7 +143,7 @@ function installSampler() {
 
 const last = (page) => page.evaluate(() => window.__LAST ?? null);
 
-async function waitHumanDice(page, ms = 150000) {
+async function waitHumanDice(page, ms = WAIT) {
   await page.waitForFunction(
     () => {
       const e = window.__LAST;
@@ -186,7 +191,7 @@ async function forceRoll2(page, seat, space, a, b) {
   return press();
 }
 /** Queue a grant for the next human turn:start, wait for the item button, return the seat (or -1). */
-async function grantWait(page, tg, items, key, ms = 120000) {
+async function grantWait(page, tg, items, key, ms = WAIT) {
   // A human turn that already began has missed its announce beat: spend it on a 1-pip roll so the
   // grant lands on the next human turn instead of waiting behind an idle seat.
   const e0 = await last(page);
@@ -281,7 +286,7 @@ async function driveWalk(page, seat, picks, shotName, ms = 30000) {
   }
   return -1;
 }
-async function waitCpuDone(page, ms = 120000) {
+async function waitCpuDone(page, ms = WAIT) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
     const r = await page.evaluate(() => {
@@ -496,7 +501,7 @@ function forkScenarios(board, G, B) {
       // placed on the fork during its announce beat, so no seat rotation is waited for.
       const tg = `${board}-exact-fork`;
       await page.evaluate(([t, p]) => window.__GRANTQ.push({ tag: t, kind: "human", place: p }), [tg, f]);
-      const placed = await page.waitForFunction((t) => !!window.__GRANTED[t], tg, { timeout: 120000, polling: 60 }).then(() => true, () => false);
+      const placed = await page.waitForFunction((t) => !!window.__GRANTED[t], tg, { timeout: WAIT, polling: 60 }).then(() => true, () => false);
       const seat2 = placed ? await waitHumanDice(page, 20000).catch(() => -1) : -1;
       if (seat2 < 0) return check(tag("EXACT next turn lane popup"), false, `placed ${placed}, no human dice phase within 20 s`);
       const here = (await last(page)).sp;
@@ -647,7 +652,7 @@ function itemScenarios(board, G, B) {
   const cpuItem = (name, key, verify) => async (page) => {
     const tg = `${board}-${name}`;
     await page.evaluate(([t, k]) => window.__GRANTQ.push({ tag: t, kind: "cpu", items: [k] }), [tg, key]);
-    const g = await page.waitForFunction((t) => window.__GRANTED[t] ?? null, tg, { timeout: 150000, polling: 60 }).then((h) => h.jsonValue(), () => null);
+    const g = await page.waitForFunction((t) => window.__GRANTED[t] ?? null, tg, { timeout: WAIT, polling: 60 }).then((h) => h.jsonValue(), () => null);
     if (!g) return check(tag(name), false, `cpu grant never applied ${JSON.stringify(await page.evaluate(() => ({ q: window.__GRANTQ, g: window.__GRANTED, last: window.__LAST, ts: window.__SSP__.phaseLog().filter((x) => x.event === "turn:start").length })))}`);
     if (g.before.length) return note(`${tag(name)} cpu bag was not empty (${g.before}); item pick is random, skipped`);
     const done = await page.waitForFunction(([s, a]) => window.__LAST.f > a + 5 && window.__LAST.cur !== s, [g.cur, g.f], { timeout: 90000, polling: 60 }).then(() => true, () => false);

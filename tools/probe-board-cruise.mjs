@@ -15,7 +15,7 @@
  * replays byte for byte. Re-record that file (SSP_GOLDEN_OUT) only for an
  * intended gameplay change on this board.
  *
- * Part 3 (autoplay): plays each seed in SSP_CR_SEEDS (default "4,5") for up
+ * Part 3 (autoplay): plays each seed in SSP_CR_SEEDS (default "1,2,4") for up
  * to SSP_CR_TURNS turns and checks boardId, that tokens only stand on valid
  * spaces, the balloon only on prize spots (or where a Balloon Tug pulled it),
  * zero page errors, and reports which fork lanes were walked. At least half
@@ -33,7 +33,10 @@ import { fileURLToPath } from "node:url";
 
 const BASE = (process.env.SSP_URL ?? "http://127.0.0.1:5177").replace(/\/$/, "");
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const SEEDS = (process.env.SSP_CR_SEEDS ?? "4,5").split(",").map(Number);
+// Seeds re-picked when the Sea Report and the sea happenings changed this board's
+// play: through turn 8, 1 takes lanes 4,9,42,63; 2 takes 9,31,36,66,79; 4 takes
+// 9,31,65 (9 of 13 together). The old pair 4,5 now reaches only 4.
+const SEEDS = (process.env.SSP_CR_SEEDS ?? "1,2,4").split(",").map(Number);
 const RUN_TURNS = Number(process.env.SSP_CR_TURNS ?? 8);
 const CAP_MS = 420000;
 const fails = [];
