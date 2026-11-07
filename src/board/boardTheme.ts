@@ -16,9 +16,27 @@ export interface BoardThemeHost {
   kit: BoardTextures;
 }
 
+/**
+ * A theme's space tiles: every space drawn by one instanced mesh (instance i
+ * = space i), in place of the placeholder disks and their printed rims.
+ */
+export interface ThemeTiles {
+  /** Added to the board after its static-bounds pass (the tiles move). */
+  root: Object3D;
+  /** Height of the tile face above the ground; per-space props stand on it. */
+  top: number;
+  /**
+   * Pose space i's tile for a landing reaction (landFx dipInstance): y offset,
+   * y squash and xz stretch. (0, 1, 1) is at rest.
+   */
+  dipInstance(i: number, y: number, sy: number, sxz: number): void;
+}
+
 /** One built theme: static ground + scenery the board adds after its static-bounds pass. */
 export interface BuiltBoardTheme {
   root: Object3D;
+  /** Space tiles; without them the board keeps its placeholder disks. */
+  tiles?: ThemeTiles;
   /** Cosmetic animation (water ripples). Board seconds. */
   update?(t: number, dt: number): void;
   /** Free what build() made. The board's own traversal frees the rest. */

@@ -256,7 +256,11 @@ export function buildBoardScene(def: BoardDef = activeBoard(), theme: BoardTheme
   // Lanes are built by boardLanes.ts and added after the static-bounds pass below.
 
   // ---- space disks -----------------------------------------------------------------
-  const diskGeo = new THREE.CylinderGeometry(settings.tileRadius * 0.96, settings.tileRadius, B.diskHeight, 32);
+  // A theme's tiles (one instanced mesh) replace the disks and their rims; the
+  // space groups keep the props and highlight rings, lowered onto the tile face.
+  const tiles = themed?.tiles ?? null;
+  const groupDrop = tiles ? tiles.top - B.diskHeight / 2 : 0;
+  const diskGeo = tiles ? null : new THREE.CylinderGeometry(settings.tileRadius * 0.96, settings.tileRadius, B.diskHeight, 32);
   const ringGeo = new THREE.TorusGeometry(settings.tileRadius * 1.22, 0.055, 8, 32);
   ringGeo.rotateX(Math.PI / 2);
   const startDir = pos2(1).clone().sub(pos2(0));
@@ -264,20 +268,22 @@ export function buildBoardScene(def: BoardDef = activeBoard(), theme: BoardTheme
   for (let i = 0; i < n; i++) {
     const sp = def.spaces[i];
     const g = new THREE.Group();
-    g.position.set(sp.x, spaceY[i], sp.y);
+    g.position.set(sp.x, spaceY[i] + groupDrop, sp.y);
 
-    const disk = new THREE.Mesh(
-      diskGeo,
-      [
-        toonMat(kit, DISK_RIM[sp.type]),
-        toonMat(kit, palette.white, { map: kit.disks[sp.type] }),
-        toonMat(kit, DISK_RIM[sp.type]),
-      ]
-    );
-    disk.rotation.y = DISK_YAW;
-    disk.castShadow = true;
-    disk.receiveShadow = true;
-    g.add(disk);
+    if (diskGeo) {
+      const disk = new THREE.Mesh(
+        diskGeo,
+        [
+          toonMat(kit, DISK_RIM[sp.type]),
+          toonMat(kit, palette.white, { map: kit.disks[sp.type] }),
+          toonMat(kit, DISK_RIM[sp.type]),
+        ]
+      );
+      disk.rotation.y = DISK_YAW;
+      disk.castShadow = true;
+      disk.receiveShadow = true;
+      g.add(disk);
+    }
 
     const ringMat = new THREE.MeshBasicMaterial({
       color: palette.sun,
@@ -320,7 +326,7 @@ export function buildBoardScene(def: BoardDef = activeBoard(), theme: BoardTheme
   // Printed rim under every disk, party-board style: a cream band, then an ink
   // band, peeking out round the coloured top. One instanced mesh for all
   // spaces (static: a landing dip presses the disk down into its rim).
-  {
+  if (!tiles) {
     const R = settings.tileRadius;
     const cream = new THREE.CylinderGeometry(R * 1.1, R * 1.13, 0.1, 32);
     const inkBand = new THREE.CylinderGeometry(R * 1.19, R * 1.21, 0.07, 32).translate(0, -0.015, 0);
@@ -553,6 +559,7 @@ export function buildBoardScene(def: BoardDef = activeBoard(), theme: BoardTheme
   // the BVH triangle cutoff and would otherwise load three-mesh-bvh on every board.
   for (const m of buildBoardLanes(def, kit)) group.add(m);
   group.add(decor);
+  if (tiles) group.add(tiles.root);
 
   // ---- lively board: ambient loops + landing reactions (cosmetic) -------------------
   // Added after the static-bounds pass: these all move. `?lively=0` skips it all.
@@ -604,6 +611,7 @@ export function buildBoardScene(def: BoardDef = activeBoard(), theme: BoardTheme
         return new THREE.Vector3(sp.x, spaceY[k], sp.y);
       },
       rimColor: (type) => DISK_RIM[type as SpaceType] ?? palette.sun,
+      dipInstance: tiles ? (i, y, sy, sxz) => tiles.dipInstance(wrapIndex(i, n), y, sy, sxz) : undefined,
     });
     // Crowd bleachers in the two gaps of the south tent row, pulled toward
     // the loop so the tent canopies don't cover them, facing the board.
