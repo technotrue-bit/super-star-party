@@ -7,6 +7,7 @@ import { match } from "../core/game";
 import type { SpaceTrap, TrapKind } from "../core/game";
 import { rng } from "../core/rng";
 import { addCoins, movePrizeBalloon } from "./economy";
+import { ITEM_DEFS, itemName } from "./items";
 
 export interface TrapResult {
   kind: TrapKind;
@@ -122,7 +123,7 @@ export function resolveTrap(victimId: number, trap: SpaceTrap): TrapResult {
     }
     const lost = Math.min(10, victim?.coins ?? 0);
     if (lost > 0) addCoins(victimId, -lost);
-    return { ...base, starLost, coinsLost: lost, message: `Wreck Orb! A star and ${lost} coins vanish!` };
+    return { ...base, starLost, coinsLost: lost, message: `${itemName("orb_wreck")}! A star and ${lost} coins vanish!` };
   }
 
   if (trap.kind === "snag") {
@@ -147,13 +148,16 @@ export function resolveTrap(victimId: number, trap: SpaceTrap): TrapResult {
     const grown = trap.grown ?? 0;
     if (victimId === trap.ownerId && grown > 0) {
       addCoins(trap.ownerId, grown);
-      return { ...base, harvested: true, coinsMoved: grown, message: `Money Tree pays ${grown} coins!` };
+      return { ...base, harvested: true, coinsMoved: grown, message: `${itemName("orb_tree")} pays ${grown} coins!` };
     }
-    return { ...base, message: `A Money Tree is growing (${grown} coins).` };
+    return { ...base, message: `A ${itemName("orb_tree")} is growing (${grown} coins).` };
   }
 
   if (trap.kind === "circus") {
-    return { ...base, message: `${ownerName}'s circus takes a coin a space for ${trap.turnsLeft ?? 0} turns.` };
+    // Display only: a board that renames the Mini Circus says its own name.
+    const toll = itemName("orb_circus");
+    const word = toll === ITEM_DEFS.orb_circus?.name ? "circus" : toll.toLowerCase();
+    return { ...base, message: `${ownerName}'s ${word} takes a coin a space for ${trap.turnsLeft ?? 0} turns.` };
   }
 
   if (trap.kind === "star_shift") {

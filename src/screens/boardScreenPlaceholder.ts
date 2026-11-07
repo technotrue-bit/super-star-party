@@ -24,7 +24,8 @@ import { ui, queue } from "../ui/kit";
 import { setAutoplay } from "../core/debug";
 import { isAutoplay } from "../core/debug";
 import { buildBoardScene, boardBounds, type BoardScene } from "../board/boardScene";
-import { activeBoard } from "../board/registry";
+import { activeBoard, activeBoardEntry, activeBoardId, loadBoardTheme, loadedBoardTheme } from "../board/registry";
+import type { BoardTheme } from "../board/boardTheme";
 import { liveNext, type BoardDef } from "../board/boardData";
 import { createIntroFlyover, type IntroFlyover } from "../board/introFlyover";
 import { createOpening, type Opening } from "./boardOpening";
@@ -356,6 +357,12 @@ interface BoardScreenState {
   _startOpening: (def: BoardDef, hud: IntroHud) => void;
 
   _finaleShown?: boolean;
+  /** Bumped by every enter() and exit(): a scenery load that settles after the board was left builds nothing. */
+  _enterGen?: number;
+  /** "Loading Downtown…" pill while a board's lazy scenery loads. */
+  _themeWait?: HTMLDivElement;
+  /** enter() from the board build on, once the board's scenery is ready (or given up on). */
+  _enterBoard: (params: URLSearchParams, urlDirect: boolean, theme: BoardTheme | null) => void;
   _unsubs: Array<() => void>;
   _updateHudExtras: () => void;
   _readHudView: () => HudView;
@@ -451,6 +458,40 @@ function emitSparkle(x: number, y: number, count: number, color: string): void {
   }
 }
 
+/** Longest wait for a board's lazy scenery before it plays on the placeholder (the chunk still lands for the next build). */
+const THEME_WAIT_MS = 8000;
+
+/** "Loading Downtown…" pill while a board's lazy scenery loads; fades in late, so a quick load never flashes it. */
+function showThemeWait(name: string): HTMLDivElement {
+  const el = document.createElement("div");
+  el.className = "ssp-theme-wait";
+  el.textContent = `Loading ${name}…`;
+  el.style.cssText = [
+    "position:fixed",
+    "left:50%",
+    "top:50%",
+    "transform:translate(-50%,-50%)",
+    "z-index:60",
+    "padding:10px 20px",
+    `background:${palette.cream}`,
+    `color:${palette.ink}`,
+    `border:3px solid ${palette.ink}`,
+    `box-shadow:0 4px 0 ${palette.ink}`,
+    "border-radius:999px",
+    "font:700 16px Fredoka, sans-serif",
+    "letter-spacing:0.04em",
+    "pointer-events:none",
+    "opacity:0",
+  ].join(";");
+  document.body.appendChild(el);
+  try {
+    el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay: 400, fill: "forwards" });
+  } catch {
+    el.style.opacity = "1";
+  }
+  return el;
+}
+
 const boardScreenImpl: BoardScreenState & Screen = {
   id: "board",
   _unsubs: [],
@@ -494,9 +535,29 @@ const boardScreenImpl: BoardScreenState & Screen = {
       rollForTurnOrder();
     }
 
+    // ---- board scenery: a board with a lazy chunk (Downtown's city) waits
+    // for it the first time, or for THEME_WAIT_MS before falling back to its
+    // placeholder scenery. Everything after, the turn loop included, starts
+    // once it settles; the match state does not move meanwhile.
+    const gen = (this._enterGen = (this._enterGen ?? 0) + 1);
+    const boardId = activeBoardId();
+    if (activeBoardEntry().loadScene && loadedBoardTheme(boardId) === undefined) {
+      this._themeWait = showThemeWait(activeBoardEntry().name);
+      void loadBoardTheme(boardId, THEME_WAIT_MS).then((theme) => {
+        if (this._enterGen !== gen) return; // the board was left meanwhile
+        this._themeWait?.remove();
+        this._themeWait = undefined;
+        this._enterBoard(params, urlDirect, theme);
+      });
+      return;
+    }
+    this._enterBoard(params, urlDirect, loadedBoardTheme(boardId) ?? null);
+  },
+
+  _enterBoard(params: URLSearchParams, urlDirect: boolean, theme: BoardTheme | null) {
     // ---- board ----
     const boardDef = activeBoard();
-    const board = buildBoardScene(boardDef);
+    const board = buildBoardScene(boardDef, theme);
     this._board = board;
     this._camAim = null;
     this._camSoftT = 0;
@@ -1097,6 +1158,9 @@ const boardScreenImpl: BoardScreenState & Screen = {
   },
 
   exit() {
+    this._enterGen = (this._enterGen ?? 0) + 1;
+    this._themeWait?.remove();
+    this._themeWait = undefined;
     this._intro?.off();
     this._intro = undefined;
     this._opening?.dispose();
