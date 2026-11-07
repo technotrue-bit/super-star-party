@@ -19,7 +19,12 @@ function injectStyle(): void {
   text-shadow:0 2px 0 ${o}, 2px 0 0 ${o}, -2px 0 0 ${o}, 0 -2px 0 ${o}, 2px 2px 0 ${o}, -2px 2px 0 ${o}, 2px -2px 0 ${o}, -2px -2px 0 ${o}, 0 4px 0 ${o}; }
 .ssp-move-count[hidden] { display:none; }
 .ssp-move-count--last { color:${palette.sun}; }
-body:has(.ssp-shop) .ssp-move-count { visibility:hidden !important; }
+/* Questions (lane choice, star offer, item targets...), the shop and tip cards sit
+   in the middle of the screen: the floating number would show through them. It is
+   only hidden; its value keeps counting underneath. */
+body:has(.ssp-shop) .ssp-move-count,
+body:has(.ssp-popup) .ssp-move-count,
+body:has(.ssp-tip--show) .ssp-move-count { visibility:hidden !important; }
 `;
   document.head.appendChild(s);
 }
