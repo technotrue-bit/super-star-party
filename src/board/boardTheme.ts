@@ -51,6 +51,8 @@ export interface BuiltBoardTheme {
    * `?lively=0`), into its own group. Draws from fxRng only.
    */
   lively?(root: Object3D, gradientMap: Texture | null): ThemeLively;
+  /** Crowd bleacher spots (board-local) and the point they face, for lively/crowd.ts. */
+  crowd?: { spots: ReadonlyArray<{ x: number; z: number }>; face: { x: number; z: number }; perBleacher?: number };
   /** Cosmetic animation (water ripples). Board seconds. */
   update?(t: number, dt: number): void;
   /** Free what build() made. The board's own traversal frees the rest. */

@@ -32,6 +32,8 @@ export interface CrowdHost {
   face: { x: number; z: number };
   /** Toon gradient for the shared look. */
   gradientMap: THREE.Texture | null;
+  /** Spectators per bleacher (a smaller café terrace); default settings.lively.crowdPerBleacher. */
+  perBleacher?: number;
 }
 
 export interface Crowd {
@@ -122,7 +124,7 @@ function bleacherGeometry(spots: ReadonlyArray<{ x: number; z: number; yaw: numb
 }
 
 export function createCrowd(host: CrowdHost): Crowd {
-  const perBleacher = Math.max(ROWS, Math.round(L.crowdPerBleacher / ROWS) * ROWS);
+  const perBleacher = Math.max(ROWS, Math.round((host.perBleacher ?? L.crowdPerBleacher) / ROWS) * ROWS);
   const perRow = perBleacher / ROWS;
   const spots = host.spots.map((s) => ({ x: s.x, z: s.z, yaw: Math.atan2(host.face.x - s.x, host.face.z - s.z) }));
   const count = perBleacher * spots.length;

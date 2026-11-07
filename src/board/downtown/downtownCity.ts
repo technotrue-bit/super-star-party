@@ -64,6 +64,12 @@ const CANAL_HALF = 0.25;
 const CANAL_END = 26;
 const BASIN_R = 0.6;
 export const FOUNTAIN = { tx: 6.4, ty: 1.95, r: 1.15 }; // r in world units
+/** Café-terrace crowd spots by the fountain (tile units), clear of the parasols and Market Street. */
+const CAFE: ReadonlyArray<[number, number]> = [
+  [6.45, 0.95],
+  [7.2, 2.0],
+];
+
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** Strip a three primitive to position + index and paint it one colour. */
@@ -575,8 +581,8 @@ export function buildDowntownCity(host: BoardThemeHost, models: CityModels): Bui
   // Cafe terrace round the fountain, a flower stall and a food cart along Market Street.
   for (const [tx, ty, name] of [
     [5.72, 1.62, "detail-parasol-a"],
-    [7.12, 1.35, "detail-parasol-b"],
-    [7.1, 2.62, "detail-parasol-a"],
+    [7.15, 1.25, "detail-parasol-b"],
+    [7.05, 2.75, "detail-parasol-a"],
     [6.95, 3.25, "detail-parasol-b"],
   ] as const) {
     parts.model(name, tx, ty, 0, Y_GROUND, 1.2);
@@ -656,6 +662,12 @@ export function buildDowntownCity(host: BoardThemeHost, models: CityModels): Bui
   root.add(city);
   return {
     root,
+    // Café terrace: two short bleachers by the fountain (south and east), facing it.
+    crowd: {
+      spots: CAFE.map(([tx, ty]) => ({ x: wx(tx), z: wz(ty) })),
+      face: { x: wx(FOUNTAIN.tx), z: wz(FOUNTAIN.ty) },
+      perBleacher: 8,
+    },
     update(t: number) {
       time.value = t;
     },

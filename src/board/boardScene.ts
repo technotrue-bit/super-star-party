@@ -648,6 +648,13 @@ export function buildBoardScene(def: BoardDef = activeBoard(), theme: BoardTheme
         gradientMap: kit.grad,
       });
     }
+    if (settings.lively.crowd && themed?.crowd) {
+      // A theme's own spots (Downtown: the café terrace by the Plaza fountain).
+      const crowdRoot = new THREE.Group();
+      crowdRoot.name = "lively-crowd";
+      group.add(crowdRoot);
+      crowd = createCrowd({ root: crowdRoot, gradientMap: kit.grad, ...themed.crowd });
+    }
     // Day -> dusk -> night: lamps, string lights, LAST 5 fireworks. Own group,
     // so the slice 1 and 2 budgets stay their own.
     if (world.scene) {
