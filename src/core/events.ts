@@ -35,6 +35,8 @@ export interface SSPEventMap {
   "balloon:fly": { from: number; to: number; seconds: number };
   /** The board's gate flipped at a round rollover (Funhouse Gate). */
   "board:gate": { open: boolean; turn: number };
+  /** Presentation: this round's Sea Report on the Cruise Ship (src/game/seaReport.ts). */
+  "board:sea": { kind: "calm" | "tailwind" | "choppy" | "treasure" | "dinner"; turn: number };
 }
 
 type Handler<T> = (payload: T) => void;

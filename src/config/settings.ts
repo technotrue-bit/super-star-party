@@ -70,6 +70,8 @@ export const settings = {
   orderBlockMax: 10, // turn-order dice blocks show 1..this, every number different
   blueCoin: 3, // coins gained on blue space
   redCoin: 3, // coins lost on red space
+  turnEndDelay: 2.0, // seconds a finished turn holds before the next player's turn starts
+  turnStartLock: 1.0, // seconds the "YOUR TURN!" banner holds before the player can act
   // Hidden blocks: landing on a blue space can pop one out of thin air.
   hiddenBlockChance: 0.12, // per blue landing (match rng)
   // Prize weights: a free star is rare, the coin dice block is the showpiece.

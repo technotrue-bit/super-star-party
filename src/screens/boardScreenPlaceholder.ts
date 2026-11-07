@@ -33,6 +33,7 @@ import { onlineMatch } from "../net/mode";
 import { distanceTo } from "../board/boardGraph";
 import { createMoveCountdown, type MoveCountdown } from "../ui/moveCountdown";
 import { createPrizeHint, type PrizeHint } from "../ui/prizeHint";
+import { seaReport } from "../game/seaReport";
 import { setHudViewReader, type HudView } from "../core/debug";import { createCharacter, type Character } from "../characters/characterFactory";
 import { createTurnLoop, PLAYER_OFFSETS, type DiceView, type TurnLoop } from "../game/turnLoop";
 import { createDie3d, type Die3DHandle } from "../ui/die3d";
@@ -743,6 +744,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
     // ---- feedback wiring: route HUD banners through the queue, ----
     // ---- listen for coin changes + happenings + star buys.    ----
     this._unsubs = [];
+    // The Cruise Ship's Sea Report rides along on the hint pill for the round.
+    this._unsubs.push(bus.on("board:sea", ({ kind }) => this._hint?.setNote(seaReport(kind).short)));
     const suppressNextBanner = { current: false };
     const queuedHud = {
       ...hud,
