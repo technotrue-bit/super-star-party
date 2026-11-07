@@ -1344,13 +1344,15 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
     wp.box(0.8, 0.04, 0.34, 0.42, 0, 0, palette.white);
     wp.box(0.32, 0.045, 0.3, 0.98, 0, 0.02, palette.inkSoft);
     const wingMesh = wp.build(toon({ vertexColors: true }), "cruise:gull-wing", false);
+    // Kept over the middle of the ship (|x| < 11), clear of the rails where
+    // the low line-up and tour cameras stand.
     const flock = [
-      { cx: 0, cz: 14, r: 9, h: 12.5, w: 0.42 },
-      { cx: 0, cz: 12, r: 13, h: 14.5, w: -0.33 },
-      { cx: 2, cz: -4, r: 16, h: 11, w: 0.27 },
-      { cx: -1, cz: -2, r: 21, h: 13.5, w: -0.22 },
-      { cx: 0, cz: -24, r: 11, h: 10, w: 0.36 },
-      { cx: 0, cz: 26, r: 7, h: 9.5, w: -0.48 },
+      { cx: 0, cz: 14, r: 8, h: 12.5, w: 0.42 },
+      { cx: 0, cz: 10, r: 10.5, h: 14.5, w: -0.33 },
+      { cx: 0, cz: -4, r: 9, h: 13, w: 0.27 },
+      { cx: 0, cz: -10, r: 10.5, h: 15, w: -0.22 },
+      { cx: 0, cz: -24, r: 7, h: 11, w: 0.36 },
+      { cx: 0, cz: 24, r: 6, h: 11, w: -0.48 },
     ];
     for (const f of flock) {
       const g = new THREE.Group();
