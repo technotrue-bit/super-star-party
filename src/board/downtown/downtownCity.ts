@@ -36,8 +36,8 @@ import type { CityModels } from "./cityModels";
 
 const S = settings.tileSpacing;
 /** Tile units -> world (downtownData.downtownWorld without its rounding). */
-const wx = (tx: number): number => (tx - 4) * S;
-const wz = (ty: number): number => (4 - ty) * S;
+export const wx = (tx: number): number => (tx - 4) * S;
+export const wz = (ty: number): number => (4 - ty) * S;
 /** Yaw turning a Kenney model's +z (building fronts) toward tile direction (dtx, dty). */
 const facing = (dtx: number, dty: number): number => Math.atan2(dtx, -dty);
 /** Yaw turning a Kenney model's -z (lamp arms) toward tile direction (dtx, dty). */
@@ -48,23 +48,22 @@ const reaching = (dtx: number, dty: number): number => Math.atan2(-dtx, dty);
  * stay on top of the road; the disks and their rims sit at 0 to 0.06.
  */
 const Y_GROUND = -0.03; // pavement everywhere the roads are not
-const Y_ROAD = -0.016; // Kenney road base: asphalt +0.01 above it, sidewalks +0.02
-const Y_WALK = Y_ROAD + 0.02; // sidewalk top: lamps stand here
+export const Y_ROAD = -0.016; // Kenney road base: asphalt +0.01 above it, sidewalks +0.02
+export const Y_WALK = Y_ROAD + 0.02; // sidewalk top: lamps stand here
 const Y_WATER = -0.3;
 const Y_COPING = 0.02;
 const Y_PAINT = 0.022; // fork arrows, over the lane decal
 
 /** Ring corners (tile units). Every corner is a crossroad; its streets run off the map. */
-const RING_MIN = 0;
-const RING_MAX = 8;
-const STUB = 9; // road tiles beyond each corner
+export const RING_MIN = 0;
+export const RING_MAX = 8;
+export const STUB = 9; // road tiles beyond each corner
 /** Water (tile units): the data's canal line and basin; the city's own width. */
 const W = DOWNTOWN_WATER;
 const CANAL_HALF = 0.25;
 const CANAL_END = 26;
 const BASIN_R = 0.6;
-const FOUNTAIN = { tx: 6.4, ty: 1.95, r: 1.15 }; // r in world units
-
+export const FOUNTAIN = { tx: 6.4, ty: 1.95, r: 1.15 }; // r in world units
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** Strip a three primitive to position + index and paint it one colour. */

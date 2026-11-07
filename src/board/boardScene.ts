@@ -51,7 +51,7 @@ import { buildIsland, type Island } from "./boardIsland";
 import { buildFoliage, type KeepOut } from "./boardFoliage";
 import { buildBigTop, buildHelterSkelter, buildPier, buildFunhouseGate, LANDMARK_RADIUS, type GateProp } from "./boardLandmarks";
 import { buildCruiseShip, type CruiseShip } from "./cruise/cruiseShip";
-import type { BoardTheme, BuiltBoardTheme } from "./boardTheme";
+import type { BoardTheme, BuiltBoardTheme, ThemeLively } from "./boardTheme";
 
 export interface BoardScene {
   /** Root group, added to world.scene by buildBoardScene(). */
@@ -566,6 +566,7 @@ export function buildBoardScene(def: BoardDef = activeBoard(), theme: BoardTheme
   let landFx: LandFx | null = null;
   let crowd: Crowd | null = null;
   let night: Night | null = null;
+  let streets: ThemeLively | null = null;
   if (livelyEnabled()) {
     const lively = new THREE.Group();
     lively.name = "lively";
@@ -613,6 +614,14 @@ export function buildBoardScene(def: BoardDef = activeBoard(), theme: BoardTheme
       rimColor: (type) => DISK_RIM[type as SpaceType] ?? palette.sun,
       dipInstance: tiles ? (i, y, sy, sxz) => tiles.dipInstance(wrapIndex(i, n), y, sy, sxz) : undefined,
     });
+    // A theme's street life (Downtown traffic + pedestrians): one lively group of its own.
+    if (themed?.lively) {
+      const streetRoot = new THREE.Group();
+      streetRoot.name = "lively-streets";
+      group.add(streetRoot);
+      streets = themed.lively(streetRoot, kit.grad);
+      streetRoot.userData.debug = () => streets?.debug?.() ?? null; // probe aid
+    }
     // Crowd bleachers in the two gaps of the south tent row, pulled toward
     // the loop so the tent canopies don't cover them, facing the board.
     // Own group, so slice 1's lively budget stays its own.
@@ -746,6 +755,7 @@ export function buildBoardScene(def: BoardDef = activeBoard(), theme: BoardTheme
       themed?.update?.(t, dt);
       landFx?.update(dt);
       crowd?.update(dt);
+      streets?.update(dt);
       night?.update(dt);
       if (
         prize.root.visible &&
@@ -823,6 +833,8 @@ export function buildBoardScene(def: BoardDef = activeBoard(), theme: BoardTheme
       landFx = null;
       crowd?.dispose();
       crowd = null;
+      streets?.dispose();
+      streets = null;
       night?.dispose();
       night = null;
       releaseStaticBoundsIn(group);

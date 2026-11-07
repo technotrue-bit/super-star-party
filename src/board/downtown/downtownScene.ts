@@ -7,6 +7,7 @@
 import type { BoardTheme } from "../boardTheme";
 import { loadCityModels } from "./cityModels";
 import { buildDowntownCity } from "./downtownCity";
+import { createDowntownStreets } from "./downtownStreets";
 import { buildDowntownTiles } from "./downtownTiles";
 
 /** Fetch and decode the city once; every Downtown match builds from the same models. */
@@ -19,6 +20,7 @@ export async function loadDowntownTheme(): Promise<BoardTheme> {
       return {
         ...city,
         tiles,
+        lively: createDowntownStreets,
         dispose() {
           city.dispose();
           tiles.dispose();

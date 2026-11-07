@@ -5,7 +5,7 @@
  * loaded theme supply the ground and scenery instead of the placeholder.
  * Types plus one group name, so the main chunk pays almost nothing for it.
  */
-import type { Object3D } from "three";
+import type { Object3D, Texture } from "three";
 import type { BoardDef } from "./boardData";
 import type { BoardTextures } from "./boardTextures";
 
@@ -32,11 +32,25 @@ export interface ThemeTiles {
   dipInstance(i: number, y: number, sy: number, sxz: number): void;
 }
 
+/** A theme's moving street life (Downtown: traffic and pedestrians). Cosmetic. */
+export interface ThemeLively {
+  /** Board seconds. */
+  update(dt: number): void;
+  dispose(): void;
+  /** Probe view: the group's cost. */
+  debug?(): { drawCalls: number; triangles: number } & Record<string, unknown>;
+}
+
 /** One built theme: static ground + scenery the board adds after its static-bounds pass. */
 export interface BuiltBoardTheme {
   root: Object3D;
   /** Space tiles; without them the board keeps its placeholder disks. */
   tiles?: ThemeTiles;
+  /**
+   * Street life, made only while the board is lively (never with
+   * `?lively=0`), into its own group. Draws from fxRng only.
+   */
+  lively?(root: Object3D, gradientMap: Texture | null): ThemeLively;
   /** Cosmetic animation (water ripples). Board seconds. */
   update?(t: number, dt: number): void;
   /** Free what build() made. The board's own traversal frees the rest. */
