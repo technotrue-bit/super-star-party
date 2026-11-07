@@ -15,7 +15,7 @@
 import * as THREE from "three";
 import { settings, prefersReducedMotion } from "../../config/settings";
 import { palette } from "../../config/palette";
-import { blankTimeOfDay, sampleTimeOfDay, timeOfDay, FOG_OFF_FAR, type TimeOfDay } from "./timeOfDay";
+import { blankTimeOfDay, sampleTimeOfDay, timeOfDay, FOG_OFF_FAR, type TimeOfDay, type TimeLook } from "./timeOfDay";
 import type { Fireworks } from "./fireworks";
 
 export interface NightHost {
@@ -23,8 +23,12 @@ export interface NightHost {
   scene: THREE.Scene;
   /** Board-local parent for the bulbs and fireworks. */
   root: THREE.Object3D;
-  /** Lamp-post glow cores and halos (board meshes, restyled from dusk). */
-  lamps: ReadonlyArray<{ glow: THREE.Mesh; halo: THREE.Mesh }>;
+  /**
+   * Lamp-post glow cores and halos (board meshes, restyled from dusk). A
+   * halo that merges many lamps sets `grow: false`: scaling it would slide
+   * them off their posts.
+   */
+  lamps: ReadonlyArray<{ glow: THREE.Mesh; halo: THREE.Mesh; grow?: boolean }>;
   /** String-light bulb spots (board-local). */
   bulbs: ReadonlyArray<{ x: number; y: number; z: number }>;
   /** The board camera: fireworks are framed for it. */
@@ -38,6 +42,12 @@ export interface NightHost {
    * carnival (the cruise ship's overview). Default 1.
    */
   fogScale?: number;
+  /** Optional colour preset (timeOfDay.ts); default is the carnival/cruise look. */
+  look?: TimeLook;
+  /** Optional: the eased lamp glow (0 by day, 1 at night), e.g. for lit windows. */
+  onGlow?: (glow: number) => void;
+  /** Optional board-local spots the LAST 5 fireworks burst over when in view (Downtown: the canal). */
+  fireworksOver?: ReadonlyArray<{ x: number; z: number }>;
 }
 
 export interface Night {
@@ -202,7 +212,8 @@ export function createNight(host: NightHost): Night {
   host.root.add(bulbs);
 
   // ---- state ---------------------------------------------------------------------------
-  let target: TimeOfDay = timeOfDay(1, 1);
+  const look = host.look ?? "default";
+  let target: TimeOfDay = timeOfDay(1, 1, look);
   let snapped = false;
   let progress = 0;
   const cur = blankTimeOfDay();
@@ -216,7 +227,7 @@ export function createNight(host: NightHost): Night {
   let lastTotal = 1;
 
   const apply = (): void => {
-    sampleTimeOfDay(progress, cur);
+    sampleTimeOfDay(progress, cur, look);
     if (hemi) {
       hemi.color.setHex(cur.hemiSky);
       hemi.groundColor.setHex(cur.hemiGround);
@@ -246,10 +257,11 @@ export function createNight(host: NightHost): Night {
       // A brighter, slightly wider halo; the hot core does the popping. Kept
       // small: the foreground lamp sits next to a space in the follow view.
       haloMat.opacity = d.haloOpacity + 0.28 * g;
-      l.halo.scale.setScalar(1 + 0.12 * g);
+      if (l.grow !== false) l.halo.scale.setScalar(1 + 0.12 * g);
     }
     bulbs.visible = g > 0.02 && host.bulbs.length > 0;
     bulbMat.opacity = Math.min(1, g * 1.2);
+    host.onGlow?.(g);
   };
 
   const night: Night = {
@@ -259,7 +271,7 @@ export function createNight(host: NightHost): Night {
       if (snapped && t === lastTurn && totalTurns === lastTotal) return;
       lastTurn = t;
       lastTotal = totalTurns;
-      target = timeOfDay(t, totalTurns);
+      target = timeOfDay(t, totalTurns, look);
       if (!snapped) {
         // Board entry (match start, or back from a minigame at night): no fade from day.
         snapped = true;
@@ -310,7 +322,7 @@ export function createNight(host: NightHost): Night {
         fwWanted = true;
         void loadFireworks().then((mod) => {
           if (disposed || !mod) return;
-          fw = mod.createFireworks({ root: host.root, camera: host.camera, center: host.center });
+          fw = mod.createFireworks({ root: host.root, camera: host.camera, center: host.center, over: host.fireworksOver });
         });
       }
       if (fw) {

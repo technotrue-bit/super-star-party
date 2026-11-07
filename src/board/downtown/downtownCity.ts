@@ -85,8 +85,28 @@ function paint(geo: THREE.BufferGeometry, color: string): THREE.BufferGeometry {
     col[i * 3 + 2] = c.b;
   }
   geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  geo.setAttribute("glass", new THREE.BufferAttribute(new Uint8Array(n), 1, true));
   if (!geo.index) geo.setIndex(Array.from({ length: n }, (_, i) => i));
   return geo;
+}
+
+/**
+ * Flag a Kenney building's window glass (attribute `glass`, 1 = pane) for the
+ * night glow. The glass is the kits' blue gradient (sRGB about 113,156,221 up
+ * to 197,222,251): strongly blue, never neutral. Done on the model's own
+ * colours, since a citySky wall paint lands on the same blue as the palest panes.
+ */
+function flagGlass(geo: THREE.BufferGeometry, building: boolean): void {
+  const col = geo.getAttribute("color");
+  const flag = new Uint8Array(col.count);
+  if (building) {
+    for (let i = 0; i < col.count; i++) {
+      const r = col.getX(i);
+      const b = col.getZ(i);
+      if (b > 0.7 && b - r > 0.36) flag[i] = 255;
+    }
+  }
+  geo.setAttribute("glass", new THREE.BufferAttribute(flag, 1, true));
 }
 
 /**
@@ -164,6 +184,7 @@ class Parts {
     const src = this.models.get(name);
     if (!src) return;
     const g = src.clone();
+    flagGlass(g, name.startsWith("building"));
     if (walls) paintWalls(g, walls);
     this.q.setFromAxisAngle(UP, yaw);
     this.m.compose(this.at.set(wx(tx), y, wz(ty)), this.q, this.sc.set(S * k, ky, S * k));
@@ -289,9 +310,11 @@ function buildGroundAndCanal(parts: Parts, outline: Array<[number, number]>): vo
  * The city's one material: toon-lit vertex colours, faceted like the Kenney
  * originals. Water is the one surface painted exactly cityCanal; it gets soft
  * drifting glints (two crossing sine fields, brightened where they peak), so
- * the canal needs no mesh or draw call of its own.
+ * the canal needs no mesh or draw call of its own. From dusk (`night`, the
+ * lamps' glow) most windows light up warm: the flagged glass (flagGlass),
+ * picked in blocks by a hash of its world cell, so no draw call either.
  */
-function cityMaterial(kit: BoardThemeHost["kit"], time: { value: number }): THREE.MeshToonMaterial {
+function cityMaterial(kit: BoardThemeHost["kit"], time: { value: number }, night: { value: number }): THREE.MeshToonMaterial {
   const mat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: kit.grad });
   // three's FLAT_SHADED path works for any lit material, though only some declare the flag in their types.
   Object.assign(mat, { flatShading: true });
@@ -299,11 +322,20 @@ function cityMaterial(kit: BoardThemeHost["kit"], time: { value: number }): THRE
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uCityTime = time;
     shader.uniforms.uCityWater = { value: water };
+    shader.uniforms.uCityNight = night;
+    shader.uniforms.uWindowLit = { value: new THREE.Color(palette.lampWarm) };
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vCityWorld;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvCityWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;");
+      .replace("#include <common>", "#include <common>\nvarying vec3 vCityWorld;\nattribute float glass;\nvarying float vCityGlass;")
+      .replace(
+        "#include <begin_vertex>",
+        "#include <begin_vertex>\nvCityWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvCityGlass = glass;"
+      );
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nuniform float uCityTime;\nuniform vec3 uCityWater;\nvarying vec3 vCityWorld;")
+      .replace(
+        "#include <common>",
+        "#include <common>\nuniform float uCityTime;\nuniform vec3 uCityWater;\nvarying vec3 vCityWorld;\n" +
+          "uniform float uCityNight;\nuniform vec3 uWindowLit;\nvarying float vCityGlass;"
+      )
       .replace(
         "#include <color_fragment>",
         "#include <color_fragment>\n" +
@@ -311,6 +343,13 @@ function cityMaterial(kit: BoardThemeHost["kit"], time: { value: number }): THRE
           "  float rip = sin(vCityWorld.x * 2.3 + uCityTime * 1.1) * sin(vCityWorld.z * 1.9 - uCityTime * 0.8)\n" +
           "    + 0.5 * sin((vCityWorld.x + vCityWorld.z) * 3.7 - uCityTime * 1.6);\n" +
           "  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), smoothstep(0.95, 1.35, rip) * 0.4);\n" +
+          "}\n" +
+          "if (uCityNight > 0.0 && vCityGlass > 0.5) {\n" +
+          "  vec3 cell = floor(vCityWorld * vec3(0.75, 1.1, 0.75));\n" +
+          "  float lit = step(0.3, fract(sin(dot(cell, vec3(12.9898, 78.233, 37.719))) * 43758.5453));\n" +
+          "  float w = lit * uCityNight;\n" +
+          "  diffuseColor.rgb = mix(diffuseColor.rgb, uWindowLit, w * 0.7);\n" +
+          "  totalEmissiveRadiance += uWindowLit * w * 0.85;\n" +
           "}"
       );
   };
@@ -449,9 +488,96 @@ function arrow(parts: Parts, tx: number, ty: number, dtx: number, dty: number, c
   parts.shape(make(L, 0.19, 0.34, 0.06), color, wx(tx), Y_PAINT + 0.008, wz(ty), yaw);
 }
 
-/** Street lamp on a sidewalk spot, arm reaching along (dtx, dty). */
-const lamp = (parts: Parts, tx: number, ty: number, dtx: number, dty: number): void =>
+/** light-curved at k = 1.3: its lamp head (under the arm's end), out along the arm and up, world units. */
+const LAMP_REACH = 0.16 * S * 1.3;
+const LAMP_HEAD_Y = Y_WALK + 0.57 * S * 1.3;
+
+/** Street lamp on a sidewalk spot, arm reaching along (dtx, dty); its head goes in `heads`. */
+function lamp(parts: Parts, heads: THREE.Vector3[], tx: number, ty: number, dtx: number, dty: number): void {
   parts.model("light-curved", tx, ty, reaching(dtx, dty), Y_WALK, 1.3);
+  heads.push(new THREE.Vector3(wx(tx) + dtx * LAMP_REACH, LAMP_HEAD_Y, wz(ty) - dty * LAMP_REACH));
+}
+
+/**
+ * The lamps' glow cores and halos, each merged into one mesh (2 draw calls
+ * for every lamp): lively/night.ts warms them from dusk. By day the core is
+ * a pale lens and the halo is clear.
+ */
+function lampGlows(heads: readonly THREE.Vector3[]): { glow: THREE.Mesh; halo: THREE.Mesh } {
+  const merged = (r: number): THREE.BufferGeometry => {
+    const geos = heads.map((h) => {
+      const g = new THREE.IcosahedronGeometry(r, 0);
+      g.deleteAttribute("uv");
+      g.deleteAttribute("normal");
+      g.translate(h.x, h.y - 0.04, h.z);
+      return g;
+    });
+    const out = mergeGeometries(geos, false);
+    for (const g of geos) g.dispose();
+    if (!out) throw new Error("[SSP] Downtown city: lamp glows did not merge");
+    out.computeBoundingSphere();
+    return out;
+  };
+  const glow = new THREE.Mesh(merged(0.1), new THREE.MeshBasicMaterial({ color: palette.cream }));
+  glow.name = "downtown:lamp-glow";
+  const halo = new THREE.Mesh(
+    merged(0.26),
+    new THREE.MeshBasicMaterial({ color: palette.lampWarm, transparent: true, opacity: 0, depthWrite: false })
+  );
+  halo.name = "downtown:lamp-halo";
+  return { glow, halo };
+}
+
+/** Plaza string lights: pole spots (tile units), the strands between them, pole height. */
+const PLAZA_POLES: ReadonlyArray<[number, number]> = [
+  [5.45, 1.1],
+  [7.5, 1.05],
+  [7.4, 3.0],
+  [5.55, 3.0],
+];
+const PLAZA_STRANDS: ReadonlyArray<[number, number]> = [
+  [0, 2],
+  [3, 1],
+  [0, 1],
+  [3, 2],
+];
+const POLE_H = 2.75;
+const STRAND_SAG = 0.4;
+const BULBS_PER_STRAND = 9;
+
+/** Poles and wires into the city mesh; the bulb spots for lively/night.ts. */
+function buildPlazaLights(parts: Parts): Array<{ x: number; y: number; z: number }> {
+  const top = Y_GROUND + POLE_H;
+  for (const [tx, ty] of PLAZA_POLES) {
+    parts.shape(new THREE.CylinderGeometry(0.045, 0.06, POLE_H, 6), palette.ink, wx(tx), Y_GROUND + POLE_H / 2, wz(ty));
+    parts.shape(new THREE.SphereGeometry(0.08, 6, 4), palette.sun, wx(tx), top + 0.04, wz(ty));
+  }
+  const bulbs: Array<{ x: number; y: number; z: number }> = [];
+  const at = (a: [number, number], b: [number, number], u: number): THREE.Vector3 =>
+    new THREE.Vector3(
+      wx(a[0] + (b[0] - a[0]) * u),
+      top - STRAND_SAG * 4 * u * (1 - u),
+      wz(a[1] + (b[1] - a[1]) * u)
+    );
+  const SEG = 8;
+  for (const [i, j] of PLAZA_STRANDS) {
+    const a = PLAZA_POLES[i];
+    const b = PLAZA_POLES[j];
+    for (let k = 0; k < SEG; k++) {
+      const p = at(a, b, k / SEG);
+      const q = at(a, b, (k + 1) / SEG);
+      const len = p.distanceTo(q);
+      const wire = new THREE.BoxGeometry(0.025, 0.025, len);
+      wire.lookAt(new THREE.Vector3().subVectors(q, p));
+      parts.shape(wire, palette.ink, (p.x + q.x) / 2, (p.y + q.y) / 2, (p.z + q.z) / 2);
+    }
+    for (let k = 1; k <= BULBS_PER_STRAND; k++) {
+      const p = at(a, b, k / (BULBS_PER_STRAND + 1));
+      bulbs.push({ x: p.x, y: p.y, z: p.z });
+    }
+  }
+  return bulbs;
+}
 
 /** Yaw turning a model at tile spot (tx, ty) to face the middle of the ring, along its nearer axis. */
 const faceRing = (tx: number, ty: number): number => {
@@ -613,16 +739,18 @@ export function buildDowntownCity(host: BoardThemeHost, models: CityModels): Bui
   parts.model("construction-barrier", 4.0, -0.72, Math.PI / 2, Y_WALK, 1.4);
 
   // ---- lamps, traffic lights ----------------------------------------------------------
-  for (const t of [1.5, 3.5, 6.5]) lamp(parts, t, RING_MIN - 0.45, 0, 1); // Main Street, south curb
-  for (const t of [1.5, 6.5]) lamp(parts, t, RING_MAX + 0.45, 0, -1); // Canal Row, north curb
-  for (const t of [1.5, 3.5, 5.5]) lamp(parts, RING_MAX + 0.45, t, -1, 0); // Harbor Avenue, east curb
-  for (const t of [1.5, 3.5, 5.5]) lamp(parts, RING_MIN - 0.45, t, 1, 0); // City Hall Avenue, west curb
+  const heads: THREE.Vector3[] = [];
+  for (const t of [1.5, 3.5, 6.5]) lamp(parts, heads, t, RING_MIN - 0.45, 0, 1); // Main Street, south curb
+  for (const t of [1.5, 6.5]) lamp(parts, heads, t, RING_MAX + 0.45, 0, -1); // Canal Row, north curb
+  for (const t of [1.5, 3.5, 5.5]) lamp(parts, heads, RING_MAX + 0.45, t, -1, 0); // Harbor Avenue, east curb
+  for (const t of [1.5, 3.5, 5.5]) lamp(parts, heads, RING_MIN - 0.45, t, 1, 0); // City Hall Avenue, west curb
   for (const [tx, ty] of [
     [5.0, 5.85],
     [6.2, 5.6],
   ] as const) {
-    lamp(parts, tx, ty, 0, 1); // basin quay
+    lamp(parts, heads, tx, ty, 0, 1); // basin quay
   }
+  const bulbs = buildPlazaLights(parts);
   for (const [cx, cy] of [
     [RING_MIN, RING_MIN],
     [RING_MAX, RING_MIN],
@@ -651,17 +779,31 @@ export function buildDowntownCity(host: BoardThemeHost, models: CityModels): Bui
   // ---- one mesh, one material -----------------------------------------------------------
   const geo = parts.merge();
   const time = { value: 0 };
-  const mat = cityMaterial(host.kit, time);
+  const glowNight = { value: 0 };
+  const mat = cityMaterial(host.kit, time, glowNight);
   const city = new THREE.Mesh(geo, mat);
   city.name = "downtown:city";
   city.receiveShadow = true;
   city.castShadow = false;
+  const lamps = lampGlows(heads);
 
   const root = new THREE.Group();
   root.name = THEME_SCENERY_NAME;
-  root.add(city);
+  root.add(city, lamps.glow, lamps.halo);
+  // The canal north from the Harbor Basin, where the LAST 5 fireworks go up.
+  const canal: Array<{ x: number; z: number }> = [];
+  for (let ty = W.basin.y; ty <= 13.5; ty += 1) canal.push({ x: wx(W.canal.x), z: wz(ty) });
   return {
     root,
+    night: {
+      lamps: [{ glow: lamps.glow, halo: lamps.halo, grow: false }],
+      bulbs,
+      fireworksOver: canal,
+      look: "city",
+      setGlow(g: number) {
+        glowNight.value = g;
+      },
+    },
     // Café terrace: two short bleachers by the fountain (south and east), facing it.
     crowd: {
       spots: CAFE.map(([tx, ty]) => ({ x: wx(tx), z: wz(ty) })),

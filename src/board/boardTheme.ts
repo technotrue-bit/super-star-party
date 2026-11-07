@@ -5,7 +5,7 @@
  * loaded theme supply the ground and scenery instead of the placeholder.
  * Types plus one group name, so the main chunk pays almost nothing for it.
  */
-import type { Object3D, Texture } from "three";
+import type { Mesh, Object3D, Texture } from "three";
 import type { BoardDef } from "./boardData";
 import type { BoardTextures } from "./boardTextures";
 
@@ -41,6 +41,20 @@ export interface ThemeLively {
   debug?(): { drawCalls: number; triangles: number } & Record<string, unknown>;
 }
 
+/** A theme's night dressing, handed to lively/night.ts (lively only). */
+export interface ThemeNight {
+  /** Lamp glow cores and halos night.ts brightens from dusk (grow: false for merged halos). */
+  lamps: ReadonlyArray<{ glow: Mesh; halo: Mesh; grow?: boolean }>;
+  /** String-light bulb spots (board-local). */
+  bulbs: ReadonlyArray<{ x: number; y: number; z: number }>;
+  /** Board-local spots the LAST 5 fireworks burst over, and their fallback centre. */
+  fireworksOver: ReadonlyArray<{ x: number; z: number }>;
+  /** Colour preset for lively/timeOfDay.ts ("city": a cooler navy night). */
+  look?: "default" | "city";
+  /** Eased lamp glow, 0 by day to 1 at night (lit windows). */
+  setGlow(glow: number): void;
+}
+
 /** One built theme: static ground + scenery the board adds after its static-bounds pass. */
 export interface BuiltBoardTheme {
   root: Object3D;
@@ -53,6 +67,8 @@ export interface BuiltBoardTheme {
   lively?(root: Object3D, gradientMap: Texture | null): ThemeLively;
   /** Crowd bleacher spots (board-local) and the point they face, for lively/crowd.ts. */
   crowd?: { spots: ReadonlyArray<{ x: number; z: number }>; face: { x: number; z: number }; perBleacher?: number };
+  /** Lamps, string lights, window glow and the fireworks' spot for the day/night cycle. */
+  night?: ThemeNight;
   /** Cosmetic animation (water ripples). Board seconds. */
   update?(t: number, dt: number): void;
   /** Free what build() made. The board's own traversal frees the rest. */

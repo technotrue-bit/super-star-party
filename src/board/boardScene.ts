@@ -661,15 +661,22 @@ export function buildBoardScene(def: BoardDef = activeBoard(), theme: BoardTheme
       const nightRoot = new THREE.Group();
       nightRoot.name = "lively-night";
       group.add(nightRoot);
+      // A theme's own lamps, bulbs and fireworks spot (Downtown: over the canal).
+      const tn = themed?.night;
+      const over = tn?.fireworksOver[0];
+      const slots = buntingSlots(strands, { x: cx, z: cy });
       night = createNight({
         scene: world.scene,
         root: nightRoot,
-        lamps,
-        bulbs: buntingSlots(strands, { x: cx, z: cy }),
+        lamps: tn ? [...lamps, ...tn.lamps] : lamps,
+        bulbs: tn ? [...slots, ...tn.bulbs] : slots,
         camera: () => world.camera,
-        center: { x: cx, z: cy },
+        center: over ? { x: over.x, z: over.z } : { x: cx, z: cy },
         sky: island ? island.setSky : ship ? ship.setSky : undefined,
         fogScale: cruise ? settings.board.cruiseFogScale : 1,
+        look: tn?.look,
+        onGlow: tn?.setGlow,
+        fireworksOver: tn?.fireworksOver,
       });
     }
   }

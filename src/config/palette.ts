@@ -94,6 +94,11 @@ export const palette = {
   nightHemi: "#5848E8", // blue-violet sky light (low green: the checker turns teal/indigo)
   nightGround: "#1A0F45", // deep indigo bounce light
   nightKey: "#6E6AF0", // violet moonlight
+  // Downtown's night: cooler, a navy city sky so the warm windows and lamps pop.
+  cityNightSky: "#0E1838",
+  cityNightHemi: "#4A68E0",
+  cityNightGround: "#141A3E",
+  cityNightKey: "#7C9CF5",
   lampWarm: "#FFB547", // lamp halo + string-light bulbs after dusk
   lampHot: "#FFF2C2", // lamp core at night
 
