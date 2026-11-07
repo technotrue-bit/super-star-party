@@ -432,6 +432,11 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   /* ---------------- helpers ---------------- */
 
+  /** Hold after a finished turn (settings.turnEndDelay; shorter under autoplay). */
+  const turnEndDelay = (): number => (isAutoplay() ? settings.autoplayTurnEndDelay : settings.turnEndDelay);
+  /** Input lock on the "YOUR TURN!" banner (settings.turnStartLock; shorter under autoplay). */
+  const turnStartLock = (): number => (isAutoplay() ? settings.autoplayTurnStartLock : settings.turnStartLock);
+
   const pause = (seconds: number, fn: () => void): void => {
     S.pauseT = seconds;
     S.pauseFn = fn;
@@ -750,7 +755,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
       chars[pid]?.anim.sad();
       audio.sfx.play("sad");
       refreshHud();
-      pause(settings.turnEndDelay, nextTurn);
+      pause(turnEndDelay(), nextTurn);
       return;
     }
     bus.emit("turn:start", { turn: match.turn, player: pid });
@@ -763,8 +768,9 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
     const playerBanner = (): void => {
       // "YOUR TURN!" (or whoever's) holds the screen: nothing can be pressed
       // until the lock runs out and the die arms.
-      hud.showBanner(`${labelPossessive(pid)} TURN!`, { durationMs: Math.round(settings.turnStartLock * 1000) + 250 });
-      pause(settings.turnStartLock, () => offerFizzyPity(pid, beginDice));
+      const lock = turnStartLock();
+      hud.showBanner(`${labelPossessive(pid)} TURN!`, { durationMs: Math.round(lock * 1000) + 250 });
+      pause(lock, () => offerFizzyPity(pid, beginDice));
     };
     // The Captain's call (Cruise Ship) gets its own beat before the player's banner.
     const sea = announceSea(pid);
@@ -1565,7 +1571,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
 
   const finishEffect = (): void => {
     refreshHud();
-    pause(settings.turnEndDelay, nextTurn);
+    pause(turnEndDelay(), nextTurn);
   };
 
   /**
@@ -1586,7 +1592,7 @@ export function createTurnLoop(deps: TurnLoopDeps): TurnLoop {
   const finishTurn = (): void => {
     S.phase = "space-effect";
     match.phase = "space-effect";
-    pause(settings.turnEndDelay, nextTurn);
+    pause(turnEndDelay(), nextTurn);
   };
 
   const nextTurn = (): void => {

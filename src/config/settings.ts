@@ -72,6 +72,11 @@ export const settings = {
   redCoin: 3, // coins lost on red space
   turnEndDelay: 2.0, // seconds a finished turn holds before the next player's turn starts
   turnStartLock: 1.0, // seconds the "YOUR TURN!" banner holds before the player can act
+  // Under autoplay (the debug / CI fast-forward, like the skipped flyover) the beats keep
+  // their old, shorter lengths: nobody is watching, and frame-starved CI pages pay for every
+  // extra frame. Timing never feeds the rng, so a seed plays the same match either way.
+  autoplayTurnEndDelay: 0.9,
+  autoplayTurnStartLock: 0.75,
   // Hidden blocks: landing on a blue space can pop one out of thin air.
   hiddenBlockChance: 0.12, // per blue landing (match rng)
   // Prize weights: a free star is rare, the coin dice block is the showpiece.
