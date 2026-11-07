@@ -45,8 +45,8 @@ export const BOARDS: Record<BoardId, BoardEntry> = {
     def: cruiseShip,
     name: "The Cruise Ship",
     short: "Cruise",
-    blurb: "A party liner at sea: 132 spaces on two decks, with stairways, a pool bridge and lifeboats.",
-    rev: 1,
+    blurb: "A party liner at sea: two decks, stairways, lifeboats, and a new Sea Report every round.",
+    rev: 2,
   },
 };
 

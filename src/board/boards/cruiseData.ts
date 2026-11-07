@@ -16,6 +16,11 @@
  * - the Captain's Walk across the forecastle, a bow shortcut (94-104);
  * - the Grand Ballroom, a stern shortcut through the dance hall (105-115);
  * - the two Lifeboat Decks out on the sponsons (116-123, 124-131).
+ * Split levels (presentation only; the move graph is unchanged): the Grand
+ * Ballroom and the bow's mooring deck sit one level below the Promenade, and
+ * the Captain's Walk climbs into the raised Panorama Lounge. Each space on the
+ * way gets a round landing at its own height, so every disk sits flat and the
+ * lane steps down (or up) half a level per hop.
  * Same space types and rules as the other boards; only names differ.
  * Fixed design data, no rng.
  */
@@ -33,7 +38,23 @@ const t = (type: SpaceType, name: string, extra?: Partial<Tile>): Tile => ({ typ
 
 // ---- deck geometry (shared with the scene builder) ----------------------------------
 /** Deck heights (world units). */
-export const CRUISE_H = { promenade: 0, lido: 1.6, bridge: 2.6, funnel: 2.6, ballroom: 0.1 } as const;
+export const CRUISE_H = {
+  promenade: 0,
+  lido: 1.6,
+  bridge: 2.6,
+  funnel: 2.6,
+  /** The sunken Grand Ballroom floor. */
+  ballroom: -1.0,
+  /** The sunken mooring deck at the bow. */
+  mooring: -1.0,
+  /** The raised Panorama Lounge floor. */
+  lounge: 1.0,
+  /** One step of a split-level lane (half a level). */
+  step: 0.5,
+} as const;
+
+/** Radius of the round landing under each space on a split-level lane (half a hop). */
+export const CRUISE_LANDING_R = 1.3;
 
 /** Rounded rectangle: centre, half sizes, corner radius. */
 export interface RoundRect {
@@ -61,7 +82,12 @@ export const CRUISE_SHIP = {
   lido: { x: 0, z: -0.5, hx: 9.5, hz: 11.5, r: 3 } as RoundRect,
   bridge: { x: 0, z: -14.6, hx: 7.2, hz: 2.9, r: 2 } as RoundRect,
   funnelDeck: { x: 0, z: 15.3, hx: 6, hz: 3.4, r: 2 } as RoundRect,
-  ballroom: { x: 0, z: 23.6, hx: 8.6, hz: 3.9, r: 2.4 } as RoundRect,
+  /** The Grand Ballroom's sunken floor; its glass hall stands round the rim. */
+  ballroom: { x: 0, z: 23.6, hx: 11.3, hz: 3.6, r: 2.5 } as RoundRect,
+  /** The Panorama Lounge's raised floor, in front of the bridge. */
+  lounge: { x: 0, z: -21.2, hx: 7.3, hz: 2.0, r: 1.6 } as RoundRect,
+  /** The bow forward of this line (inside the bulwark ledge) is the sunken mooring deck. */
+  mooringZ: -31.6,
   pool: { x: 0, z: -1.5, hx: 2.9, hz: 4.7, r: 1.2 } as RoundRect,
   /** Footbridge over the pool (the Pool Bridge lane), along x at this z. */
   poolBridge: { z: -0.5, w: 2.3 },
@@ -378,21 +404,48 @@ const P_N = P_TILES.length; // 64
 const L_N = L_TILES.length; // 22
 const globalOf = (ref: ["P" | "L", number]): number => (ref[0] === "P" ? ref[1] : P_N + ref[1]);
 
-/** Terrain: the ballroom floor, the Lido Deck, and a ramp for each stairway flight. */
-const TERRAIN_LAYERS: TerrainLayer[] = [
-  { kind: "deck", ...CRUISE_SHIP.ballroom, h: CRUISE_H.ballroom },
-  { kind: "deck", ...CRUISE_SHIP.lido, h: CRUISE_H.lido },
-  ...STAIR.map((s): TerrainLayer => ({
-    kind: "ramp",
-    x0: s.x0,
-    z0: s.z,
-    h0: CRUISE_H.promenade,
-    x1: s.x1,
-    z1: s.z,
-    h1: CRUISE_H.lido,
-    w: s.w,
-  })),
-];
+/**
+ * The mooring deck's outline: the hull's deck edge pulled 0.6 in along its
+ * normal (a ledge stays at deck level along the bulwark), from the tip aft to
+ * CRUISE_SHIP.mooringZ.
+ */
+function mooringOutline(): Array<[number, number]> {
+  const H = CRUISE_SHIP.hull;
+  const cut = CRUISE_SHIP.mooringZ;
+  const edge = (u: number): [number, number] => [H.halfX * Math.pow(1 - Math.pow(Math.min(1, u), 1.8), 0.7), H.bowStart + (H.bowTip - H.bowStart) * u];
+  const inset = (u: number): [number, number] => {
+    const [a0, b0] = edge(Math.max(0, u - 1e-4));
+    const [a1, b1] = edge(Math.min(1, u + 1e-4));
+    const dx = a1 - a0;
+    const dz = b1 - b0;
+    const l = Math.hypot(dx, dz) || 1;
+    const [x, z] = edge(u);
+    // Starboard side, walked toward the tip: the ship's inside is on the (dz, -dx) side.
+    return [x + (dz / l) * 0.6, z + (-dx / l) * 0.6];
+  };
+  const uCut = (cut - H.bowStart) / (H.bowTip - H.bowStart);
+  const pts: Array<[number, number]> = [];
+  const N = 56;
+  let prev: [number, number] | null = null;
+  for (let k = 0; k <= N; k++) {
+    const p = inset(uCut - 0.08 + (1 - uCut + 0.08) * (k / N));
+    if (p[1] <= cut) {
+      if (prev && prev[1] > cut) {
+        const w = (prev[1] - cut) / (prev[1] - p[1]);
+        pts.push([prev[0] + (p[0] - prev[0]) * w, cut]);
+      }
+      pts.push(p);
+    }
+    prev = p;
+  }
+  const tip = pts[pts.length - 1];
+  tip[0] = 0;
+  const port = pts.slice(0, -1).reverse().map(([x, z]): [number, number] => [-x, z]);
+  return [...pts, ...port];
+}
+
+/** The mooring deck's outline (also read by the scene builder). */
+export const CRUISE_MOORING = mooringOutline();
 
 function buildSpaces(): { spaces: SpaceDef[]; next: number[][]; branches: NonNullable<BoardDef["branches"]> } {
   const pPts = anchoredLoop(P_CTRL, P_N);
@@ -426,6 +479,61 @@ function buildSpaces(): { spaces: SpaceDef[]; next: number[][]; branches: NonNul
 }
 
 const built = buildSpaces();
+
+/**
+ * Split levels: [space, height] for every space that sits off the Promenade's
+ * level on the way into or out of a sunken or raised room, half a level per hop.
+ */
+function splitLevels(): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  const lane = (label: string): number[] => {
+    const b = built.branches.find((x) => x.label === label);
+    if (!b) throw new Error(`[SSP] cruise lane ${label} missing`);
+    return b.path;
+  };
+  const dip = (path: number[], floor: number): void => {
+    const step = Math.sign(floor) * CRUISE_H.step;
+    path.forEach((i, k) => {
+      if (k === 0 || k === path.length - 1) return;
+      out.push([i, k === 1 || k === path.length - 2 ? step : floor]);
+    });
+  };
+  dip(lane("Grand Ballroom"), CRUISE_H.ballroom);
+  dip(lane("Captain's Walk"), CRUISE_H.lounge);
+  // Round the bow: Starboard Bow (14) stays on deck, Spray Zone steps down, Rogue Wave (23) is back up.
+  dip([14, 15, 16, 17, 18, 19, 20, 21, 22, 23], CRUISE_H.mooring);
+  return out;
+}
+
+/** Spaces off the Promenade's level on a split-level lane, with their heights. */
+export const CRUISE_SPLIT: ReadonlyArray<readonly [number, number]> = splitLevels();
+
+/**
+ * Terrain, in painter's order: the sunken ballroom and mooring deck and the
+ * raised lounge, a round landing under every split-level space (so its disk
+ * sits flat), then the Lido Deck and a ramp for each stairway flight.
+ */
+const TERRAIN_LAYERS: TerrainLayer[] = [
+  { kind: "deck", ...CRUISE_SHIP.ballroom, h: CRUISE_H.ballroom },
+  { kind: "poly", pts: CRUISE_MOORING, h: CRUISE_H.mooring },
+  { kind: "deck", ...CRUISE_SHIP.lounge, h: CRUISE_H.lounge },
+  ...CRUISE_SPLIT.map(([i, h]): TerrainLayer => {
+    const sp = built.spaces[i];
+    const r = CRUISE_LANDING_R;
+    return { kind: "deck", x: sp.x, z: sp.y, hx: r, hz: r, r, h };
+  }),
+  { kind: "deck", ...CRUISE_SHIP.lido, h: CRUISE_H.lido },
+  ...STAIR.map((s): TerrainLayer => ({
+    kind: "ramp",
+    x0: s.x0,
+    z0: s.z,
+    h0: CRUISE_H.promenade,
+    x1: s.x1,
+    z1: s.z,
+    h1: CRUISE_H.lido,
+    w: s.w,
+  })),
+];
 
 /** Index helpers for the scene builder and the guide. */
 export const CRUISE_INDEX = {

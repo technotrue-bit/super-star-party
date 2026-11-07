@@ -7,6 +7,13 @@
  * sponsons, deck chairs, the forecastle mast and the stern flag. Around it:
  * a scrolling sea, a wake and bow foam, a sky dome and a few far islands.
  *
+ * Under way: the sea, wake, foam and everything afloat sit on one "sea rig"
+ * that rolls and heaves against the ship, so the ship reads as riding the
+ * swell. Islands, buoys and sailboats drift past aft, whitecaps stream by,
+ * gulls circle the funnels. The Sea Report (board:sea) sets the mood: a
+ * tailwind speeds the ship up, choppy seas roll it hard, treasure waters
+ * turn the whitecaps gold.
+ *
  * Deck geometry comes from boards/cruiseData.ts (the same numbers the space
  * layout and terrain layers use), so every disk sits on its deck. Static
  * parts are merged into a few vertex-coloured meshes. Animation runs from the
@@ -14,14 +21,50 @@
  * generator. Presentation only: never reads or writes match state.
  */
 import * as THREE from "three";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { palette } from "../../config/palette";
-import type { BoardDef } from "../boardData";
+import { groundHeight, type BoardDef } from "../boardData";
 import type { BoardTextures } from "../boardTextures";
 import type { Prop } from "../boardScenery";
 import { rippleTexture, buildSkyDome } from "../boardIsland";
 import { CRUISE_H, CRUISE_SHIP, type RoundRect } from "../boards/cruiseData";
 import { fxMulberry32 } from "../lively/fxRng";
+import { Parts, type P2, cap, canvasTex, offsetPts, roundRectPts, segNormal, signedArea, starShape, wall, worldUv } from "./shipKit";
+import { type Box, floorGeometry, levelLoops, riserGeometry, risers, sunkenLoops } from "./levels";
+import { buildRooms } from "./rooms";
+import { bus, type SSPEventMap } from "../../core/events";
+
+type SeaMoodKind = SSPEventMap["board:sea"]["kind"];
+
+/** Cruising speed: how fast the sea runs aft beneath the ship (world units / s). */
+const SHIP_SPEED = 2.6;
+/** One tile of the sea ripple texture, in world units (SEA_RADIUS * 2 / repeat). */
+const SEA_TILE = 12;
+
+interface SeaMood {
+  /** Ship speed multiplier. */
+  speed: number;
+  /** Roll / heave multiplier. */
+  roll: number;
+  /** Whitecap size and strength. */
+  cap: number;
+  /** Gold tint on the whitecaps (0..1). */
+  gold: number;
+}
+
+const SEA_MOODS: Record<SeaMoodKind, SeaMood> = {
+  calm: { speed: 1, roll: 0.6, cap: 0.75, gold: 0 },
+  tailwind: { speed: 1.8, roll: 1, cap: 1.25, gold: 0 },
+  choppy: { speed: 1.1, roll: 2.6, cap: 1.7, gold: 0 },
+  treasure: { speed: 1, roll: 0.9, cap: 1.05, gold: 1 },
+  dinner: { speed: 0.85, roll: 0.7, cap: 0.9, gold: 0.35 },
+};
+
+/** v wrapped into [-r, r). */
+const wrapRange = (v: number, r: number): number => ((((v + r) % (2 * r)) + 2 * r) % (2 * r)) - r;
+const smooth = (a: number, b: number, v: number): number => {
+  const u = Math.min(1, Math.max(0, (v - a) / (b - a)));
+  return u * u * (3 - 2 * u);
+};
 
 /** Sea level under the ship (world y). */
 export const CRUISE_SEA_Y = -3.4;
@@ -29,7 +72,6 @@ const HULL_BOTTOM = -4.3;
 const SEA_RADIUS = 320;
 const SKY_RADIUS = 380;
 
-type P2 = { x: number; z: number };
 
 export interface CruiseShip {
   /** Static diorama plus the animated pieces (add to the board's decor). */
@@ -48,31 +90,6 @@ export interface CruiseShip {
 }
 
 // ---- outlines ---------------------------------------------------------------------------
-
-/** Closed rounded rectangle, counter-clockwise in (x, z), about `step` apart. */
-function roundRectPts(r: RoundRect, step = 0.35): P2[] {
-  const out: P2[] = [];
-  const cx = [r.x + r.hx - r.r, r.x - r.hx + r.r, r.x - r.hx + r.r, r.x + r.hx - r.r];
-  const cz = [r.z + r.hz - r.r, r.z + r.hz - r.r, r.z - r.hz + r.r, r.z - r.hz + r.r];
-  const start = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
-  const arcN = Math.max(3, Math.ceil(((Math.PI / 2) * r.r) / step));
-  for (let c = 0; c < 4; c++) {
-    for (let k = 0; k <= arcN; k++) {
-      const a = start[c] + (k / arcN) * (Math.PI / 2);
-      out.push({ x: cx[c] + Math.cos(a) * r.r, z: cz[c] + Math.sin(a) * r.r });
-    }
-    // straight edge to the next corner
-    const nx = (c + 1) % 4;
-    const ax = cx[c] + Math.cos(start[c] + Math.PI / 2) * r.r;
-    const az = cz[c] + Math.sin(start[c] + Math.PI / 2) * r.r;
-    const bx = cx[nx] + Math.cos(start[nx]) * r.r;
-    const bz = cz[nx] + Math.sin(start[nx]) * r.r;
-    const len = Math.hypot(bx - ax, bz - az);
-    const n = Math.floor(len / step);
-    for (let k = 1; k < n; k++) out.push({ x: ax + ((bx - ax) * k) / n, z: az + ((bz - az) * k) / n });
-  }
-  return out;
-}
 
 /** The hull's deck edge: straight sides, an ogive bow, a rounded stern. */
 function hullPts(): P2[] {
@@ -104,175 +121,12 @@ function hullPts(): P2[] {
   return out.reverse();
 }
 
-function signedArea(pts: P2[]): number {
-  let a = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const p = pts[i];
-    const q = pts[(i + 1) % pts.length];
-    a += p.x * q.z - q.x * p.z;
-  }
-  return a / 2;
-}
-
-/** Outward unit normal of segment i -> i+1 (counter-clockwise outlines). */
-function segNormal(pts: P2[], i: number, ccw: boolean): P2 {
-  const p = pts[i];
-  const q = pts[(i + 1) % pts.length];
-  const dx = q.x - p.x;
-  const dz = q.z - p.z;
-  const l = Math.hypot(dx, dz) || 1;
-  return ccw ? { x: dz / l, z: -dx / l } : { x: -dz / l, z: dx / l };
-}
-
-/** Each point pushed `d` along its averaged outward normal. */
-function offsetPts(pts: P2[], d: number): P2[] {
-  const ccw = signedArea(pts) > 0;
-  return pts.map((p, i) => {
-    const a = segNormal(pts, (i - 1 + pts.length) % pts.length, ccw);
-    const b = segNormal(pts, i, ccw);
-    const nx = a.x + b.x;
-    const nz = a.z + b.z;
-    const l = Math.hypot(nx, nz) || 1;
-    return { x: p.x + (nx / l) * d, z: p.z + (nz / l) * d };
-  });
-}
-
 /** Pull outline points inside a stairway notch in to the notch's inner edge. */
 function notch(pts: P2[], side: 1 | -1, inner: number, z0: number, z1: number): P2[] {
   return pts.map((p) => (Math.sign(p.x) === side && Math.abs(p.x) > inner && p.z > z0 && p.z < z1 ? { x: side * inner, z: p.z } : p));
 }
 
-// ---- merged geometry --------------------------------------------------------------------
-
-/** Collects painted parts for one merged vertex-coloured mesh. */
-class Parts {
-  readonly list: THREE.BufferGeometry[] = [];
-
-  add(geo: THREE.BufferGeometry, color: string | THREE.Color, m?: THREE.Matrix4): void {
-    const g = geo.index ? geo.toNonIndexed() : geo;
-    if (g !== geo) geo.dispose();
-    g.deleteAttribute("uv");
-    if (m) g.applyMatrix4(m);
-    if (!g.getAttribute("normal")) g.computeVertexNormals();
-    const c = color instanceof THREE.Color ? color : new THREE.Color(color);
-    const n = g.getAttribute("position").count;
-    const arr = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) arr.set([c.r, c.g, c.b], i * 3);
-    g.setAttribute("color", new THREE.BufferAttribute(arr, 3));
-    this.list.push(g);
-  }
-
-  /** A box from its centre and size, optionally turned about y. */
-  box(w: number, h: number, d: number, x: number, y: number, z: number, color: string, yaw = 0): void {
-    const m = new THREE.Matrix4().makeRotationY(yaw).setPosition(x, y, z);
-    this.add(new THREE.BoxGeometry(w, h, d), color, m);
-  }
-
-  /** A cylinder between y0 and y1 at (x, z). */
-  post(r0: number, r1: number, x: number, y0: number, y1: number, z: number, color: string, seg = 8): void {
-    this.add(new THREE.CylinderGeometry(r1, r0, y1 - y0, seg), color, new THREE.Matrix4().makeTranslation(x, (y0 + y1) / 2, z));
-  }
-
-  /** A thin bar from a to b. */
-  bar(a: THREE.Vector3, b: THREE.Vector3, r: number, color: string): void {
-    const len = a.distanceTo(b);
-    const g = new THREE.CylinderGeometry(r, r, len, 6);
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-    const m = new THREE.Matrix4().compose(a.clone().add(b).multiplyScalar(0.5), q, new THREE.Vector3(1, 1, 1));
-    this.add(g, color, m);
-  }
-
-  build(mat: THREE.Material, name: string, shadows = true): THREE.Mesh {
-    const merged = mergeGeometries(this.list, false);
-    for (const p of this.list) p.dispose();
-    this.list.length = 0;
-    if (!merged) throw new Error(`[SSP] cruise merge failed: ${name}`);
-    const mesh = new THREE.Mesh(merged, mat);
-    mesh.name = name;
-    mesh.castShadow = shadows;
-    mesh.receiveShadow = true;
-    return mesh;
-  }
-}
-
-/**
- * Vertical wall along a closed outline from y0 up to y1, painted in
- * horizontal bands. `skip(p)` leaves a segment out (doorways, stairways).
- */
-function wall(parts: Parts, pts: P2[], bands: Array<{ y0: number; y1: number; color: string }>, skip?: (mid: P2) => boolean, inward = false): void {
-  const ccw = signedArea(pts) > 0;
-  for (const band of bands) {
-    const pos: number[] = [];
-    const nrm: number[] = [];
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i];
-      const q = pts[(i + 1) % pts.length];
-      if (skip?.({ x: (p.x + q.x) / 2, z: (p.z + q.z) / 2 })) continue;
-      let n = segNormal(pts, i, ccw);
-      if (inward) n = { x: -n.x, z: -n.z };
-      const a0 = [p.x, band.y0, p.z];
-      const a1 = [q.x, band.y0, q.z];
-      const b0 = [p.x, band.y1, p.z];
-      const b1 = [q.x, band.y1, q.z];
-      const tri = inward ? [a0, a1, b0, a1, b1, b0] : [a0, b0, a1, a1, b0, b1];
-      for (const v of tri) {
-        pos.push(v[0], v[1], v[2]);
-        nrm.push(n.x, 0, n.z);
-      }
-    }
-    if (!pos.length) continue;
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
-    parts.add(g, band.color);
-  }
-}
-
-/** Flat cap over a closed outline (with holes) at height y, facing up. */
-function cap(pts: P2[], y: number, holes: P2[][] = []): THREE.BufferGeometry {
-  const shape = new THREE.Shape(pts.map((p) => new THREE.Vector2(p.x, -p.z)));
-  for (const h of holes) shape.holes.push(new THREE.Path(h.map((p) => new THREE.Vector2(p.x, -p.z))));
-  const g = new THREE.ShapeGeometry(shape);
-  g.rotateX(-Math.PI / 2);
-  g.translate(0, y, 0);
-  return g;
-}
-
-/** World-space UVs (x, z) / tile on a flat geometry. */
-function worldUv(g: THREE.BufferGeometry, tile: number, rot = false): THREE.BufferGeometry {
-  const pos = g.getAttribute("position");
-  const uv = new Float32Array(pos.count * 2);
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i) / tile;
-    const z = pos.getZ(i) / tile;
-    uv[i * 2] = rot ? z : x;
-    uv[i * 2 + 1] = rot ? x : -z;
-  }
-  g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
-  return g;
-}
-
 // ---- textures ---------------------------------------------------------------------------
-
-function canvasTex(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void, nearest = false): THREE.CanvasTexture {
-  const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
-  draw(c.getContext("2d")!);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = THREE.RepeatWrapping;
-  t.wrapT = THREE.RepeatWrapping;
-  t.colorSpace = THREE.SRGBColorSpace;
-  if (nearest) {
-    t.magFilter = THREE.NearestFilter;
-    t.minFilter = THREE.NearestFilter;
-    t.generateMipmaps = false;
-  } else {
-    t.anisotropy = 4;
-  }
-  t.needsUpdate = true;
-  return t;
-}
 
 /** Teak planks running fore and aft, with staggered butt joints. */
 function teakTexture(): THREE.CanvasTexture {
@@ -332,18 +186,6 @@ function nameTexture(): THREE.CanvasTexture {
   return t;
 }
 
-function starShape(r: number, inner = 0.42): THREE.Shape {
-  const s = new THREE.Shape();
-  for (let i = 0; i < 10; i++) {
-    const rr = i % 2 === 0 ? r : r * inner;
-    const a = -Math.PI / 2 + (i * Math.PI) / 5;
-    if (i === 0) s.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
-    else s.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
-  }
-  s.closePath();
-  return s;
-}
-
 // ---- the ship ---------------------------------------------------------------------------
 
 export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
@@ -358,6 +200,10 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
     new THREE.MeshToonMaterial({ color: palette.white, gradientMap: kit.grad, ...opts });
   const solid = new Parts();
   const lidoH = CRUISE_H.lido;
+  // Everything afloat rides this group; it rolls and heaves against the ship.
+  const seaRig = new THREE.Group();
+  seaRig.name = "cruise:sea-rig";
+  root.add(seaRig);
 
   // ---- sea, sky, far islands ------------------------------------------------------------
   const rip = rippleTexture();
@@ -368,7 +214,7 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
   const sea = new THREE.Mesh(seaGeo, toon({ map: rip }));
   sea.position.set(0, CRUISE_SEA_Y, 0);
   sea.name = "cruise:sea";
-  root.add(sea);
+  seaRig.add(sea);
 
   const sky = buildSkyDome();
   sky.mesh.scale.setScalar(SKY_RADIUS / 300);
@@ -379,9 +225,12 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
   };
   root.add(sky.mesh);
 
+  // Tropical islets on the horizon: sand, a green cap, palms; one lighthouse.
+  // Each drifts aft as the ship steams on, sinks below the horizon at the far
+  // end and comes back up ahead of the bow.
+  const islets: { mesh: THREE.Mesh; x: number; z0: number; s: number }[] = [];
   {
-    // Tropical islets on the horizon: sand, a green cap, palms; one lighthouse.
-    const isl = new Parts();
+    const isletMat = toon({ vertexColors: true });
     const spots: [number, number, number][] = [
       [-2.4, 150, 1.4],
       [-1.1, 190, 1.0],
@@ -391,9 +240,8 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
       [-0.4, 230, 2.2],
     ];
     spots.forEach(([a, d, s], k) => {
-      const x = Math.cos(a) * d;
-      const z = Math.sin(a) * d;
-      const at = (dx: number, dy: number, dz: number) => new THREE.Matrix4().makeTranslation(x + dx * s, CRUISE_SEA_Y + dy * s, z + dz * s);
+      const isl = new Parts();
+      const at = (dx: number, dy: number, dz: number) => new THREE.Matrix4().makeTranslation(dx * s, dy * s, dz * s);
       const sc = (m: THREE.Matrix4) => m.multiply(new THREE.Matrix4().makeScale(s, s, s));
       isl.add(new THREE.CylinderGeometry(3.6, 4.4, 1.0, 14), palette.sand, sc(at(0, 0.2, 0)));
       isl.add(new THREE.CylinderGeometry(2.4, 3.2, 0.6, 12), palette.grassA, sc(at(0.4, 0.9, -0.3)));
@@ -406,8 +254,11 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
         isl.add(new THREE.CylinderGeometry(0.55, 0.55, 0.6, 10), palette.spaceRed, sc(at(-1.4, 4.4, -0.6)));
         isl.add(new THREE.ConeGeometry(0.7, 0.8, 10), palette.spaceRed, sc(at(-1.4, 6.4, -0.6)));
       }
+      const mesh = isl.build(isletMat, "cruise:islet", false);
+      mesh.position.set(Math.cos(a) * d, CRUISE_SEA_Y, Math.sin(a) * d);
+      seaRig.add(mesh);
+      islets.push({ mesh, x: Math.cos(a) * d, z0: Math.sin(a) * d, s });
     });
-    root.add(isl.build(toon({ vertexColors: true }), "cruise:islets", false));
   }
 
   // ---- hull -------------------------------------------------------------------------------
@@ -522,8 +373,21 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
   const teak = teakTexture();
   textures.push(teak);
   const teakMat = toon({ map: teak });
+  const carpetMat = toon({ color: palette.carpet });
+  const ground = (x: number, z: number): number => groundHeight(def, x, z);
+  // Split-level areas (see boards/cruiseData.ts): each box holds one room's levels, with
+  // a margin all round (the outline tracer treats the box edge as outside).
+  const AREA: Record<"ballroom" | "bow" | "lounge", { box: Box; levels: number[]; wall: string; lip: string }> = {
+    ballroom: { box: { x0: -13.5, x1: 13.5, z0: 18.2, z1: 28.8 }, levels: [CRUISE_H.ballroom, -CRUISE_H.step], wall: palette.berryDeep, lip: palette.sun },
+    bow: { box: { x0: -13, x1: 13, z0: -41.2, z1: -29.3 }, levels: [CRUISE_H.mooring, -CRUISE_H.step], wall: palette.white, lip: palette.ink },
+    lounge: { box: { x0: -11.6, x1: 11.6, z0: -24.2, z1: -16.0 }, levels: [CRUISE_H.step, CRUISE_H.lounge], wall: palette.white, lip: palette.sunDeep },
+  };
+  const levelOutline = new Map<string, P2[][]>();
+  const bowHole = sunkenLoops(ground, AREA.bow.box);
   {
-    const deck = new THREE.Mesh(worldUv(cap(offsetPts(hull, -0.2), 0), 2.6, true), teakMat);
+    // The main deck is open over the sunken floors.
+    const holes = [...sunkenLoops(ground, AREA.ballroom.box), ...bowHole];
+    const deck = new THREE.Mesh(worldUv(cap(offsetPts(hull, -0.2), 0, holes), 2.6, true), teakMat);
     deck.name = "cruise:deck";
     deck.receiveShadow = true;
     root.add(deck);
@@ -551,6 +415,66 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
       for (let z = zr[0] + 0.2; z <= zr[1] - 0.1; z += 0.9) solid.post(0.05, 0.05, x1 - side * 0.12, 0, 0.75, z, palette.white, 5);
       solid.bar(new THREE.Vector3(x1 - side * 0.12, 0.78, zr[0] + 0.2), new THREE.Vector3(x1 - side * 0.12, 0.78, zr[1] - 0.1), 0.06, palette.white);
       for (const z of [zr[0], zr[1]]) solid.bar(new THREE.Vector3(side * S.hull.halfX, 0.78, z), new THREE.Vector3(x1 - side * 0.12, 0.78, z), 0.06, palette.white);
+    }
+  }
+
+  // ---- split levels: floors and step risers, traced from the terrain ----------------------
+  // The ballroom floor is carpet with a hole for the light-up dance floor; every other
+  // level is teak. Risers face the side you see them from, with a trim line on the lip.
+  const B = S.ballroom;
+  const DANCE = { n: 6, m: 3, tile: 1.15, z: B.z + 0.35 };
+  const dancePts: P2[] = [
+    { x: (-DANCE.n / 2) * DANCE.tile, z: DANCE.z - (DANCE.m / 2) * DANCE.tile },
+    { x: (DANCE.n / 2) * DANCE.tile, z: DANCE.z - (DANCE.m / 2) * DANCE.tile },
+    { x: (DANCE.n / 2) * DANCE.tile, z: DANCE.z + (DANCE.m / 2) * DANCE.tile },
+    { x: (-DANCE.n / 2) * DANCE.tile, z: DANCE.z + (DANCE.m / 2) * DANCE.tile },
+  ];
+  for (const [name, area] of Object.entries(AREA)) {
+    for (const h of area.levels) {
+      const loops = levelLoops(ground, area.box, h);
+      if (!loops.length) continue;
+      levelOutline.set(`${name}:${h}`, loops);
+      const carpet = name === "ballroom" && h === CRUISE_H.ballroom;
+      const geo = floorGeometry(carpet ? [...loops, dancePts.slice().reverse()] : loops, h);
+      if (geo) {
+        const floor = new THREE.Mesh(carpet ? geo : worldUv(geo, 2.6, true), carpet ? carpetMat : teakMat);
+        floor.name = `cruise:level-${name}`;
+        floor.receiveShadow = true;
+        root.add(floor);
+      }
+      const { body, lip } = riserGeometry(risers(ground, loops, h));
+      if (body.getAttribute("position").count) solid.add(body, area.wall);
+      if (lip.getAttribute("position").count) solid.add(lip, area.lip);
+    }
+  }
+  // A rail round the top of the drop into the mooring deck, open where the lane steps
+  // down (Starboard Bow -> Spray Zone, Shrimp Shack -> Rogue Wave); the bulwark guards
+  // the ledge along the hull sides.
+  {
+    const sp = (i: number): P2 => ({ x: def.spaces[i].x, z: def.spaces[i].y });
+    const steps: Array<[P2, P2]> = [[sp(14), sp(15)], [sp(22), sp(23)]];
+    const near = (m: P2, a: P2, b: P2): number => {
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const u = Math.max(0, Math.min(1, ((m.x - a.x) * dx + (m.z - a.z) * dz) / (dx * dx + dz * dz)));
+      return Math.hypot(a.x + dx * u - m.x, a.z + dz * u - m.z);
+    };
+    const railed = (m: P2): boolean => m.z > S.mooringZ - 0.3 && !steps.some(([a, b]) => near(m, a, b) < 1.5);
+    for (const loop of bowHole) {
+      const edge = offsetPts(loop, 0.12);
+      let acc = 0;
+      for (let i = 0; i < edge.length; i++) {
+        const p = edge[i];
+        const q = edge[(i + 1) % edge.length];
+        if (!railed({ x: (p.x + q.x) / 2, z: (p.z + q.z) / 2 })) continue;
+        acc += Math.hypot(q.x - p.x, q.z - p.z);
+        if (acc >= 0.85) {
+          acc = 0;
+          solid.post(0.045, 0.045, p.x, 0, 0.62, p.z, palette.white, 5);
+        }
+        solid.bar(new THREE.Vector3(p.x, 0.64, p.z), new THREE.Vector3(q.x, 0.64, q.z), 0.05, palette.white);
+        solid.bar(new THREE.Vector3(p.x, 0.32, p.z), new THREE.Vector3(q.x, 0.32, q.z), 0.03, palette.white);
+      }
     }
   }
 
@@ -722,64 +646,18 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
     }
   }
 
-  // Grand Ballroom: a cutaway hall with a light-up dance floor and a disco ball.
+  // Grand Ballroom: a sunken two-storey hall. Its carpet and risers come from the split
+  // levels above; here, the light-up dance floor, the stage, tables and a disco ball. The
+  // glass hall round the rim (walls, vaulted roof, chandeliers) is in rooms.ts.
   {
-    const B = S.ballroom;
-    const pts = roundRectPts(B, 0.25);
     const floorH = CRUISE_H.ballroom;
-    const N = 6;
-    const M = 3;
-    const tile = 1.15;
-    const dfz = B.z + 0.35;
-    const dance: P2[] = [
-      { x: (-N / 2) * tile, z: dfz - (M / 2) * tile },
-      { x: (N / 2) * tile, z: dfz - (M / 2) * tile },
-      { x: (N / 2) * tile, z: dfz + (M / 2) * tile },
-      { x: (-N / 2) * tile, z: dfz + (M / 2) * tile },
-    ];
-    const carpet = new THREE.Mesh(cap(pts, floorH, [dance]), toon({ color: palette.carpet }));
-    carpet.name = "cruise:ballroom-floor";
-    carpet.receiveShadow = true;
-    root.add(carpet);
-    // Doorways where the Grand Ballroom lane crosses the wall.
-    const lane = def.branches?.find((b) => b.label === "Grand Ballroom");
-    const laneSpaces = lane ? [lane.from, ...lane.path, lane.to].map((i) => def.spaces[i]) : [];
-    const door = (m: P2): boolean => {
-      for (let i = 0; i + 1 < laneSpaces.length; i++) {
-        const a = laneSpaces[i];
-        const b = laneSpaces[i + 1];
-        const dx = b.x - a.x;
-        const dz = b.y - a.y;
-        const u = Math.max(0, Math.min(1, ((m.x - a.x) * dx + (m.z - a.y) * dz) / (dx * dx + dz * dz)));
-        if (Math.hypot(a.x + dx * u - m.x, a.y + dz * u - m.z) < 1.7) return true;
-      }
-      return false;
-    };
-    wall(solid, pts, [
-      { y0: 0, y1: 0.9, color: palette.inkSoft },
-      { y0: 0.9, y1: 1.05, color: palette.sun },
-    ], door);
-    wall(solid, offsetPts(pts, -0.18), [{ y0: floorH, y1: 1.05, color: palette.berryDeep }], door, true);
-    // Stage, piano and footlights along the stern wall.
-    solid.box(6.4, 0.42, 1.5, 0, 0.21, B.z + B.hz - 0.95, palette.wood);
-    solid.box(1.4, 0.55, 1.0, -1.8, 0.7, B.z + B.hz - 0.95, palette.ink);
-    solid.box(0.7, 0.3, 0.6, 1.6, 0.6, B.z + B.hz - 0.95, palette.berry);
-    for (let x = -2.8; x <= 2.81; x += 0.8) solid.post(0.08, 0.08, x, 0.42, 0.55, B.z + B.hz - 0.22, palette.sun, 6);
-    // Round tables with little lamps along the north wall.
-    for (const x of [-6.2, -3.6, 3.6, 6.2]) {
-      solid.post(0.5, 0.5, x, 0, 0.5, B.z - B.hz + 1.0, palette.white, 12);
-      solid.post(0.08, 0.08, x, 0.5, 0.8, B.z - B.hz + 1.0, palette.sunDeep, 6);
-    }
-    // Truss for the disco ball.
-    for (const side of [-1, 1]) solid.post(0.09, 0.09, side * 2.6, floorH, 4.6, B.z + B.hz - 0.4, palette.metal, 6);
-    solid.bar(new THREE.Vector3(-2.6, 4.6, B.z + B.hz - 0.4), new THREE.Vector3(2.6, 4.6, B.z + B.hz - 0.4), 0.09, palette.metal);
-
+    const { n: N, m: M, tile } = DANCE;
     // Dance floor: tiles that cycle colour (one instanced mesh), tops flush with the carpet.
-    solid.add(cap(dance, floorH - 0.03), palette.ink);
+    solid.add(cap(dancePts, floorH - 0.03), palette.ink);
     const floor = new THREE.InstancedMesh(new THREE.BoxGeometry(tile - 0.1, 0.04, tile - 0.1), new THREE.MeshBasicMaterial({ color: palette.white }), N * M);
     floor.name = "cruise:dance-floor";
     const m4 = new THREE.Matrix4();
-    for (let i = 0; i < N; i++) for (let j = 0; j < M; j++) floor.setMatrixAt(i * M + j, m4.makeTranslation((i - (N - 1) / 2) * tile, floorH - 0.02, dfz + (j - (M - 1) / 2) * tile));
+    for (let i = 0; i < N; i++) for (let j = 0; j < M; j++) floor.setMatrixAt(i * M + j, m4.makeTranslation((i - (N - 1) / 2) * tile, floorH - 0.02, DANCE.z + (j - (M - 1) / 2) * tile));
     const lights = [palette.candy, palette.bubble, palette.mint, palette.sun, palette.berry].map((c) => new THREE.Color(c));
     const col = new THREE.Color();
     let beat = -1;
@@ -799,30 +677,77 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
         }
       },
     });
-    // Disco ball: faceted, spinning, twinkling.
+    // Stage along the stern wall, with a piano, a drum and footlights along its front.
+    const stageZ = B.z + B.hz - 0.95;
+    solid.box(6.4, 0.42, 1.5, 0, floorH + 0.21, stageZ, palette.wood);
+    solid.box(6.6, 0.06, 1.6, 0, floorH + 0.45, stageZ, palette.sunDeep);
+    solid.box(1.4, 0.55, 1.0, -1.8, floorH + 0.75, stageZ + 0.1, palette.ink);
+    solid.box(1.3, 0.06, 0.9, -1.8, floorH + 1.05, stageZ + 0.1, palette.white);
+    solid.post(0.32, 0.32, 1.6, floorH + 0.48, floorH + 0.9, stageZ + 0.15, palette.berry, 14);
+    solid.post(0.34, 0.34, 1.6, floorH + 0.9, floorH + 0.95, stageZ + 0.15, palette.white, 14);
+    for (let x = -2.8; x <= 2.81; x += 0.8) solid.post(0.08, 0.08, x, floorH + 0.48, floorH + 0.6, stageZ - 0.68, palette.sun, 6);
+    // Round tables with little lamps along the front of the hall, clear of the lane.
+    for (const x of [-5.2, -2.6, 2.6, 5.2]) {
+      const z = B.z - B.hz + 0.95;
+      if (def.spaces.some((sp) => Math.hypot(sp.x - x, sp.y - z) < 1.85)) continue;
+      solid.post(0.5, 0.5, x, floorH, floorH + 0.5, z, palette.white, 14);
+      solid.post(0.52, 0.52, x, floorH + 0.5, floorH + 0.54, z, palette.candy, 14);
+      solid.post(0.08, 0.08, x, floorH + 0.54, floorH + 0.82, z, palette.sunDeep, 6);
+      solid.add(new THREE.SphereGeometry(0.13, 8, 6), palette.sun, new THREE.Matrix4().makeTranslation(x, floorH + 0.88, z));
+    }
+    // Truss and disco ball over the stage, under the hall's glass ceiling.
+    const discoZ = B.z + B.hz - 0.4;
+    for (const side of [-1, 1]) solid.post(0.09, 0.09, side * 2.6, floorH, 2.85, discoZ, palette.metal, 6);
+    solid.bar(new THREE.Vector3(-2.6, 2.85, discoZ), new THREE.Vector3(2.6, 2.85, discoZ), 0.09, palette.metal);
     // Non-indexed facets: each face keeps its own normal, so the ball glints.
-    const ballGeo = new THREE.IcosahedronGeometry(0.62, 1).toNonIndexed();
+    const ballGeo = new THREE.IcosahedronGeometry(0.55, 1).toNonIndexed();
     ballGeo.computeVertexNormals();
     const ball = new THREE.Mesh(ballGeo, toon({ color: palette.metal }));
-    ball.position.set(0, 3.9, B.z + B.hz - 0.4);
+    ball.position.set(0, 2.2, discoZ);
     ball.name = "cruise:disco-ball";
     const wire = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.6, 4), toon({ color: palette.ink }));
-    wire.position.set(0, 4.3, B.z + B.hz - 0.4);
+    wire.position.set(0, 2.55, discoZ);
     root.add(ball, wire);
     props.push({ root: ball, update: (t) => (ball.rotation.y = t * 0.9) });
   }
 
-  // ---- forecastle and stern fittings ---------------------------------------------------
+  // ---- forecastle, mooring deck and stern fittings -------------------------------------
   {
-    // Foremast with a crow's nest and a yard.
+    // Foremast with a crow's nest and a yard (on deck, just aft of the mooring deck).
     const mz = -30.6;
     solid.post(0.2, 0.12, 0, 0, 8.6, mz, palette.white);
     solid.post(0.55, 0.55, 0, 6.2, 6.7, mz, palette.wood, 10);
     solid.box(3.6, 0.1, 0.1, 0, 7.6, mz, palette.white);
-    // Capstans and the anchor chains running to the hawse pipes.
+    // Down on the mooring deck: twin windlasses, their chains running to the hawse pipes,
+    // and pairs of bollards along the sides (all clear of the spaces).
+    const mf = CRUISE_H.mooring;
+    const clear = (x: number, z: number, r: number): boolean => !def.spaces.some((sp) => Math.hypot(sp.x - x, sp.y - z) < r + 1.3);
     for (const side of [-1, 1]) {
-      solid.post(0.42, 0.34, side * 2.2, 0, 0.6, -31.4, palette.ink, 12);
-      solid.post(0.46, 0.46, side * 2.2, 0.6, 0.72, -31.4, palette.sunDeep, 12);
+      const wx = side * 1.9;
+      const wz = -37.0;
+      solid.post(0.46, 0.4, wx, mf, mf + 0.62, wz, palette.ink, 14);
+      solid.post(0.5, 0.5, wx, mf + 0.62, mf + 0.74, wz, palette.sunDeep, 14);
+      solid.post(0.14, 0.14, wx, mf + 0.74, mf + 0.95, wz, palette.metal, 8);
+      // Chain: a row of dark links along the deck to the hawse pipe on the bulwark ledge.
+      const hx = side * 6.0;
+      const hz = -36.1;
+      const steps = 14;
+      for (let k = 0; k <= steps; k++) {
+        const u = k / steps;
+        const x = wx + (hx - wx) * u;
+        const z = wz + (hz - wz) * u;
+        const ring = new THREE.TorusGeometry(0.11, 0.035, 4, 8);
+        solid.add(ring, palette.inkSoft, new THREE.Matrix4().compose(new THREE.Vector3(x, mf + 0.06, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(k % 2 ? Math.PI / 2 : 0, Math.atan2(hx - wx, hz - wz), 0)), new THREE.Vector3(1, 1, 1)));
+      }
+      solid.post(0.22, 0.26, hx, mf, mf + 0.3, hz, palette.metal, 10);
+      // Bollards: short twin posts with caps.
+      for (const [bx, bz] of [[side * 8.9, -33.4], [side * 7.0, -35.8]] as const) {
+        if (!clear(bx, bz, 0.4)) continue;
+        for (const dz of [-0.28, 0.28]) {
+          solid.post(0.15, 0.15, bx, mf, mf + 0.42, bz + dz, palette.ink, 10);
+          solid.post(0.2, 0.2, bx, mf + 0.42, mf + 0.5, bz + dz, palette.ink, 10);
+        }
+      }
       // Anchor on the hull side.
       const az = -27;
       const u = (az - S.hull.bowStart) / (S.hull.bowTip - S.hull.bowStart);
@@ -830,8 +755,10 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
       solid.box(0.18, 1.5, 0.18, ax + side * 0.1, -1.0, az, palette.ink);
       solid.add(new THREE.TorusGeometry(0.55, 0.11, 6, 12, Math.PI), palette.ink, new THREE.Matrix4().makeRotationZ(Math.PI).setPosition(ax + side * 0.1, -1.6, az));
     }
-    // Jackstaff at the bow tip.
-    solid.post(0.06, 0.05, 0, 0.4, 3.2, S.hull.bowTip + 0.9, palette.white, 6);
+    // A coil of rope on the mooring deck by the tip.
+    for (let k = 0; k < 3; k++) solid.add(new THREE.TorusGeometry(0.42 - k * 0.1, 0.07, 6, 16), palette.wood, new THREE.Matrix4().makeRotationX(Math.PI / 2).setPosition(0, mf + 0.07 + k * 0.1, -38.4));
+    // Jackstaff at the bow tip, standing on the mooring deck.
+    solid.post(0.06, 0.05, 0, mf, 3.2, S.hull.bowTip + 0.9, palette.white, 6);
     // Stern flagpole.
     solid.post(0.08, 0.06, 0, 0.4, 4.6, S.hull.sternTip - 0.9, palette.white, 6);
     // Life rings on the rails.
@@ -998,6 +925,9 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
     }
   }
 
+  // ---- glass rooms the lanes walk through (rooms.ts) ---------------------------------------
+  buildRooms({ def, root, solid, textures, lamps, ground, loungeOutline: levelOutline.get(`lounge:${CRUISE_H.lounge}`) ?? [] });
+
   root.add(solid.build(toon({ vertexColors: true }), "cruise:ship"));
 
   // ---- water life: wake, bow foam, funnel smoke, dolphins -------------------------------
@@ -1046,7 +976,7 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
       pa.needsUpdate = true;
     };
     place(0);
-    root.add(mesh);
+    seaRig.add(mesh);
     props.push({ root: mesh, update: (t) => place(t) });
   }
   // Wake: two foam trails fanning out behind the stern, scrolling away.
@@ -1096,14 +1026,14 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
       w.rotation.y = -side * 0.22;
       w.renderOrder = 2;
       w.name = "cruise:wake";
-      root.add(w);
+      seaRig.add(w);
       wakes.push(w);
     }
     const churn = new THREE.Mesh(geo, wakeMat);
     churn.position.set(0, CRUISE_SEA_Y + 0.035, S.hull.sternTip - 1);
     churn.scale.set(1.1, 1, 0.55);
     churn.renderOrder = 2;
-    root.add(churn);
+    seaRig.add(churn);
     props.push({ root: churn, update: (t) => wakeTex.offset.set(0, -t * 0.35) });
   }
   // Funnel smoke: soft puffs that rise and drift aft, then fade (one instanced mesh).
@@ -1156,7 +1086,7 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
     for (const d of pod) {
       const m = new THREE.Mesh(proto.geometry, proto.material);
       m.name = "cruise:dolphin";
-      root.add(m);
+      seaRig.add(m);
       props.push({
         root: m,
         update: (t) => {
@@ -1174,6 +1104,239 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
       });
     }
   }
+
+  // ---- under way: whitecaps, buoys, sailboats, gulls ----------------------------------
+  // Whitecaps: short foam streaks that stream aft past the ship and fade in and out.
+  const CAPS = 170;
+  const CAP_X = 100;
+  const CAP_Z = 120;
+  const capMat = new THREE.MeshBasicMaterial({ color: palette.white, transparent: true, opacity: 0.6, depthWrite: false });
+  const capGeo = new THREE.CircleGeometry(1, 10);
+  capGeo.rotateX(-Math.PI / 2);
+  const caps = new THREE.InstancedMesh(capGeo, capMat, CAPS);
+  caps.name = "cruise:whitecaps";
+  caps.frustumCulled = false;
+  caps.renderOrder = 1;
+  const capSeeds = Array.from({ length: CAPS }, () => {
+    const side = fx() < 0.5 ? -1 : 1;
+    return {
+      x: side * (21 + fx() * (CAP_X - 21)),
+      z: (fx() * 2 - 1) * CAP_Z,
+      len: 0.55 + fx() * 1.0,
+      wid: 0.12 + fx() * 0.18,
+      ph: fx(),
+      rate: 0.18 + fx() * 0.2,
+    };
+  });
+  seaRig.add(caps);
+
+  // Channel buoys: red and white, bobbing, with a blinking lamp.
+  const buoys: { g: THREE.Group; lamp: THREE.Mesh; x: number; z0: number; ph: number }[] = [];
+  {
+    const bp = new Parts();
+    bp.post(0.9, 0.9, 0, -0.6, 0.2, 0, palette.spaceRed, 12);
+    bp.post(0.75, 0.55, 0, 0.2, 1.1, 0, palette.white, 12);
+    bp.post(0.55, 0.35, 0, 1.1, 1.9, 0, palette.spaceRed, 12);
+    bp.post(0.06, 0.06, 0, 1.9, 2.6, 0, palette.metal, 6);
+    const proto = bp.build(toon({ vertexColors: true }), "cruise:buoy", false);
+    const lampGeo = new THREE.SphereGeometry(0.22, 10, 8);
+    const spots = [
+      { x: 34, z0: -60, ph: 0 },
+      { x: -40, z0: 10, ph: 0.4 },
+      { x: 48, z0: 95, ph: 0.7 },
+      { x: -55, z0: -140, ph: 0.2 },
+    ];
+    for (const b of spots) {
+      const g = new THREE.Group();
+      g.name = "cruise:buoy";
+      g.add(new THREE.Mesh(proto.geometry, proto.material));
+      const lamp = new THREE.Mesh(lampGeo, new THREE.MeshBasicMaterial({ color: palette.sun }));
+      lamp.position.y = 2.75;
+      g.add(lamp);
+      seaRig.add(g);
+      buoys.push({ g, lamp, x: b.x, z0: b.z0, ph: b.ph });
+    }
+  }
+
+  // Sailboats: two little yachts heading the same way, slower, so the liner overtakes them.
+  const boats: { g: THREE.Group; x: number; z0: number; ph: number; rel: number }[] = [];
+  {
+    const hullGeo = new THREE.CylinderGeometry(0.9, 0.5, 6, 10, 1);
+    hullGeo.rotateX(Math.PI / 2);
+    hullGeo.scale(1, 0.55, 1);
+    const sp = new Parts();
+    sp.add(hullGeo, palette.white, new THREE.Matrix4().makeTranslation(0, 0.2, 0));
+    sp.box(1.5, 0.12, 4.6, 0, 0.55, 0.2, palette.teak);
+    sp.post(0.07, 0.07, 0, 0.5, 7.2, -0.5, palette.metal, 6);
+    const hullMesh = sp.build(toon({ vertexColors: true }), "cruise:sailboat", false);
+    const sailShape = new THREE.Shape();
+    sailShape.moveTo(0, 0);
+    sailShape.lineTo(0, 6.2);
+    sailShape.lineTo(3.4, 0);
+    sailShape.closePath();
+    const mainGeo = new THREE.ShapeGeometry(sailShape);
+    mainGeo.rotateY(Math.PI / 2); // in the boat's centre plane, trailing aft
+    const jibShape = new THREE.Shape();
+    jibShape.moveTo(0, 0);
+    jibShape.lineTo(0, 5.2);
+    jibShape.lineTo(-2.4, 0);
+    jibShape.closePath();
+    const jibGeo = new THREE.ShapeGeometry(jibShape);
+    jibGeo.rotateY(Math.PI / 2);
+    const sailMats = [palette.white, palette.sun].map((c) => toon({ color: c, side: THREE.DoubleSide }));
+    const spots = [
+      { x: -62, z0: -90, ph: 0.1, rel: 0.45, sail: 0 },
+      { x: 78, z0: 60, ph: 0.6, rel: 0.6, sail: 1 },
+    ];
+    for (const b of spots) {
+      const g = new THREE.Group();
+      g.name = "cruise:sailboat";
+      g.add(new THREE.Mesh(hullMesh.geometry, hullMesh.material));
+      const main = new THREE.Mesh(mainGeo, sailMats[b.sail]);
+      main.position.set(0, 0.9, -0.4);
+      main.rotation.y = 0.25;
+      const jib = new THREE.Mesh(jibGeo, sailMats[1 - b.sail]);
+      jib.position.set(0, 0.9, -0.7);
+      jib.rotation.y = -0.15;
+      g.add(main, jib);
+      g.scale.setScalar(1.3);
+      seaRig.add(g);
+      boats.push({ g, x: b.x, z0: b.z0, ph: b.ph, rel: b.rel });
+    }
+  }
+
+  // Gulls: a few circling over the funnels and the Lido, wings flapping (Gus's friends).
+  const gulls: { g: THREE.Group; wl: THREE.Object3D; wr: THREE.Object3D; cx: number; cz: number; r: number; h: number; w: number; ph: number }[] = [];
+  {
+    const gp = new Parts();
+    const body = new THREE.SphereGeometry(1, 10, 8);
+    body.scale(0.2, 0.18, 0.55);
+    gp.add(body, palette.white);
+    gp.add(new THREE.SphereGeometry(0.15, 8, 6), palette.white, new THREE.Matrix4().makeTranslation(0, 0.1, -0.5));
+    const beak = new THREE.ConeGeometry(0.06, 0.22, 5);
+    beak.rotateX(-Math.PI / 2);
+    gp.add(beak, palette.sunDeep, new THREE.Matrix4().makeTranslation(0, 0.08, -0.72));
+    const tail = new THREE.ConeGeometry(0.16, 0.35, 4);
+    tail.rotateX(Math.PI / 2);
+    gp.add(tail, palette.metal, new THREE.Matrix4().makeTranslation(0, 0.02, 0.6));
+    const bodyMesh = gp.build(toon({ vertexColors: true }), "cruise:gull", false);
+    const wp = new Parts();
+    wp.box(0.8, 0.04, 0.34, 0.42, 0, 0, palette.white);
+    wp.box(0.32, 0.045, 0.3, 0.98, 0, 0.02, palette.inkSoft);
+    const wingMesh = wp.build(toon({ vertexColors: true }), "cruise:gull-wing", false);
+    // Kept over the middle of the ship (|x| < 11), clear of the rails where
+    // the low line-up and tour cameras stand.
+    const flock = [
+      { cx: 0, cz: 14, r: 8, h: 12.5, w: 0.42 },
+      { cx: 0, cz: 10, r: 10.5, h: 14.5, w: -0.33 },
+      { cx: 0, cz: -4, r: 9, h: 13, w: 0.27 },
+      { cx: 0, cz: -10, r: 10.5, h: 15, w: -0.22 },
+      { cx: 0, cz: -24, r: 7, h: 11, w: 0.36 },
+      { cx: 0, cz: 24, r: 6, h: 11, w: -0.48 },
+    ];
+    for (const f of flock) {
+      const g = new THREE.Group();
+      g.name = "cruise:gull";
+      const b = new THREE.Mesh(bodyMesh.geometry, bodyMesh.material);
+      b.castShadow = true;
+      const wr = new THREE.Mesh(wingMesh.geometry, wingMesh.material);
+      const wl = new THREE.Mesh(wingMesh.geometry, wingMesh.material);
+      wl.scale.x = -1;
+      wr.position.set(0.12, 0.06, -0.05);
+      wl.position.set(-0.12, 0.06, -0.05);
+      g.add(b, wr, wl);
+      g.scale.setScalar(1.35);
+      root.add(g);
+      gulls.push({ g, wl, wr, ...f, ph: fx() * Math.PI * 2 });
+    }
+  }
+
+  // The Sea Report sets the mood; the values ease toward it.
+  const mood: SeaMood = { ...SEA_MOODS.calm };
+  let moodTarget: SeaMood = SEA_MOODS.calm;
+  const offSea = bus.on("board:sea", ({ kind }) => {
+    moodTarget = SEA_MOODS[kind] ?? SEA_MOODS.calm;
+  });
+  /** Distance sailed (world units): drives the sea scroll and everything drifting past. */
+  let sailed = 0;
+  let lastT = 0;
+  const capColor = new THREE.Color();
+  const white = new THREE.Color(palette.white);
+  const gold = new THREE.Color(palette.sun);
+  const capDummy = new THREE.Object3D();
+  const sailOn = (t: number, dtIn: number): void => {
+    const dt = Math.min(0.1, Math.max(0, Number.isFinite(dtIn) ? dtIn : t - lastT));
+    lastT = t;
+    const k = 1 - Math.exp(-dt * 0.8);
+    mood.speed += (moodTarget.speed - mood.speed) * k;
+    mood.roll += (moodTarget.roll - mood.roll) * k;
+    mood.cap += (moodTarget.cap - mood.cap) * k;
+    mood.gold += (moodTarget.gold - mood.gold) * k;
+    sailed += SHIP_SPEED * mood.speed * dt;
+
+    // Swell: the world rolls and heaves against the ship.
+    const R = mood.roll;
+    seaRig.rotation.z = 0.0105 * R * Math.sin(t * 0.84) + 0.003 * R * Math.sin(t * 2.1 + 0.6);
+    seaRig.rotation.x = 0.0055 * R * Math.sin(t * 0.63 + 1.2);
+    seaRig.position.y = 0.13 * R * Math.sin(t * 1.17 + 0.4);
+
+    // The sea runs aft (+z) beneath the ship: v grows toward the bow, so the offset grows.
+    rip.offset.set(t * 0.004, sailed / SEA_TILE);
+
+    for (const isl of islets) {
+      const z = wrapRange(isl.z0 + sailed * 0.9, 260);
+      isl.mesh.position.set(isl.x, CRUISE_SEA_Y - smooth(195, 255, Math.abs(z)) * 14 * isl.s, z);
+    }
+
+    capColor.copy(white).lerp(gold, mood.gold * 0.85);
+    capMat.color.copy(capColor);
+    capMat.opacity = Math.min(0.95, 0.5 + 0.22 * mood.cap);
+    for (let i = 0; i < CAPS; i++) {
+      const c = capSeeds[i];
+      const z = wrapRange(c.z + sailed, CAP_Z);
+      const u = (t * c.rate + c.ph) % 1;
+      const life = Math.sin(u * Math.PI);
+      const edge = 1 - smooth(CAP_Z - 25, CAP_Z, Math.abs(z));
+      const sz = Math.max(0.001, life * edge * mood.cap);
+      capDummy.position.set(c.x, CRUISE_SEA_Y + 0.05, z);
+      capDummy.scale.set(c.wid * sz * 2, 1, c.len * sz * (1 + 0.15 * mood.speed));
+      capDummy.updateMatrix();
+      caps.setMatrixAt(i, capDummy.matrix);
+    }
+    caps.instanceMatrix.needsUpdate = true;
+
+    for (const b of buoys) {
+      const z = wrapRange(b.z0 + sailed, 180);
+      const fade = 1 - smooth(150, 180, Math.abs(z));
+      b.g.position.set(b.x, CRUISE_SEA_Y + 0.15 * Math.sin(t * 1.6 + b.ph * 6) * (0.6 + 0.5 * R), z);
+      b.g.rotation.set(0.12 * Math.sin(t * 1.3 + b.ph * 5) * R, 0, 0.1 * Math.sin(t * 1.1 + b.ph * 3) * R);
+      b.g.scale.setScalar(Math.max(0.001, fade));
+      b.lamp.visible = (t + b.ph * 2) % 2 < 0.45;
+    }
+
+    for (const b of boats) {
+      const z = wrapRange(b.z0 + sailed * b.rel, 200);
+      const fade = 1 - smooth(165, 200, Math.abs(z));
+      b.g.position.set(b.x, CRUISE_SEA_Y + 0.2 * Math.sin(t * 1.25 + b.ph * 6), z);
+      b.g.rotation.set(0.05 * Math.sin(t * 0.9 + b.ph * 4) * R, 0, (b.x > 0 ? -1 : 1) * (0.12 + 0.04 * Math.sin(t * 0.7 + b.ph)) * (0.7 + 0.3 * mood.speed));
+      b.g.scale.setScalar(1.3 * Math.max(0.001, fade));
+    }
+
+    for (const gl of gulls) {
+      const a = gl.ph + t * gl.w;
+      const x = gl.cx + Math.cos(a) * gl.r;
+      const z = gl.cz + Math.sin(a) * gl.r;
+      gl.g.position.set(x, gl.h + 0.6 * Math.sin(t * 0.9 + gl.ph), z);
+      // Face along the circle (the model looks down -z), banked into the turn.
+      const dir = Math.sign(gl.w);
+      gl.g.rotation.set(0, Math.atan2(Math.sin(a) * dir, -Math.cos(a) * dir), dir * 0.32, "YXZ");
+      // Flap in bursts, then glide.
+      const glide = Math.sin(t * 0.5 + gl.ph) > 0.2;
+      const flap = glide ? 0.12 + 0.05 * Math.sin(t * 2 + gl.ph) : 0.55 * Math.sin(t * 11 + gl.ph);
+      gl.wr.rotation.z = flap;
+      gl.wl.rotation.z = -flap;
+    }
+  };
 
   // ---- signal-flag lines and the crowd's forecastle bleachers ---------------------------
   const strands: Array<[THREE.Vector3, THREE.Vector3]> = [
@@ -1195,12 +1358,13 @@ export function buildCruiseShip(def: BoardDef, kit: BoardTextures): CruiseShip {
     setSky(top: number, horizon: number) {
       sky.set(top, horizon);
     },
-    update(t: number) {
-      // The ship steams north: the sea runs aft beneath it.
-      rip.offset.set(t * 0.004, -t * 0.03);
+    update(t: number, dt: number) {
+      // The ship steams north: the sea, and everything afloat, runs aft beneath it.
+      sailOn(t, dt);
       poolRip.offset.set(t * 0.02, t * 0.015);
     },
     dispose() {
+      offSea();
       for (const tex of textures) tex.dispose();
     },
   };

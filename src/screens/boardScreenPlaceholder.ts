@@ -33,6 +33,7 @@ import { onlineMatch } from "../net/mode";
 import { distanceTo } from "../board/boardGraph";
 import { createMoveCountdown, type MoveCountdown } from "../ui/moveCountdown";
 import { createPrizeHint, type PrizeHint } from "../ui/prizeHint";
+import { seaReport } from "../game/seaReport";
 import { setHudViewReader, type HudView } from "../core/debug";import { createCharacter, type Character } from "../characters/characterFactory";
 import { createTurnLoop, PLAYER_OFFSETS, type DiceView, type TurnLoop } from "../game/turnLoop";
 import { createDie3d, type Die3DHandle } from "../ui/die3d";
@@ -142,6 +143,25 @@ function smoothDampV(cur: THREE.Vector3, target: THREE.Vector3, vel: THREE.Vecto
     vel[a] = (vel[a] - omega * temp) * k;
     cur[a] = target[a] + (change + temp) * k;
   }
+}
+
+/** The party camera's framing of a player standing at `at`: high, pulled back, looking down. */
+function followPose(at: THREE.Vector3): { pos: THREE.Vector3; look: THREE.Vector3 } {
+  const pos = at.clone();
+  pos.y += 18; // high angle
+  pos.z -= 12; // pull back
+  const look = at.clone();
+  look.y += 2;
+  return { pos, look };
+}
+
+/**
+ * Long camera moves (the next player across the board, the star reveal) get a
+ * longer settle so they glide instead of whipping: about a second for a move
+ * across a big board. Short hops keep the base settle.
+ */
+function settleFor(base: number, distance: number): number {
+  return Math.max(base, Math.min(1.15, 0.25 + distance * 0.016));
 }
 
 /** Seconds the follow camera takes to settle: steady by default, gentler when aiming. */
@@ -743,6 +763,8 @@ const boardScreenImpl: BoardScreenState & Screen = {
     // ---- feedback wiring: route HUD banners through the queue, ----
     // ---- listen for coin changes + happenings + star buys.    ----
     this._unsubs = [];
+    // The Cruise Ship's Sea Report rides along on the hint pill for the round.
+    this._unsubs.push(bus.on("board:sea", ({ kind }) => this._hint?.setNote(seaReport(kind).short)));
     const suppressNextBanner = { current: false };
     const queuedHud = {
       ...hud,
@@ -1077,13 +1099,23 @@ const boardScreenImpl: BoardScreenState & Screen = {
     }
     const fwd = new THREE.Vector3();
     cam.getWorldDirection(fwd);
+    // The flyover ends on the overview: carry its real look distance over.
+    const lookDist = Math.max(20, cam.position.distanceTo(this._cam.look));
+    const board = this._board;
     this._opening = createOpening({
       def,
       board: this._board,
       chars: this._chars,
       camera: cam,
       overview: { pos: this._cam.base.clone(), look: this._cam.look.clone() },
-      from: { pos: cam.position.clone(), look: cam.position.clone().addScaledVector(fwd, 20) },
+      from: { pos: cam.position.clone(), look: cam.position.clone().addScaledVector(fwd, lookDist) },
+      follow: (pid) => {
+        const off = PLAYER_OFFSETS[pid] ?? [0, 0];
+        const at = board.spaceWorldPos(def.startIndex);
+        at.x += off[0];
+        at.z += off[1];
+        return followPose(at);
+      },
       scene: world.scene,
       banner: (text, opts) => hud.showBanner(text, { durationMs: opts?.durationMs, style: "default" }),
       project: projectToScreen,
@@ -1302,11 +1334,9 @@ const boardScreenImpl: BoardScreenState & Screen = {
         // and back instead of ignoring it or swinging round the board.
         if (this._camHold) playerPos.copy(this._cam.look).setY(this._cam.look.y - 2);
 
-        idealPos = playerPos.clone();
-        idealPos.y += 18; // high angle
-        idealPos.z -= 12; // pull back
-        idealLook = playerPos.clone();
-        idealLook.y += 2;
+        const fp = followPose(playerPos);
+        idealPos = fp.pos;
+        idealLook = fp.look;
       } else if (phase === "minigame") {
         // Slow graceful pan around the map center (while board still visible briefly)
         const center = new THREE.Vector3(0, 8, 0);
@@ -1336,13 +1366,16 @@ const boardScreenImpl: BoardScreenState & Screen = {
       // A ceremony hold arrives promptly (the beat is short); aiming and the
       // glide back afterwards stay gentle.
       const walking = phase === "moving" && !this._camAim && !this._camHold;
-      const settle = this._camHold
+      const baseSettle = this._camHold
         ? CAM_SETTLE_HOLD
         : walking
           ? CAM_SETTLE_MOVE
           : soft
             ? CAM_SETTLE_SOFT
             : CAM_SETTLE;
+      // A walk keeps its tight settle (the lead covers the lag); any other
+      // long move eases out over the distance still to go.
+      const settle = walking ? baseSettle : settleFor(baseSettle, this._followPos.distanceTo(idealPos));
       this._followVel ??= new THREE.Vector3();
       this._lookVel ??= new THREE.Vector3();
       smoothDampV(this._followPos, idealPos, this._followVel, settle, dt);
@@ -1368,11 +1401,18 @@ const boardScreenImpl: BoardScreenState & Screen = {
       cam.position.copy(pos);
       cam.lookAt(lk);
     }
+    // Probe aid (never set by the game): window.__SSP_CAM = { pos: [x, y, z], look: [x, y, z] }
+    // holds the board camera on a pose, so screenshots can frame any spot of a board.
+    const probeCam = (window as unknown as { __SSP_CAM?: { pos: number[]; look: number[] } }).__SSP_CAM;
+    if (cam && probeCam) {
+      cam.position.set(probeCam.pos[0], probeCam.pos[1], probeCam.pos[2]);
+      cam.lookAt(probeCam.look[0], probeCam.look[1], probeCam.look[2]);
+    }
     // Far views (the cruise ship's overview and flyover sit 100+ units out):
     // with the close-up 0.1 near plane a 24-bit depth buffer can't tell the
     // lanes from the space disks a few hundredths above them, so the path
     // bleeds through the disks. Nothing is within a fifth of that distance.
-    const lookAt = introPose ? introPose.look : this._outLook;
+    const lookAt = probeCam ? new THREE.Vector3(probeCam.look[0], probeCam.look[1], probeCam.look[2]) : introPose ? introPose.look : this._outLook;
     if (cam && lookAt) {
       const d = cam.position.distanceTo(lookAt);
       const near = d > FAR_VIEW ? d * 0.2 : 0.1;

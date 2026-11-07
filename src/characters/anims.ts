@@ -75,6 +75,11 @@ export function isFloater(key: string): boolean {
   return key in FLOATERS;
 }
 
+/** How high a floater hovers above the ground (0 for everyone else). */
+export function floatHeight(key: string): number {
+  return FLOATERS[key]?.height ?? 0;
+}
+
 /**
  * True for characters whose walk is one continuous motion (floaters glide,
  * Pip cartwheels), so the turn loop moves them at a steady speed instead of

@@ -41,8 +41,13 @@ const EXTRA: Record<string, GuideStop[]> = {
   "cruise-ship": [
     {
       title: "Upstairs, Downstairs",
-      body: "The Lido Deck runs round the pool the other way. Climb any Lido Stairs to double back, cross the Pool Bridge, then take the Promenade Stairs down. The Captain's Walk and the Grand Ballroom cut off the bow and the stern.",
+      body: "The Lido Deck runs round the pool the other way. Climb any Lido Stairs to double back, cross the Pool Bridge, then take the Promenade Stairs down. The Captain's Walk climbs up into the glass Panorama Lounge to cut off the bow, and the Grand Ballroom steps down into its sunken hall to cut off the stern.",
       focus: { kind: "point", x: 0, z: -0.5 },
+    },
+    {
+      title: "The Sea Report",
+      body: "Every round the Captain calls the weather. A Tailwind moves everyone 1 extra space, Choppy Seas make red spaces take double, Treasure Waters make blue spaces pay double, and the Captain's Dinner hands everyone coins. Green spaces have sea surprises too: dolphin rides, cannonballs and men overboard!",
+      focus: { kind: "overview" },
     },
   ],
 };
