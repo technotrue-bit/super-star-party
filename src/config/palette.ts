@@ -71,6 +71,17 @@ export const palette = {
   lifeboat: "#FF7B1C", // safety-orange lifeboats and life rings
   carpet: "#8A2D63", // Grand Ballroom carpet
 
+  // ---- Downtown (board 2; the Kenney city pieces carry their own palette) ----
+  cityPavement: "#B4BBDC", // plazas, blocks and quays between the Kenney sidewalks
+  cityStone: "#DCD3C2", // canal walls, quay coping, the Grand Bridge, the clock tower
+  cityCanal: "#3F8FD8", // canal, Harbor Basin and fountain water
+  // Wall paints: multiplied into the Kenney buildings' light walls, one per building.
+  cityPeach: "#FFD2B8",
+  cityMint: "#C4F0DA",
+  citySky: "#C6E2FF",
+  cityLilac: "#DDD0FF",
+  cityButter: "#FFEDB3",
+
   // ---- time of day (lively board: day -> golden dusk -> night) ----
   // Day is the boot look (ink background, white hemi over ink ground, white key).
   duskSky: "#E8734F", // coral sunset background + fog
@@ -83,6 +94,11 @@ export const palette = {
   nightHemi: "#5848E8", // blue-violet sky light (low green: the checker turns teal/indigo)
   nightGround: "#1A0F45", // deep indigo bounce light
   nightKey: "#6E6AF0", // violet moonlight
+  // Downtown's night: cooler, a navy city sky so the warm windows and lamps pop.
+  cityNightSky: "#0E1838",
+  cityNightHemi: "#4A68E0",
+  cityNightGround: "#141A3E",
+  cityNightKey: "#7C9CF5",
   lampWarm: "#FFB547", // lamp halo + string-light bulbs after dusk
   lampHot: "#FFF2C2", // lamp core at night
 

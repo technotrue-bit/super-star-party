@@ -9,6 +9,9 @@
 import { palette } from "../config/palette";
 import { settings } from "../config/settings";
 import { buildKit } from "../board/boardTextures";
+import { activeBoard } from "../board/registry";
+import { giverName, npcName, shopName } from "../board/boardText";
+import { itemIcon, itemName } from "../game/items";
 import type { SpaceType } from "../core/game";
 
 const STYLE_ID = "ssp-guide-styles";
@@ -125,8 +128,8 @@ export function buildRulesGuide(): HTMLElement {
       ["blue", "Blue", `+${S.blueCoin} coins. Sometimes a Hidden Block pops out!`],
       ["red", "Red", `−${S.redCoin} coins.`],
       ["green", "? Space", "A surprise event. Could be good, could be silly!"],
-      ["grumpus", "Grumpus", "Uh-oh. Grumpus causes trouble."],
-      ["shop", "Shop", "Buy items. Works when you pass it, too."],
+      ["grumpus", npcName(), `Uh-oh. ${npcName()} causes trouble.`],
+      ["shop", shopName(), "Buy items. Works when you pass it, too."],
       ["stamp", "Stamp", `Collect all 3 stamps for ${S.stampJackpot} coins. Passing counts.`],
       ["minigame_balloon", "Minigame Balloon", "Pay 5 or 10 coins (passing counts). Everyone plays a minigame after the round."],
     ];
@@ -171,16 +174,23 @@ export function buildRulesGuide(): HTMLElement {
 
   // 6. Items
   {
-    const { el, body } = section("🍄", palette.mint, "ITEMS");
+    // A board skin (Downtown) renames the items, the shop and the giver; the
+    // carnival keeps its original lines.
+    const shop = shopName();
+    const giver = giverName();
+    const skinned = !!activeBoard().skin?.items;
+    const zips = skinned ? `<b>${itemName("dash_mushroom")}</b> and <b>${itemName("golden_dash")}</b>` : "<b>Zip Mushrooms</b>";
+    const freebie = giver ? `a free item from <b>${giver}</b>` : "a free item";
+    const { el, body } = section(skinned ? itemIcon("dash_mushroom") : "🍄", palette.mint, "ITEMS");
     body.append(
-      html("p", `Buy items at the <b>Shop</b>. Use <b>one item per turn</b>, before you roll.`, "ssp-guide__lead"),
+      html("p", `Buy items at the <b>${shop}</b>. Use <b>one item per turn</b>, before you roll.`, "ssp-guide__lead"),
       html(
         "ul",
-        `<li><b>Zip Mushrooms</b> add spaces to your roll. A <b>Sour Mushroom</b> takes 2 off a rival's roll.</li>
-         <li><b>Double Dice</b> rolls two dice.</li>
+        `<li>${zips} add spaces to your roll. A <b>${itemName("poison_mushroom")}</b> takes 2 off a rival's roll.</li>
+         <li><b>${itemName("double_dice")}</b> rolls two dice.</li>
          <li><b>Orbs</b> are traps: throw one onto a space up to ${S.orbThrowRange} steps away. It hits whoever stops there.</li>`,
       ),
-      html("p", `The Shop says what every item does. Last place gets a free item in the last 5 rounds.`, "ssp-guide__tip"),
+      html("p", `The ${shop} says what every item does. Last place gets ${freebie} in the last 5 rounds.`, "ssp-guide__tip"),
     );
     root.appendChild(el);
   }

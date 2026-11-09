@@ -15,7 +15,7 @@
  */
 import type { SpaceDef, SpaceType, StampKind } from "../../core/game";
 import { settings } from "../../config/settings";
-import type { BoardDef } from "../boardData";
+import type { BoardDef, BoardSkin } from "../boardData";
 
 interface Tile {
   type: SpaceType;
@@ -146,6 +146,35 @@ function buildNext(): number[][] {
   return next;
 }
 
+/**
+ * City names for the shared items (ssp-downtown-names.md). Display only: the
+ * item keys, prices and rules are the carnival's. Items that keep their name
+ * and help text (Double Dice, Zappy, Dueling Glove, Swap Card, Star Snatch,
+ * Snagbag, Swap Orb) are absent.
+ */
+const DOWNTOWN_ITEMS: NonNullable<BoardSkin["items"]> = {
+  mushroom: { name: "Espresso", desc: "Roll TWICE and move the total!", icon: "☕" },
+  dash_mushroom: { name: "Bus Pass", desc: "The die stays honest. Your move is +3.", icon: "🚌" },
+  golden_dash: { name: "Express Pass", desc: "The die stays honest. Your move is +5.", icon: "🚄" },
+  poison_mushroom: { name: "Traffic Cone", desc: "After a rival rolls, their move is −2.", icon: "🚧" },
+  warp_whistle: { name: "Taxi Whistle", desc: "Hail a cab to a random happening space ahead!", icon: "🚕" },
+  warp_pipe: { name: "Subway Hatch", desc: "Swap places with a rival you choose, then roll.", icon: "🚇" },
+  lucky_card: { name: "Lotto Ticket", desc: "A lucky ticket: triple roulette odds, and +1 on your next blue." },
+  mecha_fly: { name: "Pickpocket", desc: "Steal one item from a rival you choose.", icon: "🤏" },
+  boo_bell: { name: "Alley Cat", desc: "Steal one star from a rival you choose.", icon: "🐈" },
+  genie_lamp: { name: "Limo Call", desc: "Ride straight to the Grand Prize Balloon.", icon: "🚘" },
+  chomp_call: { name: "Tow Truck", desc: "A tow truck hauls the Grand Prize Balloon to you.", icon: "🛻" },
+  bowser_suit: { name: "Grumbles Coat", desc: "Take a rival's stars. If they have not moved, they lose the turn." },
+  orb_coin10: { name: "Parking Fine 10", desc: "Drop on a space. The next player pays you 10 coins." },
+  orb_coin20: { name: "Parking Fine 20", desc: "Drop on a space. The next player pays you 20 coins." },
+  orb_wreck: { name: "Wrecking Ball", desc: "Drop on a space. The victim loses a star and 10 coins." },
+  orb_duel: { name: "Showdown", desc: "Drop on a space. Land on it and fight the placer 1v1." },
+  star_cannon: { name: "Sky Elevator", desc: "Zoom straight to the star. Only in the last 5 turns.", icon: "🛗" },
+  orb_tree: { name: "Piggy Bank", desc: "Grows 3 coins a round. Land on it yourself to collect.", icon: "🐷" },
+  orb_circus: { name: "Toll Booth", desc: "Pass through and pay 1 coin a space for 3 turns.", icon: "🛑" },
+  orb_starshift: { desc: "Land on it and the Grand Prize Balloon floats to a new spot." },
+};
+
 /** Downtown — the city board. Start = space 0 (Central Station). */
 export const downtown: BoardDef = {
   id: "downtown",
@@ -173,5 +202,13 @@ export const downtown: BoardDef = {
     stamps: { shy: "Soda", goomba: "Bagel", koopa: "Pretzel" },
     jackpot: "CITY",
     place: "city",
+    shopName: "Bodega",
+    items: DOWNTOWN_ITEMS,
+    giver: {
+      name: "Penny the Paperboy",
+      banner: "PENNY THE PAPERBOY!",
+      gift: "Extra! Extra! Penny slips you a freebie off the paper stack: {item}!",
+      full: "Extra! Extra! Penny has a freebie, but your bag's already full!",
+    },
   },
 };

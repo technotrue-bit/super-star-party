@@ -106,6 +106,28 @@ const KEYS: readonly Key[] = [
   { at: 1, ...NIGHT },
 ];
 
+// Downtown ("city" look): the same day and dusk, then a cooler navy night.
+const CITY_NIGHT = {
+  ...NIGHT,
+  sky: hex(palette.cityNightSky),
+  skyHorizon: hex(palette.cityNightSky),
+  hemiSky: hex(palette.cityNightHemi),
+  hemiGround: hex(palette.cityNightGround),
+  keyColor: hex(palette.cityNightKey),
+  fogColor: hex(palette.cityNightSky),
+};
+const CITY_KEYS: readonly Key[] = [
+  { at: 0, ...DAY },
+  { at: 0.3, ...DAY },
+  { at: 0.55, ...DUSK },
+  { at: 0.8, ...CITY_NIGHT },
+  { at: 1, ...CITY_NIGHT },
+];
+
+/** A board's colour preset; "default" is the carnival and cruise look. */
+export type TimeLook = "default" | "city";
+const LOOKS: Record<TimeLook, readonly Key[]> = { default: KEYS, city: CITY_KEYS };
+
 /** Match progress for a turn: 0 on turn 1, 1 on the last turn (clamped). */
 export function progressOf(turn: number, totalTurns: number): number {
   if (!(totalTurns > 1)) return 0;
@@ -133,12 +155,13 @@ function lerpHex(a: number, b: number, u: number): number {
  * board can sample an eased progress every frame. `phase` and `last5` are
  * left alone: they belong to the turn, not the blend.
  */
-export function sampleTimeOfDay(progress: number, out: TimeOfDay): TimeOfDay {
+export function sampleTimeOfDay(progress: number, out: TimeOfDay, look: TimeLook = "default"): TimeOfDay {
+  const keys = LOOKS[look];
   const p = progress <= 0 ? 0 : progress >= 1 ? 1 : progress;
   let k = 0;
-  while (k < KEYS.length - 2 && p > KEYS[k + 1].at) k++;
-  const a = KEYS[k];
-  const b = KEYS[k + 1];
+  while (k < keys.length - 2 && p > keys[k + 1].at) k++;
+  const a = keys[k];
+  const b = keys[k + 1];
   const x = b.at > a.at ? (p - a.at) / (b.at - a.at) : 0;
   const u = x * x * (3 - 2 * x);
   out.progress = p;
@@ -179,9 +202,9 @@ export function blankTimeOfDay(): TimeOfDay {
 }
 
 /** The target look for a turn of the match. */
-export function timeOfDay(turn: number, totalTurns: number): TimeOfDay {
+export function timeOfDay(turn: number, totalTurns: number, look: TimeLook = "default"): TimeOfDay {
   const progress = progressOf(turn, totalTurns);
-  const out = sampleTimeOfDay(progress, blankTimeOfDay());
+  const out = sampleTimeOfDay(progress, blankTimeOfDay(), look);
   out.phase = phaseOf(progress);
   out.last5 = isLast5(turn, totalTurns);
   return out;

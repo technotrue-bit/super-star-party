@@ -28,6 +28,12 @@ export interface FireworksHost {
   camera: () => THREE.Camera | null;
   /** Fallback burst spot without a camera (board-local x/z). */
   center: { x: number; z: number };
+  /**
+   * Optional board-local spots to burst over (Downtown: along the canal).
+   * A shell goes up over one when it lands in frame; otherwise it is framed
+   * as usual. Without it, no extra draws: the carnival's shells don't move.
+   */
+  over?: ReadonlyArray<{ x: number; z: number }>;
 }
 
 export interface FireworksDebug {
@@ -189,6 +195,24 @@ export function createFireworks(host: FireworksHost): Fireworks {
       return;
     }
     eye.setFromMatrixPosition(cam.matrixWorld);
+    const over = host.over;
+    if (over && over.length) {
+      // Over the board's chosen spots, a few tries for one that sits in frame.
+      for (let k = 0; k < 4; k++) {
+        const o = over[Math.floor(draw() * over.length) % over.length];
+        pos.set(o.x + (draw() - 0.5) * 2, 5 + draw() * 5, o.z + (draw() - 0.5) * 2);
+        host.root.localToWorld(pos);
+        dir.copy(pos).project(cam);
+        if (dir.z < 1 && Math.abs(dir.x) < 0.85 && dir.y > -0.15 && dir.y < 0.8) {
+          scale[s] = eye.distanceTo(pos);
+          host.root.worldToLocal(pos);
+          atX[s] = pos.x;
+          atY[s] = pos.y;
+          atZ[s] = pos.z;
+          return;
+        }
+      }
+    }
     const side = draw() < 0.5 ? -1 : 1;
     pos.set(side * (NDC_X_MIN + (NDC_X_MAX - NDC_X_MIN) * draw()), NDC_Y_MIN + (NDC_Y_MAX - NDC_Y_MIN) * draw(), 0.5).unproject(cam);
     dir.subVectors(pos, eye).normalize();
